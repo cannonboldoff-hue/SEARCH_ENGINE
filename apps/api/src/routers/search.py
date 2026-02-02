@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -235,7 +235,7 @@ async def get_person(
         )
         search_rec = s_result.scalar_one_or_none()
         if search_rec:
-            cutoff = datetime.utcnow() - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
             if search_rec.created_at and search_rec.created_at >= cutoff:
                 r_result = await db.execute(
                     select(SearchResult).where(
@@ -323,9 +323,9 @@ async def unlock_contact(
     request: Request,
     person_id: str,
     search_id: str = Query(..., alias="search_id"),
-  idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-  current_user: Person = Depends(get_current_user),
-  db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     endpoint = "POST /people/{person_id}/unlock-contact"
     if idempotency_key:
@@ -344,7 +344,7 @@ async def unlock_contact(
     search_rec = s_result.scalar_one_or_none()
     if not search_rec:
         raise HTTPException(status_code=403, detail="Invalid search_id")
-    cutoff = datetime.utcnow() - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
     if search_rec.created_at and search_rec.created_at < cutoff:
         raise HTTPException(status_code=403, detail="Search expired")
     r_result = await db.execute(

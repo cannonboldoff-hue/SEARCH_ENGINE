@@ -126,7 +126,9 @@ export default function PersonProfilePage() {
             <p className="text-sm">
               Locations: {profile.work_preferred_locations?.length ? profile.work_preferred_locations.join(", ") : "—"}
               {profile.work_preferred_salary_min != null && (
-                <> · Salary: {profile.work_preferred_salary_min}–{profile.work_preferred_salary_max}</>
+                <> · Salary: {profile.work_preferred_salary_min}
+                  {profile.work_preferred_salary_max != null ? `–${profile.work_preferred_salary_max}` : ""}
+                </>
               )}
             </p>
           )}

@@ -1,5 +1,16 @@
 import { API_BASE } from "./utils";
 
+function normalizeErrorDetail(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0];
+    if (first && typeof first === "object" && "msg" in first && typeof first.msg === "string")
+      return first.msg;
+    return detail.map((d) => (d && typeof d === "object" && "msg" in d ? d.msg : String(d))).join(", ");
+  }
+  return null;
+}
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
@@ -18,14 +29,32 @@ export async function api<T>(
   };
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...rest,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const url = `${API_BASE}${path}`;
+  if (!url.startsWith("http") && !url.startsWith("/")) {
+    throw new Error(
+      "API URL is not configured. Set NEXT_PUBLIC_API_BASE_URL (e.g. http://localhost:8000) and ensure the API server is running."
+    );
+  }
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...rest,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    const msg =
+      e instanceof TypeError && (e.message === "Failed to fetch" || e.message?.includes("fetch"))
+        ? "Cannot reach the API. Check that NEXT_PUBLIC_API_BASE_URL is set and the API server is running."
+        : e instanceof Error
+          ? e.message
+          : "Network error";
+    throw new Error(msg);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || err.message || String(res.status));
+    const message = normalizeErrorDetail(err.detail) || err.message || String(res.status);
+    throw new Error(message);
   }
   if (res.status === 204) return undefined as T;
   return res.json();

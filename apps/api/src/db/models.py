@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import (
     Column,
@@ -41,7 +41,7 @@ class Person(Base):
     hashed_password = Column(String(255), nullable=False)
     display_name = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
     visibility_settings = relationship("VisibilitySettings", back_populates="person", uselist=False)
     contact_details = relationship("ContactDetails", back_populates="person", uselist=False)
@@ -67,7 +67,7 @@ class VisibilitySettings(Base):
     contact_preferred_salary_max = Column(Numeric(12, 2), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
     person = relationship("Person", back_populates="visibility_settings")
 
@@ -84,7 +84,7 @@ class ContactDetails(Base):
     other = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
     person = relationship("Person", back_populates="contact_details")
 
@@ -97,7 +97,7 @@ class CreditWallet(Base):
     balance = Column(Integer, default=1000, nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
     person = relationship("Person", back_populates="credit_wallet")
 
@@ -122,12 +122,14 @@ class IdempotencyKey(Base):
     __tablename__ = "idempotency_keys"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
-    key = Column(String(255), unique=True, nullable=False, index=True)
+    key = Column(String(255), nullable=False, index=True)
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     endpoint = Column(String(100), nullable=False)
     response_status = Column(Integer, nullable=True)
     response_body = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("ix_idempotency_keys_key_person_endpoint", "key", "person_id", "endpoint", unique=True),)
 
 
 class RawExperience(Base):
@@ -169,7 +171,7 @@ class ExperienceCard(Base):
     embedding = Column(Vector(384), nullable=True)  # bge-base typically 384 or 768
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
     person = relationship("Person", back_populates="experience_cards")
 

@@ -119,9 +119,9 @@ async def create_experience_card(
 @router.patch("/experience-cards/{card_id}", response_model=ExperienceCardResponse)
 async def patch_experience_card(
     card_id: str,
-  body: ExperienceCardPatch,
-  current_user: Person = Depends(get_current_user),
-  db: AsyncSession = Depends(get_db),
+    body: ExperienceCardPatch,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
         select(ExperienceCard).where(

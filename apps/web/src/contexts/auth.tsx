@@ -51,7 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .then(setUser)
         .catch(() => setToken(null));
     }
-  }, []);
+  }, [setToken]);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -63,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (typeof window !== "undefined") localStorage.setItem("token", access_token);
       const me = await api<{ id: string; email: string; display_name: string | null }>("/me");
       setUser(me);
-      router.push("/builder");
+      router.replace("/builder");
     },
     [router]
   );
@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (typeof window !== "undefined") localStorage.setItem("token", access_token);
       const me = await api<{ id: string; email: string; display_name: string | null }>("/me");
       setUser(me);
-      router.push("/builder");
+      router.replace("/builder");
     },
     [router]
   );

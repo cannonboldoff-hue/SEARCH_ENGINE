@@ -171,6 +171,7 @@ export default function SettingsPage() {
                 <input
                   type="checkbox"
                   id="open_to_work"
+                  checked={visibilityForm.watch("open_to_work")}
                   {...visibilityForm.register("open_to_work")}
                   className="rounded border-input"
                 />
@@ -209,6 +210,7 @@ export default function SettingsPage() {
                 <input
                   type="checkbox"
                   id="open_to_contact"
+                  checked={visibilityForm.watch("open_to_contact")}
                   {...visibilityForm.register("open_to_contact")}
                   className="rounded border-input"
                 />
@@ -261,6 +263,7 @@ export default function SettingsPage() {
                 <input
                   type="checkbox"
                   id="email_visible"
+                  checked={contactForm.watch("email_visible")}
                   {...contactForm.register("email_visible")}
                   className="rounded border-input"
                 />

@@ -102,6 +102,7 @@ export default function BuilderPage() {
       const nextCards = result.cards;
       setEditedFields((prevEdits) => {
         const nextEdits: Record<string, Record<string, string | string[]>> = {};
+        const currentIds = new Set(nextCards.map((c) => c.draft_card_id));
         for (let i = 0; i < nextCards.length; i++) {
           const oldCard = prev[i];
           const newCard = nextCards[i];
@@ -109,7 +110,9 @@ export default function BuilderPage() {
             nextEdits[newCard.draft_card_id] = prevEdits[oldCard.draft_card_id];
           }
         }
-        return { ...prevEdits, ...nextEdits };
+        return Object.fromEntries(
+          Object.entries(nextEdits).filter(([id]) => currentIds.has(id))
+        );
       });
       setDraftCards(nextCards);
       prevDraftCardsRef.current = nextCards;

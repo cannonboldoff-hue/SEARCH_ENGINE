@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -21,13 +22,28 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 export default function SignupPage() {
-  const { signup } = useAuth();
+  const { signup, token } = useAuth();
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({ resolver: zodResolver(schema) });
+
+  useEffect(() => {
+    const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
+    if (hasToken) router.replace("/builder");
+  }, [token, router]);
+
+  const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
+  if (hasToken) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-muted/30">
+        <div className="animate-pulse text-muted-foreground">Loading…</div>
+      </div>
+    );
+  }
 
   const onSubmit = async (data: FormData) => {
     setError(null);
