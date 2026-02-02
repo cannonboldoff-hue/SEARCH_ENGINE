@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     JSON,
+    func,
 )
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
@@ -39,7 +40,7 @@ class Person(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     display_name = Column(String(255), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
 
     visibility_settings = relationship("VisibilitySettings", back_populates="person", uselist=False)
@@ -65,7 +66,7 @@ class VisibilitySettings(Base):
     contact_preferred_salary_min = Column(Numeric(12, 2), nullable=True)
     contact_preferred_salary_max = Column(Numeric(12, 2), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
 
     person = relationship("Person", back_populates="visibility_settings")
@@ -82,7 +83,7 @@ class ContactDetails(Base):
     linkedin_url = Column(String(500), nullable=True)
     other = Column(Text, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
 
     person = relationship("Person", back_populates="contact_details")
@@ -95,7 +96,7 @@ class CreditWallet(Base):
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, unique=True)
     balance = Column(Integer, default=1000, nullable=False)
 
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
 
     person = relationship("Person", back_populates="credit_wallet")
@@ -112,7 +113,7 @@ class CreditLedger(Base):
     reference_id = Column(UUID(as_uuid=False), nullable=True)
     balance_after = Column(Integer, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (Index("ix_credit_ledger_person_id", "person_id"),)
 
@@ -126,7 +127,7 @@ class IdempotencyKey(Base):
     endpoint = Column(String(100), nullable=False)
     response_status = Column(Integer, nullable=True)
     response_body = Column(JSON, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class RawExperience(Base):
@@ -135,7 +136,7 @@ class RawExperience(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     raw_text = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     person = relationship("Person", back_populates="raw_experiences")
 
@@ -167,7 +168,7 @@ class ExperienceCard(Base):
 
     embedding = Column(Vector(384), nullable=True)  # bge-base typically 384 or 768
 
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
 
     person = relationship("Person", back_populates="experience_cards")
@@ -180,7 +181,7 @@ class Search(Base):
     searcher_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     query_text = Column(Text, nullable=False)
     filters = Column(JSON, nullable=True)  # company, team, open_to_work_only, etc.
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     searcher = relationship("Person", back_populates="searches_made", foreign_keys=[searcher_id])
     results = relationship("SearchResult", back_populates="search")
@@ -195,7 +196,7 @@ class SearchResult(Base):
     rank = Column(Integer, nullable=False)
     score = Column(Numeric(10, 6), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     search = relationship("Search", back_populates="results")
     __table_args__ = (Index("ix_search_results_search_person", "search_id", "person_id", unique=True),)
@@ -208,7 +209,7 @@ class UnlockContact(Base):
     searcher_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     target_person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     search_id = Column(UUID(as_uuid=False), ForeignKey("searches.id", ondelete="CASCADE"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
         Index("ix_unlock_contacts_searcher_target", "searcher_id", "target_person_id", "search_id", unique=True),
