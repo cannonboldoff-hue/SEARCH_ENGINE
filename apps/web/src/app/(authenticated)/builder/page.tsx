@@ -58,6 +58,7 @@ const CARD_FIELDS = [
   "constraints",
   "decisions",
   "outcome",
+  "tags",
   "company",
   "team",
   "role_title",
