@@ -1,0 +1,39 @@
+# Git and IDE
+.git
+.gitignore
+.idea
+.vscode
+*.md
+
+# API app (not needed for web build)
+apps/api
+
+# Dependencies (reinstalled in container)
+**/node_modules
+**/.pnpm-store
+
+# Build outputs
+apps/web/.next
+apps/web/out
+**/dist
+**/build
+
+# Python (not needed for web)
+**/__pycache__
+**/.venv
+**/venv
+**/*.pyc
+
+# Env and secrets
+.env
+.env.*
+*.pem
+
+# Logs and caches
+*.log
+.turbo
+.vercel
+
+# OS
+.DS_Store
+Thumbs.db
