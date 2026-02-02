@@ -8,10 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files (monorepo root context)
-COPY apps/api/pyproject.toml apps/api/alembic.ini ./
-COPY apps/api/alembic ./alembic
-COPY apps/api/src ./src
+# Copy project files (context is apps/api)
+COPY pyproject.toml alembic.ini ./
+COPY alembic ./alembic
+COPY src ./src
 
 RUN pip install --no-cache-dir -e .
 
