@@ -1,9 +1,8 @@
-services:
-  - type: pserv
-    name: search-engine-db
+databases:
+  - name: search-engine-db
     plan: free
-    ipAllowList: []
 
+services:
   - type: web
     name: search-engine-api
     runtime: docker
