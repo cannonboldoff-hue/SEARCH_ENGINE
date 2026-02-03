@@ -13,7 +13,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type ApiOptions } from "@/lib/api";
-import type { BioResponse } from "@/types";
+import { INDIA_CITIES } from "@/lib/india-cities";
+import type { BioResponse, VisibilitySettingsResponse, PatchVisibilityRequest } from "@/types";
+import { cn } from "@/lib/utils";
 
 const LINKEDIN_URL_REGEX = /^(https?:\/\/)?(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
 const DOB_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -49,15 +51,58 @@ const bioSchema = z.object({
 
 type BioForm = z.infer<typeof bioSchema>;
 
+type VisibilityMode = "open_to_work" | "open_to_contact" | "hide_contact";
+
+const defaultVisibility: VisibilitySettingsResponse = {
+  open_to_work: false,
+  open_to_contact: false,
+  work_preferred_locations: [],
+  work_preferred_salary_min: null,
+  work_preferred_salary_max: null,
+  contact_preferred_salary_min: null,
+  contact_preferred_salary_max: null,
+};
+
 export default function OnboardingBioPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [serverError, setServerError] = useState<string | null>(null);
+  const [visibilityMode, setVisibilityMode] = useState<VisibilityMode>("hide_contact");
+  const [workPreferredLocations, setWorkPreferredLocations] = useState<string[]>([]);
+  const [workSalaryMin, setWorkSalaryMin] = useState<string>("");
 
   const { data: bio, isLoading, isError: bioError } = useQuery({
     queryKey: ["bio"],
     queryFn: () => api<BioResponse>("/me/bio"),
   });
+
+  const { data: visibility, isLoading: visibilityLoading } = useQuery({
+    queryKey: ["visibility"],
+    queryFn: async () => {
+      try {
+        return await api<VisibilitySettingsResponse>("/me/visibility");
+      } catch {
+        return defaultVisibility;
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (!visibility) return;
+    if (visibility.open_to_work) {
+      setVisibilityMode("open_to_work");
+      setWorkPreferredLocations(visibility.work_preferred_locations ?? []);
+      setWorkSalaryMin(visibility.work_preferred_salary_min != null ? String(visibility.work_preferred_salary_min) : "");
+    } else if (visibility.open_to_contact) {
+      setVisibilityMode("open_to_contact");
+      setWorkPreferredLocations([]);
+      setWorkSalaryMin("");
+    } else {
+      setVisibilityMode("hide_contact");
+      setWorkPreferredLocations([]);
+      setWorkSalaryMin("");
+    }
+  }, [visibility]);
 
   const { register, control, handleSubmit, formState: { errors }, setValue } = useForm<BioForm>({
     resolver: zodResolver(bioSchema),
@@ -125,38 +170,90 @@ export default function OnboardingBioPage() {
         method: "PUT",
         body,
       } as ApiOptions),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bio"] });
-      router.push("/home");
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["bio"] }),
     onError: (e: Error) => setServerError(e.message),
   });
 
-  const onSubmit = (data: BioForm) => {
-    setServerError(null);
-    putBio.mutate({
-      first_name: data.first_name,
-      last_name: data.last_name,
-      date_of_birth: data.date_of_birth,
-      current_city: data.current_city,
-      profile_photo_url: data.profile_photo_url || undefined,
-      school: data.school,
-      college: data.college || undefined,
-      current_company: data.current_company || undefined,
-      past_companies: data.past_companies?.filter((p) => p.company_name.trim()).length
-        ? data.past_companies?.map((p) => ({
-            company_name: p.company_name,
-            role: p.role || undefined,
-            years: p.years || undefined,
-          }))
-        : undefined,
-      email: data.email,
-      linkedin_url: data.linkedin_url?.trim() || undefined,
-      phone: data.phone?.trim() || undefined,
-    });
+  const patchVisibility = useMutation({
+    mutationFn: (body: PatchVisibilityRequest) =>
+      api<VisibilitySettingsResponse>("/me/visibility", { method: "PATCH", body } as ApiOptions),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["visibility"] }),
+    onError: (e: Error) => setServerError(e.message),
+  });
+
+  const buildVisibilityPayload = (): PatchVisibilityRequest => {
+    if (visibilityMode === "open_to_work") {
+      const minNum = workSalaryMin.trim() ? Number(workSalaryMin) : undefined;
+      return {
+        open_to_work: true,
+        open_to_contact: false,
+        work_preferred_locations: workPreferredLocations.length ? workPreferredLocations : undefined,
+        work_preferred_salary_min: minNum != null && !Number.isNaN(minNum) ? minNum : null,
+        work_preferred_salary_max: null,
+        contact_preferred_salary_min: null,
+        contact_preferred_salary_max: null,
+      };
+    }
+    if (visibilityMode === "open_to_contact") {
+      return {
+        open_to_work: false,
+        open_to_contact: true,
+        work_preferred_locations: [],
+        work_preferred_salary_min: null,
+        work_preferred_salary_max: null,
+        contact_preferred_salary_min: null,
+        contact_preferred_salary_max: null,
+      };
+    }
+    return {
+      open_to_work: false,
+      open_to_contact: false,
+      work_preferred_locations: [],
+      work_preferred_salary_min: null,
+      work_preferred_salary_max: null,
+      contact_preferred_salary_min: null,
+      contact_preferred_salary_max: null,
+    };
   };
 
-  if (isLoading) {
+  const onSubmit = async (data: BioForm) => {
+    setServerError(null);
+    try {
+      await patchVisibility.mutateAsync(buildVisibilityPayload());
+      putBio.mutate(
+        {
+          first_name: data.first_name,
+          last_name: data.last_name,
+          date_of_birth: data.date_of_birth,
+          current_city: data.current_city,
+          profile_photo_url: data.profile_photo_url || undefined,
+          school: data.school,
+          college: data.college || undefined,
+          current_company: data.current_company || undefined,
+          past_companies: data.past_companies?.filter((p) => p.company_name.trim()).length
+            ? data.past_companies?.map((p) => ({
+                company_name: p.company_name,
+                role: p.role || undefined,
+                years: p.years || undefined,
+              }))
+            : undefined,
+          email: data.email,
+          linkedin_url: data.linkedin_url?.trim() || undefined,
+          phone: data.phone?.trim() || undefined,
+        },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["visibility"] });
+            router.push("/home");
+          },
+        }
+      );
+    } catch {
+      // Errors handled by mutation onError
+    }
+  };
+
+  if (isLoading || visibilityLoading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="animate-pulse text-muted-foreground">Loading…</div>
@@ -329,9 +426,89 @@ export default function OnboardingBioPage() {
               </div>
             </section>
 
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground">Visibility</h3>
+              <p className="text-sm text-muted-foreground">
+                Choose how you want to appear in search: Open to Work, Open to Contact, or Hide Contact. If you select Hide Contact, you will not appear in search results at all.
+              </p>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="visibility_mode"
+                    checked={visibilityMode === "open_to_work"}
+                    onChange={() => setVisibilityMode("open_to_work")}
+                    className="h-4 w-4 border-border"
+                  />
+                  <span className="text-sm font-medium">Open to Work</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="visibility_mode"
+                    checked={visibilityMode === "open_to_contact"}
+                    onChange={() => setVisibilityMode("open_to_contact")}
+                    className="h-4 w-4 border-border"
+                  />
+                  <span className="text-sm font-medium">Open to Contact</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="visibility_mode"
+                    checked={visibilityMode === "hide_contact"}
+                    onChange={() => setVisibilityMode("hide_contact")}
+                    className="h-4 w-4 border-border"
+                  />
+                  <span className="text-sm font-medium">Hide Contact</span>
+                </label>
+              </div>
+
+              {visibilityMode === "open_to_work" && (
+                <div className="mt-4 space-y-4 pl-6 border-l-2 border-border/50">
+                  <div className="space-y-2">
+                    <Label>Preferred locations (cities in India)</Label>
+                    <select
+                      multiple
+                      value={workPreferredLocations}
+                      onChange={(e) => {
+                        const selected = Array.from(e.target.selectedOptions, (o) => o.value);
+                        setWorkPreferredLocations(selected);
+                      }}
+                      className={cn(
+                        "w-full min-h-[120px] rounded-md border border-input bg-background px-3 py-2 text-sm",
+                        "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      )}
+                    >
+                      {INDIA_CITIES.map((city) => (
+                        <option key={city} value={city}>
+                          {city}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      Hold Ctrl (Windows) or Cmd (Mac) to select multiple cities.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="work_salary_min">Minimum package (₹/year, optional)</Label>
+                    <Input
+                      id="work_salary_min"
+                      type="number"
+                      min={0}
+                      placeholder="e.g. 800000"
+                      value={workSalaryMin}
+                      onChange={(e) => setWorkSalaryMin(e.target.value)}
+                      className="bg-background"
+                    />
+                  </div>
+                </div>
+              )}
+            </section>
+
             <div className="pt-4 flex flex-col sm:flex-row gap-3">
-              <Button type="submit" className="w-full sm:w-auto" size="lg" disabled={putBio.isPending}>
-                {putBio.isPending ? "Saving…" : "Save & continue to Discover"}
+              <Button type="submit" className="w-full sm:w-auto" size="lg" disabled={putBio.isPending || patchVisibility.isPending}>
+                {putBio.isPending || patchVisibility.isPending ? "Saving…" : "Save & continue to Discover"}
               </Button>
               <p className="text-sm text-muted-foreground self-center sm:self-center">
                 Next: add experience in the builder, or start searching.

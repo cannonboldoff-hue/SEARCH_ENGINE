@@ -90,3 +90,23 @@ export type BioResponse = {
   phone: string | null;
   complete: boolean;
 };
+
+export type VisibilitySettingsResponse = {
+  open_to_work: boolean;
+  work_preferred_locations: string[];
+  work_preferred_salary_min: number | null;
+  work_preferred_salary_max: number | null;
+  open_to_contact: boolean;
+  contact_preferred_salary_min: number | null;
+  contact_preferred_salary_max: number | null;
+};
+
+export type PatchVisibilityRequest = {
+  open_to_work?: boolean;
+  work_preferred_locations?: string[];
+  work_preferred_salary_min?: number | null;
+  work_preferred_salary_max?: number | null;
+  open_to_contact?: boolean;
+  contact_preferred_salary_min?: number | null;
+  contact_preferred_salary_max?: number | null;
+};

@@ -120,6 +120,16 @@ async def run_search(
     if not ranked:
         ranked = [(str(pid), 0.0) for pid in pid_list[:50]]
 
+    # Exclude "Hide Contact": anyone with both open_to_work=False and open_to_contact=False does not appear in search
+    hidden_result = await db.execute(
+        select(VisibilitySettings.person_id).where(
+            VisibilitySettings.open_to_work == False,
+            VisibilitySettings.open_to_contact == False,
+        )
+    )
+    hidden_ids = {r[0] for r in hidden_result.fetchall()}
+    ranked = [(pid, score) for pid, score in ranked if pid not in hidden_ids]
+
     if open_to_work_only:
         vis_result = await db.execute(
             select(VisibilitySettings.person_id).where(VisibilitySettings.open_to_work == True)
