@@ -1,17 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import Link from "next/link";
-import { Coins, LogOut, User } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { LogOut, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import { useCredits } from "@/hooks";
 
 export default function SettingsPage() {
   const { user, logout } = useAuth();
-  const { data: credits } = useCredits();
 
   return (
     <motion.div
@@ -22,39 +18,9 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-2xl font-semibold">Settings</h1>
         <p className="text-muted-foreground mt-1">
-          Account and credit balance.
+          Account settings.
         </p>
       </div>
-
-      <Card className="glass border-border/50 overflow-hidden">
-        <CardHeader className="border-b border-border/50">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-primary/20 flex items-center justify-center">
-              <Coins className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <CardTitle className="text-lg">Credits</CardTitle>
-              <CardDescription>
-                Search costs 1 credit. Unlocking contact costs 1 credit. New accounts start with 1000.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-6">
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-semibold tabular-nums">
-              {credits?.balance ?? "—"}
-            </span>
-            <span className="text-muted-foreground">credits</span>
-          </div>
-          <Link
-            href="/credits"
-            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-4 inline-flex")}
-          >
-            Buy credits
-          </Link>
-        </CardContent>
-      </Card>
 
       <Card className="glass border-border/50 overflow-hidden">
         <CardHeader className="border-b border-border/50">

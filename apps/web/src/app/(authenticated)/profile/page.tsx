@@ -1,49 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { api } from "@/lib/api";
-import type { BioResponse, ExperienceCard } from "@/types";
+import { PageLoading } from "@/components/page-loading";
+import { PageError } from "@/components/page-error";
+import { useBio, useExperienceCards } from "@/hooks";
 
 export default function ProfilePage() {
-  const { data: bio, isLoading: loadingBio, isError: bioError } = useQuery({
-    queryKey: ["bio"],
-    queryFn: () => api<BioResponse>("/me/bio"),
-  });
-
-  const { data: experienceCards = [], isLoading: loadingCards, isError: cardsError } = useQuery({
-    queryKey: ["experience-cards"],
-    queryFn: () => api<ExperienceCard[]>("/me/experience-cards"),
-  });
+  const { data: bio, isLoading: loadingBio, isError: bioError } = useBio();
+  const { data: experienceCards = [], isLoading: loadingCards, isError: cardsError } = useExperienceCards();
 
   const isLoading = loadingBio || loadingCards;
 
   if (isLoading) {
-    return (
-      <motion.div
-        className="py-8 flex justify-center"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-      >
-        <motion.div
-          className="text-muted-foreground"
-          animate={{ opacity: [0.5, 1, 0.5] }}
-          transition={{ duration: 1.2, repeat: Infinity }}
-        >
-          Loading profile…
-        </motion.div>
-      </motion.div>
-    );
+    return <PageLoading message="Loading profile…" className="py-8 flex justify-center" />;
   }
 
   if (bioError || cardsError) {
     return (
-      <div className="py-8 text-center text-destructive">
-        Failed to load profile. Please try again.
-      </div>
+      <PageError
+        message="Failed to load profile. Please try again."
+        backHref="/home"
+        backLabel="← Go home"
+        className="py-8"
+      />
     );
   }
 

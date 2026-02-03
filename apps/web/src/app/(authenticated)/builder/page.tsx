@@ -2,25 +2,20 @@
 
 import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import Link from "next/link";
-import {
-  Building2,
-  Code2,
-  FlaskConical,
-  Rocket,
-  Trash2,
-  TrendingUp,
-} from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { BackLink } from "@/components/back-link";
+import { TiltCard } from "@/components/tilt-card";
+import { CardTypeIcon } from "@/components/builder/card-type-icon";
+import { SaveCardsModal } from "@/components/builder/save-cards-modal";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { TiltCard } from "@/components/tilt-card";
+import { useExperienceCards, EXPERIENCE_CARDS_QUERY_KEY } from "@/hooks";
 import type { DraftCard, DraftSet, ExperienceCard } from "@/types";
 
 const CARD_FIELDS = [
@@ -38,16 +33,6 @@ const CARD_FIELDS = [
 
 const LONG_TEXT_FIELDS = new Set(["context", "constraints", "decisions", "outcome"]);
 
-function cardTypeIcon(tags: string[], title: string | null) {
-  const t = (tags || []).map((x) => x.toLowerCase()).join(" ");
-  const tit = (title || "").toLowerCase();
-  if (tit.includes("research") || t.includes("research")) return <FlaskConical className="h-4 w-4 text-violet-400" />;
-  if (tit.includes("startup") || t.includes("startup")) return <Rocket className="h-4 w-4 text-amber-400" />;
-  if (tit.includes("quant") || t.includes("quant") || tit.includes("finance")) return <TrendingUp className="h-4 w-4 text-emerald-400" />;
-  if (tit.includes("open-source") || t.includes("open-source") || t.includes("opensource")) return <Code2 className="h-4 w-4 text-blue-400" />;
-  return <Building2 className="h-4 w-4 text-muted-foreground" />;
-}
-
 export default function BuilderPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -63,10 +48,7 @@ export default function BuilderPage() {
   const [isSavingAll, setIsSavingAll] = useState(false);
   const prevDraftCardsRef = useRef<DraftCard[]>([]);
 
-  const { data: savedCards = [], isLoading: loadingCards } = useQuery({
-    queryKey: ["experience-cards"],
-    queryFn: () => api<ExperienceCard[]>("/me/experience-cards"),
-  });
+  const { data: savedCards = [], isLoading: loadingCards } = useExperienceCards();
 
   const extractDraft = useCallback(async () => {
     if (!rawText.trim()) {
@@ -151,19 +133,13 @@ export default function BuilderPage() {
       role_title?: string;
       time_range?: string;
     }) => api<ExperienceCard>("/experience-cards", { method: "POST", body: payload }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experience-cards"] }),
-  });
-
-  const patchCardMutation = useMutation({
-    mutationFn: ({ cardId, body }: { cardId: string; body: Record<string, unknown> }) =>
-      api<ExperienceCard>(`/experience-cards/${cardId}`, { method: "PATCH", body }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experience-cards"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY }),
   });
 
   const hideCardMutation = useMutation({
     mutationFn: (cardId: string) =>
       api<ExperienceCard>(`/experience-cards/${cardId}/hide`, { method: "POST" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experience-cards"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY }),
   });
 
   const saveDraftCard = useCallback(
@@ -213,11 +189,11 @@ export default function BuilderPage() {
         )
       );
       setSaveModalOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["experience-cards"] });
+      queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
       router.push("/home");
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to save cards");
-      queryClient.invalidateQueries({ queryKey: ["experience-cards"] });
+      queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
     } finally {
       setIsSavingAll(false);
     }
@@ -250,12 +226,7 @@ export default function BuilderPage() {
       variants={containerVariants}
     >
       <motion.div className="mb-4" variants={panelVariants}>
-        <Link
-          href="/profile"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1 group"
-        >
-          <span className="transition-transform group-hover:-translate-x-0.5">←</span> Back to profile
-        </Link>
+        <BackLink href="/profile" />
       </motion.div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
         {/* Left: Raw input */}
@@ -384,7 +355,7 @@ export default function BuilderPage() {
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="text-muted-foreground flex-shrink-0">
-                                {cardTypeIcon(card.tags, card.title)}
+                                <CardTypeIcon tags={card.tags ?? []} title={card.title} />
                               </span>
                               <h3 className="font-semibold text-sm truncate">
                                 {card.title || card.company || "Untitled"}
@@ -537,47 +508,13 @@ export default function BuilderPage() {
         </motion.div>
       </div>
 
-      {/* Save confirmation modal */}
-      <AnimatePresence>
-      {saveModalOpen && (
-        <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          onClick={() => setSaveModalOpen(false)}
-        >
-          <motion.div
-            className="rounded-xl glass border border-border p-6 max-w-md w-full mx-4 shadow-xl glow-ring depth-shadow-lg animate-pulse-glow"
-            style={{ transformStyle: "preserve-3d", perspective: 1200 }}
-            initial={{ opacity: 0, scale: 0.92, y: 24, rotateX: 16 }}
-            animate={{ opacity: 1, scale: 1, y: 0, rotateX: 0 }}
-            exit={{ opacity: 0, scale: 0.92, rotateX: 12 }}
-            transition={{ type: "spring", stiffness: 280, damping: 26 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold">Save experience cards?</h3>
-            <p className="text-sm text-muted-foreground mt-2">
-              This will update your searchable profile.
-            </p>
-            {saveError && (
-              <div className="text-sm text-destructive bg-destructive/10 rounded-md p-3 mt-3">
-                {saveError}
-              </div>
-            )}
-            <div className="flex gap-2 mt-6 justify-end">
-              <Button variant="outline" onClick={() => setSaveModalOpen(false)} disabled={isSavingAll}>
-                Cancel
-              </Button>
-              <Button onClick={handleSaveCards} disabled={isSavingAll}>
-                {isSavingAll ? "Saving…" : "Confirm Save"}
-              </Button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-      </AnimatePresence>
+      <SaveCardsModal
+        open={saveModalOpen}
+        onClose={() => setSaveModalOpen(false)}
+        onConfirm={handleSaveCards}
+        isSaving={isSavingAll}
+        error={saveError}
+      />
     </motion.div>
   );
 }

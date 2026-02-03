@@ -1,66 +1,39 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FormField } from "@/components/ui/form-field";
+import { BackLink } from "@/components/back-link";
+import { PageLoading } from "@/components/page-loading";
+import { PageError } from "@/components/page-error";
+import { ErrorMessage } from "@/components/error-message";
+import { VisibilitySection, type VisibilityMode } from "@/components/onboarding/visibility-section";
 import { api, type ApiOptions } from "@/lib/api";
-import { INDIA_CITIES } from "@/lib/india-cities";
-import type { BioResponse, VisibilitySettingsResponse, PatchVisibilityRequest } from "@/types";
-import { cn } from "@/lib/utils";
+import { bioSchema, bioFormDefaultValues, type BioForm } from "@/lib/bio-schema";
+import type { PatchVisibilityRequest, VisibilitySettingsResponse } from "@/types";
+import { useBio, useVisibility, BIO_QUERY_KEY, VISIBILITY_QUERY_KEY } from "@/hooks";
 
-const LINKEDIN_URL_REGEX = /^(https?:\/\/)?(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
-const DOB_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-const bioSchema = z.object({
-  first_name: z.string().min(1, "First name is required"),
-  last_name: z.string().min(1, "Last name is required"),
-  date_of_birth: z.string().min(1, "Date of birth is required").refine(
-    (val) => DOB_REGEX.test(val),
-    "Use YYYY-MM-DD format"
-  ),
-  current_city: z.string().min(1, "Current city is required"),
-  profile_photo_url: z.string().optional(),
-  school: z.string().min(1, "School is required"),
-  college: z.string().optional(),
-  current_company: z.string().optional(),
-  past_companies: z.array(
-    z.object({
-      company_name: z.string(),
-      role: z.string().optional(),
-      years: z.string().optional(),
-    })
-  ).optional(),
-  email: z.string().email("Valid email is required"),
-  linkedin_url: z
-    .string()
-    .optional()
-    .refine((val) => !val || val.trim() === "" || LINKEDIN_URL_REGEX.test(val), {
-      message: "Enter a valid LinkedIn profile URL (e.g. https://linkedin.com/in/username)",
-    }),
-  phone: z.string().optional(),
-});
-
-type BioForm = z.infer<typeof bioSchema>;
-
-type VisibilityMode = "open_to_work" | "open_to_contact" | "hide_contact";
-
-const defaultVisibility: VisibilitySettingsResponse = {
-  open_to_work: false,
-  open_to_contact: false,
-  work_preferred_locations: [],
-  work_preferred_salary_min: null,
-  work_preferred_salary_max: null,
-  contact_preferred_salary_min: null,
-  contact_preferred_salary_max: null,
+type PutBioBody = {
+  first_name?: string;
+  last_name?: string;
+  date_of_birth?: string;
+  current_city?: string;
+  profile_photo_url?: string;
+  school?: string;
+  college?: string;
+  current_company?: string;
+  past_companies?: { company_name: string; role?: string; years?: string }[];
+  email?: string;
+  linkedin_url?: string;
+  phone?: string;
 };
 
 export default function OnboardingBioPage() {
@@ -71,21 +44,8 @@ export default function OnboardingBioPage() {
   const [workPreferredLocations, setWorkPreferredLocations] = useState<string[]>([]);
   const [workSalaryMin, setWorkSalaryMin] = useState<string>("");
 
-  const { data: bio, isLoading, isError: bioError } = useQuery({
-    queryKey: ["bio"],
-    queryFn: () => api<BioResponse>("/me/bio"),
-  });
-
-  const { data: visibility, isLoading: visibilityLoading } = useQuery({
-    queryKey: ["visibility"],
-    queryFn: async () => {
-      try {
-        return await api<VisibilitySettingsResponse>("/me/visibility");
-      } catch {
-        return defaultVisibility;
-      }
-    },
-  });
+  const { data: bio, isLoading, isError: bioError } = useBio();
+  const { data: visibility, isLoading: visibilityLoading } = useVisibility();
 
   useEffect(() => {
     if (!visibility) return;
@@ -106,20 +66,7 @@ export default function OnboardingBioPage() {
 
   const { register, control, handleSubmit, formState: { errors }, setValue } = useForm<BioForm>({
     resolver: zodResolver(bioSchema),
-    defaultValues: {
-      first_name: "",
-      last_name: "",
-      date_of_birth: "",
-      current_city: "",
-      profile_photo_url: "",
-      school: "",
-      college: "",
-      current_company: "",
-      past_companies: [],
-      email: "",
-      linkedin_url: "",
-      phone: "",
-    },
+    defaultValues: bioFormDefaultValues,
   });
 
   const { fields, append, remove } = useFieldArray({ control, name: "past_companies" });
@@ -152,32 +99,16 @@ export default function OnboardingBioPage() {
   }, [bio, setValue]);
 
   const putBio = useMutation({
-    mutationFn: (body: {
-      first_name?: string;
-      last_name?: string;
-      date_of_birth?: string;
-      current_city?: string;
-      profile_photo_url?: string;
-      school?: string;
-      college?: string;
-      current_company?: string;
-      past_companies?: { company_name: string; role?: string; years?: string }[];
-      email?: string;
-      linkedin_url?: string;
-      phone?: string;
-    }) =>
-      api("/me/bio", {
-        method: "PUT",
-        body,
-      } as ApiOptions),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["bio"] }),
+    mutationFn: (body: PutBioBody) =>
+      api("/me/bio", { method: "PUT", body } as ApiOptions),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: BIO_QUERY_KEY }),
     onError: (e: Error) => setServerError(e.message),
   });
 
   const patchVisibility = useMutation({
     mutationFn: (body: PatchVisibilityRequest) =>
       api<VisibilitySettingsResponse>("/me/visibility", { method: "PATCH", body } as ApiOptions),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["visibility"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: VISIBILITY_QUERY_KEY }),
     onError: (e: Error) => setServerError(e.message),
   });
 
@@ -243,7 +174,7 @@ export default function OnboardingBioPage() {
         },
         {
           onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["visibility"] });
+            queryClient.invalidateQueries({ queryKey: VISIBILITY_QUERY_KEY });
             router.push("/home");
           },
         }
@@ -254,26 +185,16 @@ export default function OnboardingBioPage() {
   };
 
   if (isLoading || visibilityLoading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading…</div>
-      </div>
-    );
+    return <PageLoading message="Loading…" />;
   }
 
   if (bioError) {
     return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4 max-w-md">
-          <p className="text-destructive">Failed to load your bio. You may need to sign in again.</p>
-          <Link
-            href="/profile"
-            className="text-sm text-primary font-medium hover:underline"
-          >
-            ← Back to profile
-          </Link>
-        </div>
-      </div>
+      <PageError
+        message="Failed to load your bio. You may need to sign in again."
+        backHref="/profile"
+        backLabel="← Back to profile"
+      />
     );
   }
 
@@ -284,12 +205,7 @@ export default function OnboardingBioPage() {
       className="max-w-[720px] mx-auto py-8"
     >
       <div className="mb-6">
-        <Link
-          href="/profile"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          ← Back to profile
-        </Link>
+        <BackLink href="/profile" className="text-sm text-muted-foreground hover:text-foreground transition-colors" />
       </div>
       <Card className="glass border-border/50 shadow-xl glow-ring overflow-hidden">
         <CardHeader className="space-y-1 border-b border-border/50">
@@ -300,71 +216,74 @@ export default function OnboardingBioPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
-            {serverError && (
-              <div className="text-sm text-destructive bg-destructive/10 rounded-md p-3">
-                {serverError}
-              </div>
-            )}
+            {serverError && <ErrorMessage message={serverError} />}
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-foreground">Profile basics</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="first_name">First name (required)</Label>
-                  <Input id="first_name" {...register("first_name")} placeholder="Jane" />
-                  {errors.first_name && (
-                    <p className="text-xs text-destructive">{errors.first_name.message}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="last_name">Last name (required)</Label>
-                  <Input id="last_name" {...register("last_name")} placeholder="Doe" />
-                  {errors.last_name && (
-                    <p className="text-xs text-destructive">{errors.last_name.message}</p>
-                  )}
-                </div>
+                <FormField
+                  id="first_name"
+                  label="First name (required)"
+                  placeholder="Jane"
+                  error={errors.first_name?.message}
+                  {...register("first_name")}
+                />
+                <FormField
+                  id="last_name"
+                  label="Last name (required)"
+                  placeholder="Doe"
+                  error={errors.last_name?.message}
+                  {...register("last_name")}
+                />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="date_of_birth">Date of birth (required, YYYY-MM-DD)</Label>
-                <Input id="date_of_birth" type="text" {...register("date_of_birth")} placeholder="1990-01-15" />
-                {errors.date_of_birth && (
-                  <p className="text-xs text-destructive">{errors.date_of_birth.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="current_city">Current city (required)</Label>
-                <Input id="current_city" {...register("current_city")} placeholder="San Francisco" />
-                {errors.current_city && (
-                  <p className="text-xs text-destructive">{errors.current_city.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="profile_photo_url">Profile photo URL (optional)</Label>
-                <Input id="profile_photo_url" {...register("profile_photo_url")} placeholder="https://..." />
-              </div>
+              <FormField
+                id="date_of_birth"
+                label="Date of birth (required, YYYY-MM-DD)"
+                type="text"
+                placeholder="1990-01-15"
+                error={errors.date_of_birth?.message}
+                {...register("date_of_birth")}
+              />
+              <FormField
+                id="current_city"
+                label="Current city (required)"
+                placeholder="San Francisco"
+                error={errors.current_city?.message}
+                {...register("current_city")}
+              />
+              <FormField
+                id="profile_photo_url"
+                label="Profile photo URL (optional)"
+                placeholder="https://..."
+                {...register("profile_photo_url")}
+              />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-foreground">Education</h3>
-              <div className="space-y-2">
-                <Label htmlFor="school">School (required)</Label>
-                <Input id="school" {...register("school")} placeholder="High school or equivalent" />
-                {errors.school && (
-                  <p className="text-xs text-destructive">{errors.school.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="college">College (optional)</Label>
-                <Input id="college" {...register("college")} placeholder="University name" />
-              </div>
+              <FormField
+                id="school"
+                label="School (required)"
+                placeholder="High school or equivalent"
+                error={errors.school?.message}
+                {...register("school")}
+              />
+              <FormField
+                id="college"
+                label="College (optional)"
+                placeholder="University name"
+                {...register("college")}
+              />
             </section>
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-foreground">Work</h3>
-              <div className="space-y-2">
-                <Label htmlFor="current_company">Current company (optional)</Label>
-                <Input id="current_company" {...register("current_company")} placeholder="Company name" />
-              </div>
+              <FormField
+                id="current_company"
+                label="Current company (optional)"
+                placeholder="Company name"
+                {...register("current_company")}
+              />
               <div className="space-y-2">
                 <Label>Past companies (optional)</Label>
                 {fields.map((field, i) => (
@@ -402,112 +321,45 @@ export default function OnboardingBioPage() {
 
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-foreground">Contact</h3>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email (required)</Label>
-                <Input id="email" type="email" {...register("email")} placeholder="you@example.com" />
-                {errors.email && (
-                  <p className="text-xs text-destructive">{errors.email.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="linkedin_url">LinkedIn URL (optional)</Label>
-                <Input
-                  id="linkedin_url"
-                  {...register("linkedin_url")}
-                  placeholder="https://linkedin.com/in/username"
-                />
-                {errors.linkedin_url && (
-                  <p className="text-xs text-destructive">{errors.linkedin_url.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone number (optional)</Label>
-                <Input id="phone" {...register("phone")} placeholder="+1 234 567 8900" />
-              </div>
+              <FormField
+                id="email"
+                label="Email (required)"
+                type="email"
+                placeholder="you@example.com"
+                error={errors.email?.message}
+                {...register("email")}
+              />
+              <FormField
+                id="linkedin_url"
+                label="LinkedIn URL (optional)"
+                placeholder="https://linkedin.com/in/username"
+                error={errors.linkedin_url?.message}
+                {...register("linkedin_url")}
+              />
+              <FormField
+                id="phone"
+                label="Phone number (optional)"
+                placeholder="+1 234 567 8900"
+                {...register("phone")}
+              />
             </section>
 
-            <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-foreground">Visibility</h3>
-              <p className="text-sm text-muted-foreground">
-                Choose how you want to appear in search: Open to Work, Open to Contact, or Hide Contact. If you select Hide Contact, you will not appear in search results at all.
-              </p>
-              <div className="flex flex-col gap-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="visibility_mode"
-                    checked={visibilityMode === "open_to_work"}
-                    onChange={() => setVisibilityMode("open_to_work")}
-                    className="h-4 w-4 border-border"
-                  />
-                  <span className="text-sm font-medium">Open to Work</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="visibility_mode"
-                    checked={visibilityMode === "open_to_contact"}
-                    onChange={() => setVisibilityMode("open_to_contact")}
-                    className="h-4 w-4 border-border"
-                  />
-                  <span className="text-sm font-medium">Open to Contact</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="visibility_mode"
-                    checked={visibilityMode === "hide_contact"}
-                    onChange={() => setVisibilityMode("hide_contact")}
-                    className="h-4 w-4 border-border"
-                  />
-                  <span className="text-sm font-medium">Hide Contact</span>
-                </label>
-              </div>
-
-              {visibilityMode === "open_to_work" && (
-                <div className="mt-4 space-y-4 pl-6 border-l-2 border-border/50">
-                  <div className="space-y-2">
-                    <Label>Preferred locations (cities in India)</Label>
-                    <select
-                      multiple
-                      value={workPreferredLocations}
-                      onChange={(e) => {
-                        const selected = Array.from(e.target.selectedOptions, (o) => o.value);
-                        setWorkPreferredLocations(selected);
-                      }}
-                      className={cn(
-                        "w-full min-h-[120px] rounded-md border border-input bg-background px-3 py-2 text-sm",
-                        "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                      )}
-                    >
-                      {INDIA_CITIES.map((city) => (
-                        <option key={city} value={city}>
-                          {city}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-muted-foreground">
-                      Hold Ctrl (Windows) or Cmd (Mac) to select multiple cities.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="work_salary_min">Minimum package (₹/year, optional)</Label>
-                    <Input
-                      id="work_salary_min"
-                      type="number"
-                      min={0}
-                      placeholder="e.g. 800000"
-                      value={workSalaryMin}
-                      onChange={(e) => setWorkSalaryMin(e.target.value)}
-                      className="bg-background"
-                    />
-                  </div>
-                </div>
-              )}
-            </section>
+            <VisibilitySection
+              visibilityMode={visibilityMode}
+              onVisibilityModeChange={setVisibilityMode}
+              workPreferredLocations={workPreferredLocations}
+              onWorkPreferredLocationsChange={setWorkPreferredLocations}
+              workSalaryMin={workSalaryMin}
+              onWorkSalaryMinChange={setWorkSalaryMin}
+            />
 
             <div className="pt-4 flex flex-col sm:flex-row gap-3">
-              <Button type="submit" className="w-full sm:w-auto" size="lg" disabled={putBio.isPending || patchVisibility.isPending}>
+              <Button
+                type="submit"
+                className="w-full sm:w-auto"
+                size="lg"
+                disabled={putBio.isPending || patchVisibility.isPending}
+              >
                 {putBio.isPending || patchVisibility.isPending ? "Saving…" : "Save & continue to Discover"}
               </Button>
               <p className="text-sm text-muted-foreground self-center sm:self-center">
