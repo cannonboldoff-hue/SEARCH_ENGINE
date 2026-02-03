@@ -7,7 +7,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
   Building2,
-  Check as CheckIcon,
   Code2,
   FlaskConical,
   Pencil,
@@ -36,6 +35,8 @@ const CARD_FIELDS = [
   "role_title",
   "time_range",
 ] as const;
+
+const LONG_TEXT_FIELDS = new Set(["context", "constraints", "decisions", "outcome"]);
 
 function cardTypeIcon(tags: string[], title: string | null) {
   const t = (tags || []).map((x) => x.toLowerCase()).join(" ");
@@ -98,6 +99,7 @@ export default function BuilderPage() {
         );
       });
       setDraftCards(nextCards);
+      setExpandedCards(new Set(nextCards.map((c) => c.draft_card_id)));
       prevDraftCardsRef.current = nextCards;
     } catch (e) {
       console.error("Extract failed", e);
@@ -301,7 +303,7 @@ export default function BuilderPage() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
                         className={cn(
-                          "rounded-xl border border-border/50 glass overflow-hidden hover-lift",
+                          "rounded-xl border border-border/50 glass overflow-hidden hover-lift max-w-full min-w-0",
                           "border-l-4 border-l-primary"
                         )}
                       >
@@ -327,15 +329,6 @@ export default function BuilderPage() {
                                 title="Edit"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                onClick={() => saveDraftCard(card)}
-                                title="Save as card"
-                              >
-                                <CheckIcon className="h-3.5 w-3.5" />
                               </Button>
                             </div>
                           </div>
@@ -373,38 +366,49 @@ export default function BuilderPage() {
                             {card.company && <span>{card.company}</span>}
                           </div>
                           {isExpanded && (
-                            <div className="mt-4 pt-4 border-t border-border/50 space-y-3">
+                            <div className="mt-4 pt-4 border-t border-border/50 space-y-3 min-w-0">
                               {CARD_FIELDS.map((field) => (
-                                <div key={field} className="grid grid-cols-[100px_1fr] gap-2 items-center">
-                                  <Label className="text-xs capitalize">{field.replace(/_/g, " ")}</Label>
-                                  {field === "tags" ? (
-                                    <Input
-                                      value={(card.tags || []).join(", ")}
-                                      onChange={(e) =>
-                                        setFieldEdit(
-                                          card.draft_card_id,
-                                          "tags",
-                                          e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
-                                        )
-                                      }
-                                      placeholder="tag1, tag2"
-                                      className="text-sm"
-                                    />
-                                  ) : (
-                                    <Input
-                                      value={(card[field] as string) ?? ""}
-                                      onChange={(e) =>
-                                        setFieldEdit(card.draft_card_id, field, e.target.value)
-                                      }
-                                      placeholder={field}
-                                      className="text-sm"
-                                    />
-                                  )}
+                                <div key={field} className="grid grid-cols-[100px_1fr] gap-2 items-start min-w-0">
+                                  <Label className="text-xs capitalize pt-2">{field.replace(/_/g, " ")}</Label>
+                                  <div className="min-w-0">
+                                    {field === "tags" ? (
+                                      <Input
+                                        value={(card.tags || []).join(", ")}
+                                        onChange={(e) =>
+                                          setFieldEdit(
+                                            card.draft_card_id,
+                                            "tags",
+                                            e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
+                                          )
+                                        }
+                                        placeholder="tag1, tag2"
+                                        className="text-sm w-full max-w-full"
+                                      />
+                                    ) : LONG_TEXT_FIELDS.has(field) ? (
+                                      <Textarea
+                                        value={(card[field] as string) ?? ""}
+                                        onChange={(e) =>
+                                          setFieldEdit(card.draft_card_id, field, e.target.value)
+                                        }
+                                        placeholder={field}
+                                        className="text-sm w-full max-w-full min-h-[80px] resize-y"
+                                      />
+                                    ) : (
+                                      <Input
+                                        value={(card[field] as string) ?? ""}
+                                        onChange={(e) =>
+                                          setFieldEdit(card.draft_card_id, field, e.target.value)
+                                        }
+                                        placeholder={field}
+                                        className="text-sm w-full max-w-full"
+                                      />
+                                    )}
+                                  </div>
                                 </div>
                               ))}
-                              <div className="flex gap-2">
+                              <div className="flex gap-2 pt-1">
                                 <Button size="sm" onClick={() => saveDraftCard(card)} disabled={createCardMutation.isPending}>
-                                  Save as card
+                                  Save
                                 </Button>
                                 <Button size="sm" variant="outline" onClick={() => setEditingCardId(null)}>
                                   Done

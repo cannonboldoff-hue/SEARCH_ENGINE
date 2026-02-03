@@ -41,6 +41,7 @@ async def create_raw_experience(
     """Create a raw experience record."""
     raw = RawExperience(person_id=person_id, raw_text=body.raw_text)
     db.add(raw)
+    await db.flush()
     await db.refresh(raw)
     return raw
 
@@ -103,6 +104,7 @@ async def create_experience_card(
         time_range=body.time_range,
     )
     db.add(card)
+    await db.flush()
     await db.refresh(card)
     return card
 
