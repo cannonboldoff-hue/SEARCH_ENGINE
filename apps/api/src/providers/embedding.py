@@ -50,25 +50,6 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
             return out
 
 
-class DummyEmbeddingProvider(EmbeddingProvider):
-    """Deterministic hash-based vector when no API available."""
-
-    dimension = 384
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        import hashlib
-        result = []
-        for t in texts:
-            h = hashlib.sha256(t.encode()).hexdigest()
-            vec = []
-            for i in range(0, min(len(h), self.dimension * 2), 2):
-                vec.append((int(h[i : i + 2], 16) / 255.0) * 2 - 1)
-            while len(vec) < self.dimension:
-                vec.append(0.0)
-            result.append(vec[: self.dimension])
-        return result
-
-
 def get_embedding_provider() -> EmbeddingProvider:
     s = get_settings()
     if s.embed_api_base_url:
@@ -78,4 +59,6 @@ def get_embedding_provider() -> EmbeddingProvider:
             model=s.embed_model,
             dimension=384,
         )
-    return DummyEmbeddingProvider()
+    raise RuntimeError(
+        "Embedding model not configured. Set EMBED_API_BASE_URL (and EMBED_MODEL)."
+    )

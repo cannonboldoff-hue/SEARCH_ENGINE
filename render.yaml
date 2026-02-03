@@ -23,11 +23,11 @@ services:
       - key: CHAT_MODEL
         value: "openai/gpt-oss-120b"
       - key: EMBED_API_BASE_URL
-        sync: false
+        value: "https://api.opentextembeddings.com/v1"
       - key: EMBED_API_KEY
-        sync: false
+        value: ""
       - key: EMBED_MODEL
-        value: "bge-base-en-v1.5"
+        value: "bge-base-en"
     healthCheckPath: /health
 
   - type: web

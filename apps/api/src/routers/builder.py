@@ -195,11 +195,15 @@ async def approve_experience_card(
     text = " ".join(filter(None, text_parts))
     embed_provider = get_embedding_provider()
     vectors = await embed_provider.embed([text])
-    if vectors:
-        vec = vectors[0]
-        # ExperienceCard.embedding is Vector(384); truncate or pad to match
-        dim = 384
-        card.embedding = (vec[:dim] + [0.0] * (dim - len(vec))) if len(vec) < dim else vec[:dim]
+    if not vectors:
+        raise HTTPException(
+            status_code=503,
+            detail="Embedding model returned no vector. Ensure the embedding service is running.",
+        )
+    vec = vectors[0]
+    # ExperienceCard.embedding is Vector(384); truncate or pad to match
+    dim = 384
+    card.embedding = (vec[:dim] + [0.0] * (dim - len(vec))) if len(vec) < dim else vec[:dim]
     db.add(card)
     await db.commit()
     await db.refresh(card)
@@ -237,6 +241,8 @@ async def list_my_experience_cards(
     q = select(ExperienceCard).where(ExperienceCard.person_id == current_user.id)
     if status_filter:
         q = q.where(ExperienceCard.status == status_filter)
+    else:
+        q = q.where(ExperienceCard.status != ExperienceCard.HIDDEN)
     q = q.order_by(ExperienceCard.created_at.desc())
     result = await db.execute(q)
     cards = result.scalars().all()

@@ -77,12 +77,14 @@ async def search(
     embed_provider = get_embedding_provider()
     query_embedding = await embed_provider.embed([parsed.semantic_text or body.query])
     if not query_embedding:
-        query_embedding = await embed_provider.embed([body.query])
-    qvec = query_embedding[0] if query_embedding else None
+        raise HTTPException(
+            status_code=503,
+            detail="Embedding model returned no vector. Ensure the embedding service is running.",
+        )
+    qvec = query_embedding[0]
     # Stored embeddings are Vector(384); normalize query vector to same dimension
-    if qvec is not None:
-        dim = 384
-        qvec = (qvec[:dim] + [0.0] * (dim - len(qvec))) if len(qvec) < dim else qvec[:dim]
+    dim = 384
+    qvec = (qvec[:dim] + [0.0] * (dim - len(qvec))) if len(qvec) < dim else qvec[:dim]
 
     # Build filter: people with APPROVED cards; optionally open_to_work, locations, salary
     open_to_work_only = body.open_to_work_only if body.open_to_work_only is not None else parsed.open_to_work_only
@@ -114,7 +116,7 @@ async def search(
             )
         return resp
 
-    qvec_str = "[" + ",".join(str(round(x, 6)) for x in qvec) + "]" if qvec else None
+    qvec_str = "[" + ",".join(str(round(x, 6)) for x in qvec) + "]"
     ranked = []
     if qvec_str:
         sql = text("""
