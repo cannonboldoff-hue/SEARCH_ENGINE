@@ -6,7 +6,7 @@ from src.db.models import CreditWallet, CreditLedger, IdempotencyKey
 async def get_balance(db: AsyncSession, person_id: str) -> int:
     result = await db.execute(select(CreditWallet).where(CreditWallet.person_id == person_id))
     w = result.scalar_one_or_none()
-    return w.balance if w else 1000
+    return w.balance if w else 0
 
 
 async def deduct_credits(
@@ -17,7 +17,11 @@ async def deduct_credits(
     reference_type: str | None = None,
     reference_id: str | None = None,
 ) -> bool:
-    result = await db.execute(select(CreditWallet).where(CreditWallet.person_id == person_id))
+    result = await db.execute(
+        select(CreditWallet)
+        .where(CreditWallet.person_id == person_id)
+        .with_for_update()
+    )
     wallet = result.scalar_one_or_none()
     if not wallet:
         return False

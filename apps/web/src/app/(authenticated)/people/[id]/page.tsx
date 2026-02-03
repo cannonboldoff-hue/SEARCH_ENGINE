@@ -1,47 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, apiWithIdempotency } from "@/lib/api";
-
-type ExperienceCard = {
-  id: string;
-  status: string;
-  title: string | null;
-  context: string | null;
-  constraints: string | null;
-  decisions: string | null;
-  outcome: string | null;
-  tags: string[];
-  company: string | null;
-  team: string | null;
-  role_title: string | null;
-  time_range: string | null;
-};
-
-type ContactDetails = {
-  email_visible: boolean;
-  phone: string | null;
-  linkedin_url: string | null;
-  other: string | null;
-};
-
-type PersonProfile = {
-  id: string;
-  display_name: string | null;
-  open_to_work: boolean;
-  open_to_contact: boolean;
-  work_preferred_locations: string[];
-  work_preferred_salary_min: number | null;
-  work_preferred_salary_max: number | null;
-  contact_preferred_salary_min: number | null;
-  contact_preferred_salary_max: number | null;
-  experience_cards: ExperienceCard[];
-  contact: ContactDetails | null;
-};
+import { ErrorMessage } from "@/components/error-message";
+import type { PersonProfile, ContactDetails } from "@/types";
 
 export default function PersonProfilePage() {
   const params = useParams();
@@ -75,8 +42,16 @@ export default function PersonProfilePage() {
 
   if (!searchId) {
     return (
-      <div className="py-8 text-center text-muted-foreground">
-        Invalid link. Open this profile from a search result.
+      <div className="py-12 text-center max-w-md mx-auto space-y-4">
+        <p className="text-muted-foreground">
+          This profile must be opened from a search result so we can track your credit usage.
+        </p>
+        <Link
+          href="/home"
+          className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          Back to Discover
+        </Link>
       </div>
     );
   }
@@ -101,11 +76,19 @@ export default function PersonProfilePage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
       className="max-w-3xl mx-auto space-y-6"
     >
-      <Card>
+      <div className="mb-4">
+        <Link
+          href="/home"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          ← Back to Discover
+        </Link>
+      </div>
+      <Card className="glass border-border/50 overflow-hidden">
         <CardHeader>
           <CardTitle className="text-xl">
             {profile.display_name || "Anonymous"}
@@ -139,7 +122,7 @@ export default function PersonProfilePage() {
         <h2 className="text-lg font-semibold mb-3">Experience cards</h2>
         <ul className="space-y-4">
           {profile.experience_cards.map((card) => (
-            <Card key={card.id}>
+            <Card key={card.id} className="glass border-border/50 hover-lift">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">
                   {card.title || card.company || "Untitled"}
@@ -170,7 +153,7 @@ export default function PersonProfilePage() {
         </ul>
       </div>
 
-      <Card>
+      <Card className="glass border-border/50 overflow-hidden">
         <CardHeader>
           <CardTitle className="text-base">Contact</CardTitle>
         </CardHeader>
@@ -203,11 +186,15 @@ export default function PersonProfilePage() {
                 {unlockMutation.isPending ? "Unlocking…" : "Unlock contact (1 credit)"}
               </Button>
               {unlockMutation.isError && (
-                <p className="text-sm text-destructive mt-2">
-                  {unlockMutation.error instanceof Error
-                    ? unlockMutation.error.message
-                    : "Failed"}
-                </p>
+                <div className="mt-2">
+                  <ErrorMessage
+                    message={
+                      unlockMutation.error instanceof Error
+                        ? unlockMutation.error.message
+                        : "Failed"
+                    }
+                  />
+                </div>
               )}
             </div>
           ) : (

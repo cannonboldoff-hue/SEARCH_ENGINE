@@ -1,9 +1,12 @@
+import os
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
-import os
 
-database_url = os.getenv("DATABASE_URL", "postgresql://localhost/search_engine")
+from src.config import get_settings
+
+database_url = get_settings().database_url
 if "asyncpg" not in database_url:
     if database_url.startswith("postgres://"):
         database_url = "postgresql+asyncpg://" + database_url[10:]

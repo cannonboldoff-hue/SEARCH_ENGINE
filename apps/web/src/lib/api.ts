@@ -30,7 +30,7 @@ export async function api<T>(
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const url = `${API_BASE}${path}`;
-  if (!url.startsWith("http") && !url.startsWith("/")) {
+  if (!url.startsWith("http")) {
     throw new Error("Set NEXT_PUBLIC_API_BASE_URL (e.g. http://localhost:8000) and ensure the API is running.");
   }
 

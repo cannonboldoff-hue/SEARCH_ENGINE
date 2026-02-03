@@ -10,8 +10,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
+from src.config import get_settings
+
 # Use sync engine for Alembic (Render Postgres uses psycopg2)
-database_url = os.getenv("DATABASE_URL", "postgresql://localhost/search_engine")
+database_url = get_settings().database_url
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 

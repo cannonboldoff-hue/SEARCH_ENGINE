@@ -1,27 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import Link from "next/link";
 import { motion } from "framer-motion";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { api, apiWithIdempotency } from "@/lib/api";
-import { cn } from "@/lib/utils";
-
-type PersonSearchResult = {
-  id: string;
-  display_name: string | null;
-  open_to_work: boolean;
-  open_to_contact: boolean;
-};
-
-type SearchResponse = {
-  search_id: string;
-  people: PersonSearchResult[];
-};
+import { Sparkles } from "lucide-react";
+import { HeroBg } from "@/components/hero-bg";
+import { SearchForm, SearchResults } from "@/components/search";
+import type { PersonSearchResult, SearchResponse } from "@/types";
 
 export default function HomePage() {
   const [query, setQuery] = useState("");
@@ -30,130 +14,47 @@ export default function HomePage() {
   const [people, setPeople] = useState<PersonSearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: credits } = useQuery({
-    queryKey: ["credits"],
-    queryFn: () => api<{ balance: number }>("/me/credits"),
-  });
-
-  const searchMutation = useMutation({
-    mutationFn: async (q: string) => {
-      const idempotencyKey = `search-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      return apiWithIdempotency<SearchResponse>("/search", idempotencyKey, {
-        method: "POST",
-        body: { query: q, open_to_work_only: openToWorkOnly },
-      });
-    },
-    onSuccess: (data) => {
-      setSearchId(data.search_id);
-      setPeople(data.people);
-      setError(null);
-    },
-    onError: (e: Error) => {
-      setError(e.message);
-    },
-  });
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-    searchMutation.mutate(query.trim());
+  const handleSearchSuccess = (data: SearchResponse) => {
+    setSearchId(data.search_id);
+    setPeople(data.people);
+    setError(null);
   };
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold">Search</h1>
-        <p className="text-muted-foreground">
-          Find people by what they&apos;ve done. Each search costs 1 credit. You have{" "}
-          <span className="font-medium text-foreground">{credits?.balance ?? "—"} credits</span>.
-        </p>
+    <div className="relative min-h-[calc(100vh-3.5rem)]">
+      <div className="relative -mx-4 -mt-6 px-4 pt-8 pb-12 mb-8 overflow-hidden rounded-b-2xl">
+        <HeroBg />
+        <div className="relative z-10 max-w-3xl">
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+            className="flex items-center gap-2 text-primary mb-2"
+          >
+            <Sparkles className="h-5 w-5" />
+            <span className="text-sm font-medium">Trust-weighted search</span>
+          </motion.div>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+            Discover people by what they&apos;ve actually done
+          </h1>
+          <p className="text-muted-foreground mt-2 text-lg">
+            Describe who you&apos;re looking for in plain language. Each search costs 1 credit.
+          </p>
+        </div>
       </div>
 
-      <Card className="border-border/50 bg-card">
-        <CardHeader>
-          <CardTitle className="text-lg">Search by intent</CardTitle>
-          <CardDescription>
-            Describe who you&apos;re looking for in plain language.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSearch} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="query" className="sr-only">Search</Label>
-              <Input
-                id="query"
-                placeholder="Looking for someone with 3+ years quant research, persistent mindset, and production experience"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="text-base"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="open_to_work"
-                checked={openToWorkOnly}
-                onChange={(e) => setOpenToWorkOnly(e.target.checked)}
-                className="rounded border-input bg-input"
-              />
-              <Label htmlFor="open_to_work">Open to work only</Label>
-            </div>
-            {error && (
-              <div className="text-sm text-destructive bg-destructive/10 rounded-md p-3">
-                {error}
-              </div>
-            )}
-            <Button type="submit" disabled={searchMutation.isPending || !query.trim()}>
-              {searchMutation.isPending ? "Searching…" : "Search (1 credit)"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      {searchId && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-4"
-        >
-          <h2 className="text-lg font-medium">Results</h2>
-          {people.length === 0 ? (
-            <p className="text-muted-foreground">No matches.</p>
-          ) : (
-            <ul className="grid gap-3">
-              {people.map((person) => (
-                <li key={person.id}>
-                  <Link
-                    href={`/people/${person.id}?search_id=${searchId}`}
-                    className={cn(
-                      "block rounded-xl border border-border/50 p-4 transition-colors hover:bg-accent/30 bg-card"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {person.display_name || "Anonymous"}
-                      </span>
-                      <div className="flex gap-2 text-xs">
-                        {person.open_to_work && (
-                          <span className="rounded bg-green-900/40 px-2 py-0.5 text-green-400">
-                            Open to work
-                          </span>
-                        )}
-                        {person.open_to_contact && (
-                          <span className="rounded bg-blue-900/40 px-2 py-0.5 text-blue-400">
-                            Open to contact
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">View profile →</p>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </motion.div>
-      )}
+      <div className="space-y-6">
+        <SearchForm
+          query={query}
+          setQuery={setQuery}
+          openToWorkOnly={openToWorkOnly}
+          setOpenToWorkOnly={setOpenToWorkOnly}
+          error={error}
+          onSuccess={handleSearchSuccess}
+          onError={setError}
+        />
+        <SearchResults searchId={searchId} people={people} />
+      </div>
     </div>
   );
 }

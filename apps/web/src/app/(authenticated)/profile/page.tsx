@@ -6,39 +6,7 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
-
-type ExperienceCard = {
-  id: string;
-  status: string;
-  human_edited?: boolean;
-  locked?: boolean;
-  title: string | null;
-  context: string | null;
-  constraints: string | null;
-  decisions: string | null;
-  outcome: string | null;
-  tags: string[];
-  company: string | null;
-  team: string | null;
-  role_title: string | null;
-  time_range: string | null;
-};
-
-type BioResponse = {
-  first_name: string | null;
-  last_name: string | null;
-  date_of_birth: string | null;
-  current_city: string | null;
-  profile_photo_url: string | null;
-  school: string | null;
-  college: string | null;
-  current_company: string | null;
-  past_companies: { company_name: string; role?: string; years?: string }[] | null;
-  email: string | null;
-  linkedin_url: string | null;
-  phone: string | null;
-  complete: boolean;
-};
+import type { BioResponse, ExperienceCard } from "@/types";
 
 export default function ProfilePage() {
   const { data: bio, isLoading: loadingBio, isError: bioError } = useQuery({
@@ -73,13 +41,13 @@ export default function ProfilePage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
       className="max-w-3xl mx-auto space-y-6"
     >
-      <Card className="border-border/50 bg-card">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-xl">Profile</CardTitle>
+      <Card className="glass border-border/50 overflow-hidden">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50">
+          <CardTitle className="text-xl">My profile</CardTitle>
           <div className="flex gap-2">
             <Link href="/onboarding/bio">
               <Button variant="outline" size="sm">
@@ -88,7 +56,7 @@ export default function ProfilePage() {
             </Link>
             <Link href="/builder">
               <Button variant="outline" size="sm">
-                Builder
+                Experience builder
               </Button>
             </Link>
           </div>
@@ -156,17 +124,17 @@ export default function ProfilePage() {
       <section>
         <h2 className="text-lg font-semibold mb-3">Experience cards</h2>
         {experienceCards.length === 0 ? (
-          <p className="text-muted-foreground text-sm py-4">
+          <p className="text-muted-foreground text-sm py-6 rounded-xl border border-dashed border-border/50 text-center">
             No experience cards yet.{" "}
-            <Link href="/builder" className="text-primary hover:underline">
-              Add experience in the Builder
+            <Link href="/builder" className="text-primary font-medium hover:underline">
+              Add experience in the builder
             </Link>
             .
           </p>
         ) : (
           <ul className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
             {experienceCards.map((card) => (
-              <Card key={card.id} className="border-border/50 bg-card">
+              <Card key={card.id} className="glass border-border/50 hover-lift">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <CardTitle className="text-base">

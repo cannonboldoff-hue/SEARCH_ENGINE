@@ -12,7 +12,7 @@ def verify_password(plain: str, hashed: str) -> bool:
     try:
         pwd_bytes = plain.encode("utf-8")[:_MAX_BCRYPT_BYTES]
         return bcrypt.checkpw(pwd_bytes, hashed.encode("utf-8"))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, Exception):
         return False
 
 
@@ -32,6 +32,7 @@ def decode_access_token(token: str) -> Optional[str]:
     s = get_settings()
     try:
         payload = jwt.decode(token, s.jwt_secret, algorithms=[s.jwt_algorithm])
-        return payload.get("sub")
+        sub = payload.get("sub")
+        return str(sub) if sub is not None else None
     except JWTError:
         return None

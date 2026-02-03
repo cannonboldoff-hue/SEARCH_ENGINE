@@ -1,6 +1,12 @@
 from abc import ABC, abstractmethod
 
+import httpx
+
 from src.config import get_settings
+
+
+class EmbeddingServiceError(Exception):
+    """Raised when the embedding API is unavailable or returns an error (e.g. 522 timeout)."""
 
 
 class EmbeddingProvider(ABC):
@@ -30,24 +36,35 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
         return self._dimension
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        import httpx
         if not texts:
             return []
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(
-                f"{self.base_url}/embeddings",
-                json={"model": self.model, "input": texts},
-                headers=headers,
-            )
-            r.raise_for_status()
-            data = r.json()
-            out = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
-            if out:
-                self._dimension = len(out[0])
-            return out
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(
+                    f"{self.base_url}/embeddings",
+                    json={"model": self.model, "input": texts},
+                    headers=headers,
+                )
+                r.raise_for_status()
+                data = r.json()
+                try:
+                    out = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
+                    return out
+                except (KeyError, TypeError) as e:
+                    raise EmbeddingServiceError(
+                        "Embedding API returned unexpected response format."
+                    ) from e
+        except httpx.HTTPStatusError as e:
+            raise EmbeddingServiceError(
+                f"Embedding API returned {e.response.status_code}. Please try again later."
+            ) from e
+        except httpx.RequestError as e:
+            raise EmbeddingServiceError(
+                "Embedding service unavailable (timeout or connection error). Please try again later."
+            ) from e
 
 
 def get_embedding_provider() -> EmbeddingProvider:

@@ -21,7 +21,7 @@ export default function AuthenticatedLayout({
 
   if (!hasToken) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center mesh-bg">
         <div className="animate-pulse text-muted-foreground">Loading…</div>
       </div>
     );
@@ -30,7 +30,9 @@ export default function AuthenticatedLayout({
   return (
     <>
       <AppNav />
-      <main className="container mx-auto px-4 py-6">{children}</main>
+      <main className="container mx-auto px-4 py-6 min-h-[calc(100vh-3.5rem)] mesh-bg">
+        {children}
+      </main>
     </>
   );
 }

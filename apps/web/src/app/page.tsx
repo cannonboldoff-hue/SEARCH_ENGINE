@@ -3,8 +3,9 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth";
+import { LoadingScreen } from "@/components/loading-screen";
 
-export default function HomePage() {
+export default function RootPage() {
   const { token } = useAuth();
   const router = useRouter();
 
@@ -13,9 +14,5 @@ export default function HomePage() {
     else router.replace("/login");
   }, [token, router]);
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="animate-pulse text-muted-foreground">Loading…</div>
-    </div>
-  );
+  return <LoadingScreen />;
 }

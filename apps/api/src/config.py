@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     search_rate_limit: str = "10/minute"
     unlock_rate_limit: str = "20/minute"
 
+    # CORS (comma-separated origins; * allows all)
+    cors_origins: str = "*"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

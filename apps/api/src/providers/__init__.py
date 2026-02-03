@@ -1,9 +1,9 @@
-from .chat import ChatProvider, get_chat_provider
-from .embedding import EmbeddingProvider, get_embedding_provider
+from .chat import ChatServiceError, get_chat_provider
+from .embedding import EmbeddingServiceError, get_embedding_provider
 
 __all__ = [
-    "ChatProvider",
+    "ChatServiceError",
     "get_chat_provider",
-    "EmbeddingProvider",
+    "EmbeddingServiceError",
     "get_embedding_provider",
 ]

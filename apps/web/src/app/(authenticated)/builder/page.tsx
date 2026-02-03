@@ -4,66 +4,25 @@ import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link";
 import {
-  Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { api, type ApiOptions } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import {
-  Pencil,
-  Trash2,
-  Check as CheckIcon,
-  FlaskConical,
   Building2,
-  Rocket,
+  Check as CheckIcon,
   Code2,
+  FlaskConical,
+  Pencil,
+  Rocket,
+  Trash2,
   TrendingUp,
 } from "lucide-react";
-
-type DraftCard = {
-  draft_card_id: string;
-  title: string | null;
-  context: string | null;
-  constraints: string | null;
-  decisions: string | null;
-  outcome: string | null;
-  tags: string[];
-  company: string | null;
-  team: string | null;
-  role_title: string | null;
-  time_range: string | null;
-  source_span: string | null;
-};
-
-type DraftSet = {
-  draft_set_id: string;
-  raw_experience_id: string;
-  cards: DraftCard[];
-};
-
-type ExperienceCard = {
-  id: string;
-  person_id: string;
-  raw_experience_id: string | null;
-  status: string;
-  human_edited?: boolean;
-  locked?: boolean;
-  title: string | null;
-  context: string | null;
-  constraints: string | null;
-  decisions: string | null;
-  outcome: string | null;
-  tags: string[];
-  company: string | null;
-  team: string | null;
-  role_title: string | null;
-  time_range: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-};
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import type { DraftCard, DraftSet, ExperienceCard } from "@/types";
 
 const CARD_FIELDS = [
   "title",
@@ -258,6 +217,7 @@ export default function BuilderPage() {
       router.push("/home");
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to save cards");
+      queryClient.invalidateQueries({ queryKey: ["experience-cards"] });
     } finally {
       setIsSavingAll(false);
     }
@@ -268,10 +228,18 @@ export default function BuilderPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
+      <div className="mb-4">
+        <Link
+          href="/profile"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          ← Back to profile
+        </Link>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
         {/* Left: Raw input */}
-        <div className="flex flex-col min-h-0 border border-border/50 rounded-xl bg-card/50 p-4">
-          <h2 className="text-lg font-semibold mb-1">Raw Experience</h2>
+        <div className="flex flex-col min-h-0 glass border-border/50 rounded-xl p-4">
+          <h2 className="text-lg font-semibold mb-1">Raw experience</h2>
           <p className="text-sm text-muted-foreground mb-3">
             Write freely. Add one experience at a time or multiple. We&apos;ll structure it into cards.
           </p>
@@ -295,8 +263,8 @@ export default function BuilderPage() {
         </div>
 
         {/* Right: Experience cards */}
-        <div className="flex flex-col min-h-0 border border-border/50 rounded-xl bg-card/50 p-4 flex-1">
-          <h2 className="text-lg font-semibold mb-3 flex-shrink-0">Experience Cards</h2>
+        <div className="flex flex-col min-h-0 glass border-border/50 rounded-xl p-4 flex-1">
+          <h2 className="text-lg font-semibold mb-3 flex-shrink-0">Experience cards</h2>
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0">
             {loadingCards && savedCards.length === 0 && displayDrafts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -333,8 +301,8 @@ export default function BuilderPage() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
                         className={cn(
-                          "rounded-xl border border-border/50 bg-card shadow-sm overflow-hidden",
-                          "border-l-4 border-l-violet-500/70"
+                          "rounded-xl border border-border/50 glass overflow-hidden hover-lift",
+                          "border-l-4 border-l-primary"
                         )}
                       >
                         <div className="p-4">
@@ -373,9 +341,9 @@ export default function BuilderPage() {
                           </div>
                           {(card.tags || []).length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-2">
-                              {card.tags.slice(0, 5).map((t) => (
+                              {card.tags.slice(0, 5).map((t, i) => (
                                 <span
-                                  key={t}
+                                  key={`${card.draft_card_id}-tag-${i}-${t}`}
                                   className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
                                 >
                                   {t}
@@ -505,11 +473,11 @@ export default function BuilderPage() {
       {/* Save confirmation modal */}
       {saveModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
           onClick={() => setSaveModalOpen(false)}
         >
           <div
-            className="rounded-xl border border-border bg-card p-6 max-w-md w-full mx-4 shadow-xl"
+            className="rounded-xl glass border border-border p-6 max-w-md w-full mx-4 shadow-xl glow-ring"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold">Save experience cards?</h3>

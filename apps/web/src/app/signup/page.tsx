@@ -6,12 +6,14 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/auth";
+import { AuthLayout } from "@/components/auth-layout";
+import { LoadingScreen } from "@/components/loading-screen";
+import { ErrorMessage } from "@/components/error-message";
 
 const schema = z.object({
   email: z.string().email("Invalid email"),
@@ -31,18 +33,14 @@ export default function SignupPage() {
     formState: { errors, isSubmitting },
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
+  const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
+
   useEffect(() => {
-    const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
     if (hasToken) router.replace("/home");
   }, [token, router]);
 
-  const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
   if (hasToken) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30">
-        <div className="animate-pulse text-muted-foreground">Loading…</div>
-      </div>
-    );
+    return <LoadingScreen message="Loading…" />;
   }
 
   const onSubmit = async (data: FormData) => {
@@ -55,52 +53,67 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="w-full max-w-md"
-      >
-        <Card>
-          <CardHeader>
-            <CardTitle>Create account</CardTitle>
-            <CardDescription>Start with 1000 credits. Build your experience cards and get discovered.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-              {error && (
-                <div className="text-sm text-destructive bg-destructive/10 rounded-md p-3">
-                  {error}
-                </div>
+    <AuthLayout
+      title="Create account"
+      subtitle="Start with 1,000 credits. Build your experience and get discovered."
+    >
+      <Card className="glass border-border/50 shadow-xl glow-ring overflow-hidden">
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-xl">Sign up</CardTitle>
+          <CardDescription>
+            Email, password, and optional display name.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            {error && <ErrorMessage message={error} />}
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="you@example.com"
+                {...register("email")}
+                className="bg-background/50 border-border/70"
+              />
+              {errors.email && (
+                <p className="text-sm text-destructive">{errors.email.message}</p>
               )}
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" placeholder="you@example.com" {...register("email")} />
-                {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input id="password" type="password" {...register("password")} />
-                {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="display_name">Display name (optional)</Label>
-                <Input id="display_name" placeholder="How you want to be shown" {...register("display_name")} />
-              </div>
-              <Button type="submit" className="w-full" disabled={isSubmitting}>
-                {isSubmitting ? "Creating account…" : "Sign up"}
-              </Button>
-              <p className="text-center text-sm text-muted-foreground">
-                Already have an account?{" "}
-                <Link href="/login" className="text-primary hover:underline">
-                  Sign in
-                </Link>
-              </p>
-            </form>
-          </CardContent>
-        </Card>
-      </motion.div>
-    </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                {...register("password")}
+                className="bg-background/50 border-border/70"
+              />
+              {errors.password && (
+                <p className="text-sm text-destructive">{errors.password.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="display_name">Display name (optional)</Label>
+              <Input
+                id="display_name"
+                placeholder="How you want to be shown"
+                {...register("display_name")}
+                className="bg-background/50 border-border/70"
+              />
+            </div>
+            <Button type="submit" className="w-full" size="lg" disabled={isSubmitting}>
+              {isSubmitting ? "Creating account…" : "Sign up"}
+            </Button>
+            <p className="text-center text-sm text-muted-foreground">
+              Already have an account?{" "}
+              <Link href="/login" className="text-primary font-medium hover:underline">
+                Sign in
+              </Link>
+            </p>
+          </form>
+        </CardContent>
+      </Card>
+    </AuthLayout>
   );
 }

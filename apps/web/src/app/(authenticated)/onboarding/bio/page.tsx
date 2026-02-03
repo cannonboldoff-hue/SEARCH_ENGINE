@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
@@ -12,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type ApiOptions } from "@/lib/api";
+import type { BioResponse } from "@/types";
 
 const LINKEDIN_URL_REGEX = /^(https?:\/\/)?(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
 const DOB_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -47,27 +49,12 @@ const bioSchema = z.object({
 
 type BioForm = z.infer<typeof bioSchema>;
 
-type BioResponse = {
-  first_name: string | null;
-  last_name: string | null;
-  date_of_birth: string | null;
-  current_city: string | null;
-  profile_photo_url: string | null;
-  school: string | null;
-  college: string | null;
-  current_company: string | null;
-  past_companies: { company_name: string; role?: string; years?: string }[] | null;
-  email: string | null;
-  linkedin_url: string | null;
-  phone: string | null;
-};
-
 export default function OnboardingBioPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const { data: bio, isLoading } = useQuery({
+  const { data: bio, isLoading, isError: bioError } = useQuery({
     queryKey: ["bio"],
     queryFn: () => api<BioResponse>("/me/bio"),
   });
@@ -140,7 +127,7 @@ export default function OnboardingBioPage() {
       } as ApiOptions),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["bio"] });
-      router.push("/builder");
+      router.push("/home");
     },
     onError: (e: Error) => setServerError(e.message),
   });
@@ -177,17 +164,41 @@ export default function OnboardingBioPage() {
     );
   }
 
+  if (bioError) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="text-center space-y-4 max-w-md">
+          <p className="text-destructive">Failed to load your bio. You may need to sign in again.</p>
+          <Link
+            href="/profile"
+            className="text-sm text-primary font-medium hover:underline"
+          >
+            ← Back to profile
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       className="max-w-[720px] mx-auto py-8"
     >
-      <Card className="border-border/50 shadow-lg bg-card">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-xl">Create your Bio</CardTitle>
+      <div className="mb-6">
+        <Link
+          href="/profile"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          ← Back to profile
+        </Link>
+      </div>
+      <Card className="glass border-border/50 shadow-xl glow-ring overflow-hidden">
+        <CardHeader className="space-y-1 border-b border-border/50">
+          <CardTitle className="text-xl">Create your bio</CardTitle>
           <CardDescription>
-            This helps us contextualize your experience. You can edit everything later.
+            This helps us contextualize your experience. You can edit everything later from your profile.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -318,10 +329,13 @@ export default function OnboardingBioPage() {
               </div>
             </section>
 
-            <div className="pt-4">
-              <Button type="submit" className="w-full sm:w-auto" disabled={putBio.isPending}>
-                {putBio.isPending ? "Saving…" : "Save & Continue"}
+            <div className="pt-4 flex flex-col sm:flex-row gap-3">
+              <Button type="submit" className="w-full sm:w-auto" size="lg" disabled={putBio.isPending}>
+                {putBio.isPending ? "Saving…" : "Save & continue to Discover"}
               </Button>
+              <p className="text-sm text-muted-foreground self-center sm:self-center">
+                Next: add experience in the builder, or start searching.
+              </p>
             </div>
           </form>
         </CardContent>

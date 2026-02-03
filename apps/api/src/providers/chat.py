@@ -1,7 +1,15 @@
+import json
+import uuid
 from abc import ABC, abstractmethod
-from typing import Any
+
+import httpx
 from pydantic import BaseModel
+
 from src.config import get_settings
+
+
+class ChatServiceError(Exception):
+    """Raised when the chat/LLM API is unavailable or returns invalid or unexpected output."""
 
 
 class ParsedQuery(BaseModel):
@@ -58,7 +66,6 @@ class OpenAICompatibleChatProvider(ChatProvider):
         self.model = model
 
     async def _chat(self, messages: list[dict[str, str]], max_tokens: int = 2048) -> str:
-        import httpx
         payload = {
             "model": self.model,
             "messages": messages,
@@ -68,15 +75,26 @@ class OpenAICompatibleChatProvider(ChatProvider):
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            r.raise_for_status()
-            data = r.json()
-            return data["choices"][0]["message"]["content"].strip()
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                r.raise_for_status()
+                data = r.json()
+                return data["choices"][0]["message"]["content"].strip()
+        except httpx.HTTPStatusError as e:
+            raise ChatServiceError(
+                f"Chat API returned {e.response.status_code}. Please try again later."
+            ) from e
+        except httpx.RequestError as e:
+            raise ChatServiceError(
+                "Chat service unavailable (timeout or connection error). Please try again later."
+            ) from e
+        except (KeyError, TypeError) as e:
+            raise ChatServiceError("Chat API returned unexpected response format.") from e
 
     async def parse_search_query(self, query: str) -> ParsedQuery:
         prompt = f"""Parse this search query into structured filters and semantic text. Output JSON only, no markdown.
@@ -89,12 +107,13 @@ Extract:
 - semantic_text: the full query normalized for semantic search (keep intent, remove filler)
 
 Output format: {{"company": null or "string", "team": null or "string", "open_to_work_only": false, "semantic_text": "string"}}"""
-        import json
-        text = await self._chat([{"role": "user", "content": prompt}], max_tokens=300)
-        # strip markdown code block if present
-        if "```" in text:
-            text = text.split("```")[1].replace("json", "").strip()
-        data = json.loads(text)
+        try:
+            text = await self._chat([{"role": "user", "content": prompt}], max_tokens=300)
+            if "```" in text:
+                text = text.split("```")[1].replace("json", "").strip()
+            data = json.loads(text)
+        except (ValueError, json.JSONDecodeError) as e:
+            raise ChatServiceError("Chat returned invalid JSON for query parse.") from e
         return ParsedQuery(
             company=data.get("company"),
             team=data.get("team"),
@@ -103,8 +122,6 @@ Output format: {{"company": null or "string", "team": null or "string", "open_to
         )
 
     async def extract_experience_cards(self, raw_text: str, raw_experience_id: str) -> DraftSet:
-        import uuid
-        import json
         prompt = f"""Extract work experience cards from this paragraph. One paragraph may contain multiple distinct experiences (different companies, roles, or time periods). Output strict JSON only.
 
 Paragraph:
@@ -135,10 +152,13 @@ Output a single JSON object:
 }}
 
 Rules: Extract only what is explicitly stated. If a field is missing, use null. Do not polish or invent. Split into multiple cards if there are multiple distinct work episodes."""
-        text = await self._chat([{"role": "user", "content": prompt}], max_tokens=2048)
-        if "```" in text:
-            text = text.split("```")[1].replace("json", "").strip()
-        data = json.loads(text)
+        try:
+            text = await self._chat([{"role": "user", "content": prompt}], max_tokens=2048)
+            if "```" in text:
+                text = text.split("```")[1].replace("json", "").strip()
+            data = json.loads(text)
+        except (ValueError, json.JSONDecodeError) as e:
+            raise ChatServiceError("Chat returned invalid JSON for experience cards.") from e
         cards = [
             DraftCard(
                 draft_card_id=c.get("draft_card_id") or str(uuid.uuid4()),

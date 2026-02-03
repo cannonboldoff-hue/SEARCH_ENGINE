@@ -23,11 +23,11 @@ services:
       - key: CHAT_MODEL
         value: "openai/gpt-oss-120b"
       - key: EMBED_API_BASE_URL
-        value: "https://api.opentextembeddings.com/v1"
+        value: "https://api.jina.ai/v1"
       - key: EMBED_API_KEY
-        value: ""
+        sync: false
       - key: EMBED_MODEL
-        value: "bge-base-en"
+        value: "jina-embeddings-v3"
     healthCheckPath: /health
 
   - type: web
