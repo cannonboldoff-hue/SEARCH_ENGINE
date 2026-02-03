@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from src.db.models import Person, VisibilitySettings, CreditWallet, CreditLedger
+from src.db.models import Person, VisibilitySettings, CreditWallet, CreditLedger, Bio, ContactDetails
 from src.dependencies import get_current_user, get_db
 from src.schemas import (
     PersonResponse,
@@ -11,9 +11,26 @@ from src.schemas import (
     PatchVisibilityRequest,
     CreditsResponse,
     LedgerEntryResponse,
+    BioResponse,
+    BioCreateUpdate,
+    PastCompanyItem,
 )
 
 router = APIRouter(prefix="/me", tags=["me"])
+
+
+def _past_companies_to_items(past: list | None) -> list[PastCompanyItem]:
+    if not past or not isinstance(past, list):
+        return []
+    return [
+        PastCompanyItem(
+            company_name=p.get("company_name", ""),
+            role=p.get("role"),
+            years=p.get("years"),
+        )
+        for p in past
+        if isinstance(p, dict)
+    ]
 
 
 @router.get("", response_model=PersonResponse)
@@ -107,6 +124,117 @@ async def patch_visibility(
         open_to_contact=vis.open_to_contact,
         contact_preferred_salary_min=vis.contact_preferred_salary_min,
         contact_preferred_salary_max=vis.contact_preferred_salary_max,
+    )
+
+
+@router.get("/bio", response_model=BioResponse)
+async def get_bio(
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Bio).where(Bio.person_id == current_user.id))
+    bio = result.scalar_one_or_none()
+    contact_result = await db.execute(
+        select(ContactDetails).where(ContactDetails.person_id == current_user.id)
+    )
+    contact = contact_result.scalar_one_or_none()
+    past = _past_companies_to_items(bio.past_companies if bio else None)
+    complete = bool(
+        bio
+        and (bio.school or "").strip()
+        and (current_user.email or "").strip()
+    )
+    return BioResponse(
+        first_name=bio.first_name if bio else None,
+        last_name=bio.last_name if bio else None,
+        date_of_birth=bio.date_of_birth if bio else None,
+        current_city=bio.current_city if bio else None,
+        profile_photo_url=bio.profile_photo_url if bio else None,
+        school=bio.school if bio else None,
+        college=bio.college if bio else None,
+        current_company=bio.current_company if bio else None,
+        past_companies=past,
+        email=current_user.email,
+        linkedin_url=contact.linkedin_url if contact else None,
+        phone=contact.phone if contact else None,
+        complete=complete,
+    )
+
+
+@router.put("/bio", response_model=BioResponse)
+async def put_bio(
+    body: BioCreateUpdate,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Bio).where(Bio.person_id == current_user.id))
+    bio = result.scalar_one_or_none()
+    if not bio:
+        bio = Bio(person_id=current_user.id)
+        db.add(bio)
+        await db.flush()
+    if body.first_name is not None:
+        bio.first_name = body.first_name
+    if body.last_name is not None:
+        bio.last_name = body.last_name
+    if body.date_of_birth is not None:
+        bio.date_of_birth = body.date_of_birth
+    if body.current_city is not None:
+        bio.current_city = body.current_city
+    if body.profile_photo_url is not None:
+        bio.profile_photo_url = body.profile_photo_url
+    if body.school is not None:
+        bio.school = body.school
+    if body.college is not None:
+        bio.college = body.college
+    if body.current_company is not None:
+        bio.current_company = body.current_company
+    if body.past_companies is not None:
+        bio.past_companies = [
+            {"company_name": p.company_name, "role": p.role, "years": p.years}
+            for p in body.past_companies
+        ]
+    if body.email is not None and body.email.strip():
+        current_user.email = body.email.strip()
+        db.add(current_user)
+    if body.first_name is not None or body.last_name is not None:
+        parts = [bio.first_name or "", bio.last_name or ""]
+        current_user.display_name = " ".join(parts).strip() or current_user.display_name
+        db.add(current_user)
+    contact_result = await db.execute(
+        select(ContactDetails).where(ContactDetails.person_id == current_user.id)
+    )
+    contact = contact_result.scalar_one_or_none()
+    if body.linkedin_url is not None or body.phone is not None:
+        if not contact:
+            contact = ContactDetails(person_id=current_user.id)
+            db.add(contact)
+            await db.flush()
+        if body.linkedin_url is not None:
+            contact.linkedin_url = body.linkedin_url
+        if body.phone is not None:
+            contact.phone = body.phone
+    await db.commit()
+    await db.refresh(bio)
+    if contact:
+        await db.refresh(contact)
+    await db.refresh(current_user)
+    past = _past_companies_to_items(bio.past_companies)
+    complete = bool((bio.school or "").strip() and (current_user.email or "").strip())
+    return BioResponse(
+        first_name=bio.first_name,
+        last_name=bio.last_name,
+        date_of_birth=bio.date_of_birth,
+        current_city=bio.current_city,
+        profile_photo_url=bio.profile_photo_url,
+        school=bio.school,
+        college=bio.college,
+        current_company=bio.current_company,
+        past_companies=past,
+        email=current_user.email,
+        linkedin_url=contact.linkedin_url if contact else None,
+        phone=contact.phone if contact else None,
+        complete=complete,
     )
 
 

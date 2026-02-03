@@ -19,14 +19,7 @@ from sqlalchemy.orm import relationship
 
 from .session import Base
 
-# pgvector type
-try:
-    from pgvector.sqlalchemy import Vector
-except ImportError:
-    from sqlalchemy import TypeDecorator, Text as _Text
-    class Vector(TypeDecorator):
-        impl = _Text
-        cache_ok = True
+from pgvector.sqlalchemy import Vector
 
 
 def uuid4_str():
@@ -46,9 +39,34 @@ class Person(Base):
     visibility_settings = relationship("VisibilitySettings", back_populates="person", uselist=False)
     contact_details = relationship("ContactDetails", back_populates="person", uselist=False)
     credit_wallet = relationship("CreditWallet", back_populates="person", uselist=False)
+    bio = relationship("Bio", back_populates="person", uselist=False)
     raw_experiences = relationship("RawExperience", back_populates="person")
     experience_cards = relationship("ExperienceCard", back_populates="person")
     searches_made = relationship("Search", back_populates="searcher", foreign_keys="Search.searcher_id")
+
+
+class Bio(Base):
+    __tablename__ = "bios"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
+    person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, unique=True)
+
+    first_name = Column(String(255), nullable=True)
+    last_name = Column(String(255), nullable=True)
+    date_of_birth = Column(String(20), nullable=True)  # YYYY-MM-DD or free text
+    current_city = Column(String(255), nullable=True)
+    profile_photo_url = Column(String(1000), nullable=True)
+
+    school = Column(String(255), nullable=True)
+    college = Column(String(255), nullable=True)
+
+    current_company = Column(String(255), nullable=True)
+    past_companies = Column(JSON, nullable=True)  # list of {company_name, role?, years?}
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
+
+    person = relationship("Person", back_populates="bio")
 
 
 class VisibilitySettings(Base):
@@ -155,6 +173,8 @@ class ExperienceCard(Base):
     raw_experience_id = Column(UUID(as_uuid=False), ForeignKey("raw_experiences.id", ondelete="SET NULL"), nullable=True)
 
     status = Column(String(20), default=DRAFT, nullable=False, index=True)
+    human_edited = Column(Boolean, default=False, nullable=False)
+    locked = Column(Boolean, default=False, nullable=False)
 
     title = Column(String(500), nullable=True)
     context = Column(Text, nullable=True)

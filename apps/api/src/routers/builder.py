@@ -1,4 +1,3 @@
-import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -74,6 +73,8 @@ def _card_to_response(c: ExperienceCard) -> ExperienceCardResponse:
         person_id=c.person_id,
         raw_experience_id=c.raw_experience_id,
         status=c.status,
+        human_edited=c.human_edited,
+        locked=c.locked,
         title=c.title,
         context=c.context,
         constraints=c.constraints,
@@ -152,6 +153,14 @@ async def patch_experience_card(
         card.role_title = body.role_title
     if body.time_range is not None:
         card.time_range = body.time_range
+    if body.locked is not None:
+        card.locked = body.locked
+    content_fields = (
+        body.title, body.context, body.constraints, body.decisions, body.outcome,
+        body.tags, body.company, body.team, body.role_title, body.time_range,
+    )
+    if any(f is not None for f in content_fields):
+        card.human_edited = True
     db.add(card)
     await db.commit()
     await db.refresh(card)
@@ -187,7 +196,10 @@ async def approve_experience_card(
     embed_provider = get_embedding_provider()
     vectors = await embed_provider.embed([text])
     if vectors:
-        card.embedding = vectors[0]
+        vec = vectors[0]
+        # ExperienceCard.embedding is Vector(384); truncate or pad to match
+        dim = 384
+        card.embedding = (vec[:dim] + [0.0] * (dim - len(vec))) if len(vec) < dim else vec[:dim]
     db.add(card)
     await db.commit()
     await db.refresh(card)

@@ -31,10 +31,9 @@ export async function api<T>(
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const url = `${API_BASE}${path}`;
   if (!url.startsWith("http") && !url.startsWith("/")) {
-    throw new Error(
-      "API URL is not configured. Set NEXT_PUBLIC_API_BASE_URL (e.g. http://localhost:8000) and ensure the API server is running."
-    );
+    throw new Error("Set NEXT_PUBLIC_API_BASE_URL (e.g. http://localhost:8000) and ensure the API is running.");
   }
+
   let res: Response;
   try {
     res = await fetch(url, {
@@ -45,7 +44,7 @@ export async function api<T>(
   } catch (e) {
     const msg =
       e instanceof TypeError && (e.message === "Failed to fetch" || e.message?.includes("fetch"))
-        ? "Cannot reach the API. Check that NEXT_PUBLIC_API_BASE_URL is set and the API server is running."
+        ? "Cannot reach the API. Check NEXT_PUBLIC_API_BASE_URL and that the API is running."
         : e instanceof Error
           ? e.message
           : "Network error";

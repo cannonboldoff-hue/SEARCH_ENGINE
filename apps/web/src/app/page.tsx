@@ -9,7 +9,7 @@ export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (token) router.replace("/builder");
+    if (token) router.replace("/home");
     else router.replace("/login");
   }, [token, router]);
 

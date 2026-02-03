@@ -13,7 +13,6 @@ from src.routers import auth_router, me_router, contact_router, builder_router, 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    # shutdown if needed
 
 
 app = FastAPI(

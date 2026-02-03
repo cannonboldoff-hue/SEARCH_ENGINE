@@ -30,12 +30,12 @@ export default function LoginPage() {
     formState: { errors, isSubmitting },
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
-  useEffect(() => {
-    const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
-    if (hasToken) router.replace("/builder");
-  }, [token, router]);
+  const hasToken = !!token || (typeof window !== "undefined" && !!localStorage.getItem("token"));
 
-  const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
+  useEffect(() => {
+    if (hasToken) router.replace("/home");
+  }, [hasToken, router]);
+
   if (hasToken) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-muted/30">

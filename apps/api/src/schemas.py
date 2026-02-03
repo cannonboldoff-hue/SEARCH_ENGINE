@@ -1,11 +1,13 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from pydantic import BaseModel, EmailStr
-from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, EmailStr
 
 
+# -----------------------------------------------------------------------------
 # Auth
+# -----------------------------------------------------------------------------
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str
@@ -22,15 +24,18 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+# -----------------------------------------------------------------------------
 # Me
+# -----------------------------------------------------------------------------
+
+
 class PersonResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     display_name: Optional[str] = None
     created_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
 
 
 class PatchMeRequest(BaseModel):
@@ -57,7 +62,51 @@ class PatchVisibilityRequest(BaseModel):
     contact_preferred_salary_max: Optional[Decimal] = None
 
 
+# -----------------------------------------------------------------------------
+# Bio (onboarding + profile context)
+# -----------------------------------------------------------------------------
+class PastCompanyItem(BaseModel):
+    company_name: str
+    role: Optional[str] = None
+    years: Optional[str] = None
+
+
+class BioResponse(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    current_city: Optional[str] = None
+    profile_photo_url: Optional[str] = None
+    school: Optional[str] = None
+    college: Optional[str] = None
+    current_company: Optional[str] = None
+    past_companies: Optional[list[PastCompanyItem]] = None
+    email: Optional[str] = None  # from Person, for display
+    linkedin_url: Optional[str] = None  # from ContactDetails
+    phone: Optional[str] = None  # from ContactDetails
+    complete: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BioCreateUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    current_city: Optional[str] = None
+    profile_photo_url: Optional[str] = None
+    school: Optional[str] = None
+    college: Optional[str] = None
+    current_company: Optional[str] = None
+    past_companies: Optional[list[PastCompanyItem]] = None
+    email: Optional[str] = None  # sync to Person.email if provided
+    linkedin_url: Optional[str] = None  # sync to ContactDetails
+    phone: Optional[str] = None  # sync to ContactDetails
+
+
+# -----------------------------------------------------------------------------
 # Contact
+# -----------------------------------------------------------------------------
 class ContactDetailsResponse(BaseModel):
     email_visible: bool
     phone: Optional[str] = None
@@ -72,7 +121,9 @@ class PatchContactRequest(BaseModel):
     other: Optional[str] = None
 
 
+# -----------------------------------------------------------------------------
 # Credits
+# -----------------------------------------------------------------------------
 class CreditsResponse(BaseModel):
     balance: int
 
@@ -87,7 +138,9 @@ class LedgerEntryResponse(BaseModel):
     created_at: datetime
 
 
+# -----------------------------------------------------------------------------
 # Builder
+# -----------------------------------------------------------------------------
 class RawExperienceCreate(BaseModel):
     raw_text: str
 
@@ -135,6 +188,7 @@ class ExperienceCardCreate(BaseModel):
 
 
 class ExperienceCardPatch(BaseModel):
+    locked: Optional[bool] = None
     title: Optional[str] = None
     context: Optional[str] = None
     constraints: Optional[str] = None
@@ -152,6 +206,8 @@ class ExperienceCardResponse(BaseModel):
     person_id: str
     raw_experience_id: Optional[str] = None
     status: str
+    human_edited: bool = False
+    locked: bool = False
     title: Optional[str] = None
     context: Optional[str] = None
     constraints: Optional[str] = None
@@ -165,11 +221,12 @@ class ExperienceCardResponse(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
+# -----------------------------------------------------------------------------
 # Search
+# -----------------------------------------------------------------------------
 class SearchRequest(BaseModel):
     query: str
     open_to_work_only: Optional[bool] = None

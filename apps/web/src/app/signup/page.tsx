@@ -33,7 +33,7 @@ export default function SignupPage() {
 
   useEffect(() => {
     const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
-    if (hasToken) router.replace("/builder");
+    if (hasToken) router.replace("/home");
   }, [token, router]);
 
   const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));

@@ -53,7 +53,7 @@ class OpenAICompatibleChatProvider(ChatProvider):
     ):
         self.base_url = base_url.rstrip("/")
         if not self.base_url.endswith("/v1"):
-            self.base_url = self.base_url + "/v1" if not self.base_url.endswith("/v1") else self.base_url
+            self.base_url = f"{self.base_url}/v1"
         self.api_key = api_key
         self.model = model
 

@@ -13,7 +13,7 @@ const AuthContext = createContext<{
   signup: (email: string, password: string, displayName?: string) => Promise<void>;
   logout: () => void;
   setToken: (t: string | null) => void;
-  refetchUser: () => Promise<void>;
+  refetchUser: (overrideToken?: string) => Promise<void>;
 } | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -32,13 +32,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
-  const refetchUser = useCallback(async () => {
-    if (!token) return;
+  const refetchUser = useCallback(async (overrideToken?: string) => {
+    const t = overrideToken ?? token;
+    if (!t) return;
     try {
       const me = await api<{ id: string; email: string; display_name: string | null }>("/me");
       setUser(me);
     } catch {
-      setToken(null);
+      if (!overrideToken) setToken(null);
     }
   }, [token, setToken]);
 
@@ -59,28 +60,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         body: { email, password },
       });
-      setTokenState(access_token);
-      if (typeof window !== "undefined") localStorage.setItem("token", access_token);
-      const me = await api<{ id: string; email: string; display_name: string | null }>("/me");
-      setUser(me);
-      router.replace("/builder");
+      setToken(access_token);
+      await refetchUser(access_token);
+      try {
+        const bio = await api<{ complete: boolean }>("/me/bio");
+        router.replace(bio.complete ? "/home" : "/onboarding/bio");
+      } catch {
+        router.replace("/onboarding/bio");
+      }
     },
-    [router]
+    [router, setToken, refetchUser]
   );
 
   const signup = useCallback(
     async (email: string, password: string, displayName?: string) => {
       const { access_token } = await api<{ access_token: string }>("/auth/signup", {
         method: "POST",
-        body: { email, password, display_name: displayName || null },
+        body: { email, password, display_name: displayName ?? null },
       });
-      setTokenState(access_token);
-      if (typeof window !== "undefined") localStorage.setItem("token", access_token);
-      const me = await api<{ id: string; email: string; display_name: string | null }>("/me");
-      setUser(me);
-      router.replace("/builder");
+      setToken(access_token);
+      await refetchUser(access_token);
+      try {
+        const bio = await api<{ complete: boolean }>("/me/bio");
+        router.replace(bio.complete ? "/home" : "/onboarding/bio");
+      } catch {
+        router.replace("/onboarding/bio");
+      }
     },
-    [router]
+    [router, setToken, refetchUser]
   );
 
   const logout = useCallback(() => {

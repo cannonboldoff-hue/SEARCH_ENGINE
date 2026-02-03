@@ -2,8 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text, and_, or_
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, text
 
 from src.db.models import (
     Person,
@@ -80,6 +79,10 @@ async def search(
     if not query_embedding:
         query_embedding = await embed_provider.embed([body.query])
     qvec = query_embedding[0] if query_embedding else None
+    # Stored embeddings are Vector(384); normalize query vector to same dimension
+    if qvec is not None:
+        dim = 384
+        qvec = (qvec[:dim] + [0.0] * (dim - len(qvec))) if len(qvec) < dim else qvec[:dim]
 
     # Build filter: people with APPROVED cards; optionally open_to_work, locations, salary
     open_to_work_only = body.open_to_work_only if body.open_to_work_only is not None else parsed.open_to_work_only
@@ -100,7 +103,8 @@ async def search(
         })
         db.add(search_rec)
         await db.flush()
-        await deduct_credits(db, current_user.id, 1, "search", "search_id", search_rec.id)
+        if not await deduct_credits(db, current_user.id, 1, "search", "search_id", search_rec.id):
+            raise HTTPException(status_code=402, detail="Insufficient credits")
         people_list = []
         resp = SearchResponse(search_id=search_rec.id, people=people_list)
         if idempotency_key:
@@ -186,7 +190,8 @@ async def search(
     )
     db.add(search_rec)
     await db.flush()
-    await deduct_credits(db, current_user.id, 1, "search", "search_id", search_rec.id)
+    if not await deduct_credits(db, current_user.id, 1, "search", "search_id", search_rec.id):
+        raise HTTPException(status_code=402, detail="Insufficient credits")
 
     for rank, (person_id, score) in enumerate(ranked, 1):
         sr = SearchResult(search_id=search_rec.id, person_id=person_id, rank=rank, score=Decimal(str(score)))
@@ -224,36 +229,31 @@ async def get_person(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Validate search_id: must belong to current_user and not expired
-    show_contact = False
-    if search_id:
-        s_result = await db.execute(
-            select(Search).where(
-                Search.id == search_id,
-                Search.searcher_id == current_user.id,
-            )
-        )
-        search_rec = s_result.scalar_one_or_none()
-        if search_rec:
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
-            if search_rec.created_at and search_rec.created_at >= cutoff:
-                r_result = await db.execute(
-                    select(SearchResult).where(
-                        SearchResult.search_id == search_id,
-                        SearchResult.person_id == person_id,
-                    )
-                )
-                if r_result.scalar_one_or_none():
-                    show_contact = False  # only show contact if unlocked
-                    pass  # free to view profile
-                else:
-                    raise HTTPException(status_code=403, detail="Person not in this search result")
-            else:
-                raise HTTPException(status_code=403, detail="Search expired")
-        else:
-            raise HTTPException(status_code=403, detail="Invalid search_id")
-    else:
+    if not search_id:
         raise HTTPException(status_code=400, detail="search_id required to view profile")
+
+    s_result = await db.execute(
+        select(Search).where(
+            Search.id == search_id,
+            Search.searcher_id == current_user.id,
+        )
+    )
+    search_rec = s_result.scalar_one_or_none()
+    if not search_rec:
+        raise HTTPException(status_code=403, detail="Invalid search_id")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
+    if not search_rec.created_at or search_rec.created_at < cutoff:
+        raise HTTPException(status_code=403, detail="Search expired")
+
+    r_result = await db.execute(
+        select(SearchResult).where(
+            SearchResult.search_id == search_id,
+            SearchResult.person_id == person_id,
+        )
+    )
+    if not r_result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Person not in this search result")
 
     # Load person
     p_result = await db.execute(select(Person).where(Person.id == person_id))
@@ -273,17 +273,6 @@ async def get_person(
     cards = cards_result.scalars().all()
 
     contact = None
-    if show_contact:
-        c_result = await db.execute(select(ContactDetails).where(ContactDetails.person_id == person_id))
-        c = c_result.scalar_one_or_none()
-        if c:
-            contact = ContactDetailsResponse(
-                email_visible=c.email_visible,
-                phone=c.phone,
-                linkedin_url=c.linkedin_url,
-                other=c.other,
-            )
-    # Check if current_user has unlocked this person's contact in this search
     unlock_result = await db.execute(
         select(UnlockContact).where(
             UnlockContact.searcher_id == current_user.id,
@@ -291,7 +280,8 @@ async def get_person(
             UnlockContact.search_id == search_id,
         )
     )
-    if unlock_result.scalar_one_or_none():
+    unlock = unlock_result.scalar_one_or_none()
+    if unlock:
         c_result = await db.execute(select(ContactDetails).where(ContactDetails.person_id == person_id))
         c = c_result.scalar_one_or_none()
         if c:
@@ -307,7 +297,7 @@ async def get_person(
         display_name=person.display_name,
         open_to_work=vis.open_to_work if vis else False,
         open_to_contact=vis.open_to_contact if vis else False,
-        work_preferred_locations=vis.work_preferred_locations or [] if vis else [],
+        work_preferred_locations=(vis.work_preferred_locations or []) if vis else [],
         work_preferred_salary_min=vis.work_preferred_salary_min if vis else None,
         work_preferred_salary_max=vis.work_preferred_salary_max if vis else None,
         contact_preferred_salary_min=vis.contact_preferred_salary_min if vis else None,
@@ -391,7 +381,8 @@ async def unlock_contact(
     )
     db.add(unlock)
     await db.flush()
-    await deduct_credits(db, current_user.id, 1, "unlock_contact", "unlock_id", unlock.id)
+    if not await deduct_credits(db, current_user.id, 1, "unlock_contact", "unlock_id", unlock.id):
+        raise HTTPException(status_code=402, detail="Insufficient credits")
 
     c_result = await db.execute(select(ContactDetails).where(ContactDetails.person_id == person_id))
     c = c_result.scalar_one_or_none()

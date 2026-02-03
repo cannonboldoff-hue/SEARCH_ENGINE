@@ -1,16 +1,27 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { debounce } from "lodash";
-import { Button } from "@/components/ui/button";
+import {
+  Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
+import { api, type ApiOptions } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import {
+  Pencil,
+  Trash2,
+  Check as CheckIcon,
+  FlaskConical,
+  Building2,
+  Rocket,
+  Code2,
+  TrendingUp,
+} from "lucide-react";
 
 type DraftCard = {
   draft_card_id: string;
@@ -38,6 +49,8 @@ type ExperienceCard = {
   person_id: string;
   raw_experience_id: string | null;
   status: string;
+  human_edited?: boolean;
+  locked?: boolean;
   title: string | null;
   context: string | null;
   constraints: string | null;
@@ -65,16 +78,30 @@ const CARD_FIELDS = [
   "time_range",
 ] as const;
 
+function cardTypeIcon(tags: string[], title: string | null) {
+  const t = (tags || []).map((x) => x.toLowerCase()).join(" ");
+  const tit = (title || "").toLowerCase();
+  if (tit.includes("research") || t.includes("research")) return <FlaskConical className="h-4 w-4 text-violet-400" />;
+  if (tit.includes("startup") || t.includes("startup")) return <Rocket className="h-4 w-4 text-amber-400" />;
+  if (tit.includes("quant") || t.includes("quant") || tit.includes("finance")) return <TrendingUp className="h-4 w-4 text-emerald-400" />;
+  if (tit.includes("open-source") || t.includes("open-source") || t.includes("opensource")) return <Code2 className="h-4 w-4 text-blue-400" />;
+  return <Building2 className="h-4 w-4 text-muted-foreground" />;
+}
+
 export default function BuilderPage() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const [rawText, setRawText] = useState("");
   const [draftCards, setDraftCards] = useState<DraftCard[]>([]);
   const [rawExperienceId, setRawExperienceId] = useState<string | null>(null);
-  const [draftSetId, setDraftSetId] = useState<string | null>(null);
   const [editedFields, setEditedFields] = useState<Record<string, Record<string, string | string[]>>>({});
-  const [searchWithinCards, setSearchWithinCards] = useState("");
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
-  const queryClient = useQueryClient();
-  const extractAbortRef = useRef<AbortController | null>(null);
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [deletedId, setDeletedId] = useState<string | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSavingAll, setIsSavingAll] = useState(false);
   const prevDraftCardsRef = useRef<DraftCard[]>([]);
 
   const { data: savedCards = [], isLoading: loadingCards } = useQuery({
@@ -82,22 +109,19 @@ export default function BuilderPage() {
     queryFn: () => api<ExperienceCard[]>("/me/experience-cards"),
   });
 
-  const extractDraft = useCallback(async (text: string) => {
-    if (!text.trim()) {
+  const extractDraft = useCallback(async () => {
+    if (!rawText.trim()) {
       setDraftCards([]);
       setRawExperienceId(null);
-      setDraftSetId(null);
       return;
     }
-    extractAbortRef.current?.abort();
-    extractAbortRef.current = new AbortController();
+    setIsUpdating(true);
     try {
       const result = await api<DraftSet>("/experience-cards/draft", {
         method: "POST",
-        body: { raw_text: text },
+        body: { raw_text: rawText },
       });
       setRawExperienceId(result.raw_experience_id);
-      setDraftSetId(result.draft_set_id);
       const prev = prevDraftCardsRef.current;
       const nextCards = result.cards;
       setEditedFields((prevEdits) => {
@@ -118,17 +142,10 @@ export default function BuilderPage() {
       prevDraftCardsRef.current = nextCards;
     } catch (e) {
       console.error("Extract failed", e);
+    } finally {
+      setIsUpdating(false);
     }
-  }, []);
-
-  const debouncedExtract = useRef(
-    debounce((text: string) => extractDraft(text), 800)
-  ).current;
-
-  useEffect(() => {
-    debouncedExtract(rawText);
-    return () => debouncedExtract.cancel();
-  }, [rawText, debouncedExtract]);
+  }, [rawText]);
 
   const mergeCardWithEdits = useCallback(
     (card: DraftCard): DraftCard => {
@@ -159,17 +176,6 @@ export default function BuilderPage() {
     },
     []
   );
-
-  const replaceWithAI = useCallback((draftCardId: string, card: DraftCard) => {
-    setEditedFields((prev) => {
-      const next = { ...prev };
-      delete next[draftCardId];
-      return next;
-    });
-    setDraftCards((prev) =>
-      prev.map((c) => (c.draft_card_id === draftCardId ? card : c))
-    );
-  }, []);
 
   const createCardMutation = useMutation({
     mutationFn: (payload: {
@@ -225,106 +231,187 @@ export default function BuilderPage() {
     [rawExperienceId, createCardMutation]
   );
 
-  const displayCards = draftCards
-    .map(mergeCardWithEdits)
-    .filter(
-      (c) =>
-        !searchWithinCards ||
-        JSON.stringify(c).toLowerCase().includes(searchWithinCards.toLowerCase())
-    );
+  const handleSaveCards = useCallback(async () => {
+    setSaveError(null);
+    setIsSavingAll(true);
+    const mergedDrafts = draftCards.map(mergeCardWithEdits);
+    try {
+      await Promise.all(
+        mergedDrafts.map((merged) =>
+          createCardMutation.mutateAsync({
+            raw_experience_id: rawExperienceId || undefined,
+            title: merged.title || undefined,
+            context: merged.context || undefined,
+            constraints: merged.constraints || undefined,
+            decisions: merged.decisions || undefined,
+            outcome: merged.outcome || undefined,
+            tags: merged.tags,
+            company: merged.company || undefined,
+            team: merged.team || undefined,
+            role_title: merged.role_title || undefined,
+            time_range: merged.time_range || undefined,
+          })
+        )
+      );
+      setSaveModalOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["experience-cards"] });
+      router.push("/home");
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Failed to save cards");
+    } finally {
+      setIsSavingAll(false);
+    }
+  }, [draftCards, mergeCardWithEdits, rawExperienceId, createCardMutation, queryClient, router]);
+
+  const displayDrafts = draftCards.map(mergeCardWithEdits);
+  const hasCards = displayDrafts.length > 0 || savedCards.length > 0;
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Experience Builder</h1>
-      <p className="text-muted-foreground">
-        Type your experience in the left panel. We&apos;ll extract cards after you pause. Edit and approve on the right.
-      </p>
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
+        {/* Left: Raw input */}
+        <div className="flex flex-col min-h-0 border border-border/50 rounded-xl bg-card/50 p-4">
+          <h2 className="text-lg font-semibold mb-1">Raw Experience</h2>
+          <p className="text-sm text-muted-foreground mb-3">
+            Write freely. Add one experience at a time or multiple. We&apos;ll structure it into cards.
+          </p>
+          <Textarea
+            placeholder="Paste or type your experience. e.g. I worked at Razorpay in the backend team for 2 years..."
+            className="min-h-[240px] resize-y flex-1 font-mono text-sm"
+            value={rawText}
+            onChange={(e) => setRawText(e.target.value)}
+          />
+          <div className="mt-3 space-y-1">
+            <Button
+              onClick={extractDraft}
+              disabled={!rawText.trim() || isUpdating}
+            >
+              {isUpdating ? "Structuring…" : "Update"}
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Update regenerates cards using your Bio context. Your manual edits on cards will be preserved.
+            </p>
+          </div>
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[500px]">
-        {/* Left: raw paragraph */}
-        <Card className="flex flex-col">
-          <CardHeader>
-            <Label>Raw experience (free-form)</Label>
-          </CardHeader>
-          <CardContent className="flex-1">
-            <Textarea
-              placeholder="Paste or type your experience. e.g. I worked at Razorpay in the backend team for 2 years. Also did a stint at Google on search..."
-              className="min-h-[300px] resize-y"
-              value={rawText}
-              onChange={(e) => setRawText(e.target.value)}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Right: extracted cards */}
-        <Card className="flex flex-col">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <Label>Extracted cards</Label>
-            <Input
-              placeholder="Search within cards..."
-              className="max-w-[200px]"
-              value={searchWithinCards}
-              onChange={(e) => setSearchWithinCards(e.target.value)}
-            />
-          </CardHeader>
-          <CardContent className="flex-1 overflow-y-auto max-h-[500px] space-y-3">
-            {loadingCards && savedCards.length === 0 ? (
-              <div className="text-muted-foreground text-sm">Loading your cards…</div>
+        {/* Right: Experience cards */}
+        <div className="flex flex-col min-h-0 border border-border/50 rounded-xl bg-card/50 p-4 flex-1">
+          <h2 className="text-lg font-semibold mb-3 flex-shrink-0">Experience Cards</h2>
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0">
+            {loadingCards && savedCards.length === 0 && displayDrafts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <div className="h-12 w-12 rounded-full border border-dashed border-muted-foreground/50 flex items-center justify-center mb-2" />
+                <p className="text-sm">Loading…</p>
+              </div>
+            ) : !hasCards ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground text-center">
+                <div className="h-12 w-12 rounded-full border border-dashed border-muted-foreground/50 flex items-center justify-center mb-3" />
+                <p className="font-medium text-foreground">No cards yet</p>
+                <p className="text-sm mt-1">Write something on the left and click Update.</p>
+              </div>
             ) : (
               <>
+                {isUpdating && (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="h-32 rounded-xl bg-muted/50 animate-pulse border border-border/50"
+                      />
+                    ))}
+                  </div>
+                )}
                 <AnimatePresence mode="popLayout">
-                  {displayCards.length === 0 ? (
-                    <div className="text-muted-foreground text-sm py-4">
-                      {rawText.trim()
-                        ? "Waiting for extraction… or add more text."
-                        : "Type in the left panel to extract experience cards."}
-                    </div>
-                  ) : (
-                    displayCards.map((card) => {
-                      const merged = mergeCardWithEdits(card);
-                      const isExpanded = expandedCards.has(card.draft_card_id);
-                      return (
-                        <motion.div
-                          key={card.draft_card_id}
-                          layout
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="border rounded-lg p-3 space-y-2"
-                        >
-                          <div
-                            className="flex items-center justify-between cursor-pointer"
-                            onClick={() =>
-                              setExpandedCards((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(card.draft_card_id)) next.delete(card.draft_card_id);
-                                else next.add(card.draft_card_id);
-                                return next;
-                              })
-                            }
-                          >
-                            <span className="font-medium truncate">
-                              {merged.title || merged.company || "Untitled"}
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                replaceWithAI(card.draft_card_id, card);
-                              }}
-                            >
-                              Replace with AI
-                            </Button>
+                  {displayDrafts.map((card) => {
+                    const isExpanded = expandedCards.has(card.draft_card_id) || editingCardId === card.draft_card_id;
+                    const isEditing = editingCardId === card.draft_card_id;
+                    return (
+                      <motion.div
+                        key={card.draft_card_id}
+                        layout
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        className={cn(
+                          "rounded-xl border border-border/50 bg-card shadow-sm overflow-hidden",
+                          "border-l-4 border-l-violet-500/70"
+                        )}
+                      >
+                        <div className="p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-muted-foreground flex-shrink-0">
+                                {cardTypeIcon(card.tags, card.title)}
+                              </span>
+                              <h3 className="font-semibold text-sm truncate">
+                                {card.title || card.company || "Untitled"}
+                              </h3>
+                            </div>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => {
+                                  setEditingCardId(isEditing ? null : card.draft_card_id);
+                                  if (!expandedCards.has(card.draft_card_id)) setExpandedCards((s) => new Set(s).add(card.draft_card_id));
+                                }}
+                                title="Edit"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => saveDraftCard(card)}
+                                title="Save as card"
+                              >
+                                <CheckIcon className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                          {(card.tags || []).length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {card.tags.slice(0, 5).map((t) => (
+                                <span
+                                  key={t}
+                                  className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
+                                >
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {card.context && (
+                            <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
+                              {card.context}
+                            </p>
+                          )}
+                          {card.decisions && (
+                            <ul className="text-xs text-muted-foreground mt-2 list-disc list-inside space-y-0.5">
+                              {card.decisions.split("\n").filter(Boolean).slice(0, 3).map((line, i) => (
+                                <li key={i}>{line.trim()}</li>
+                              ))}
+                            </ul>
+                          )}
+                          {card.outcome && (
+                            <p className="text-xs text-muted-foreground mt-2 italic">
+                              {card.outcome}
+                            </p>
+                          )}
+                          <div className="text-xs text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-0">
+                            {card.time_range && <span>{card.time_range}</span>}
+                            {card.company && <span>{card.company}</span>}
                           </div>
                           {isExpanded && (
-                            <div className="space-y-2 pt-2 border-t">
+                            <div className="mt-4 pt-4 border-t border-border/50 space-y-3">
                               {CARD_FIELDS.map((field) => (
                                 <div key={field} className="grid grid-cols-[100px_1fr] gap-2 items-center">
                                   <Label className="text-xs capitalize">{field.replace(/_/g, " ")}</Label>
                                   {field === "tags" ? (
                                     <Input
-                                      value={(merged.tags || []).join(", ")}
+                                      value={(card.tags || []).join(", ")}
                                       onChange={(e) =>
                                         setFieldEdit(
                                           card.draft_card_id,
@@ -333,79 +420,118 @@ export default function BuilderPage() {
                                         )
                                       }
                                       placeholder="tag1, tag2"
+                                      className="text-sm"
                                     />
                                   ) : (
                                     <Input
-                                      value={(merged[field] as string) ?? ""}
+                                      value={(card[field] as string) ?? ""}
                                       onChange={(e) =>
                                         setFieldEdit(card.draft_card_id, field, e.target.value)
                                       }
                                       placeholder={field}
+                                      className="text-sm"
                                     />
                                   )}
                                 </div>
                               ))}
-                              <div className="flex gap-2 pt-2">
-                                <Button
-                                  size="sm"
-                                  onClick={() => saveDraftCard(merged)}
-                                  disabled={createCardMutation.isPending}
-                                >
-                                  Save as draft
+                              <div className="flex gap-2">
+                                <Button size="sm" onClick={() => saveDraftCard(card)} disabled={createCardMutation.isPending}>
+                                  Save as card
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => setEditingCardId(null)}>
+                                  Done
                                 </Button>
                               </div>
                             </div>
                           )}
-                        </motion.div>
-                      );
-                    })
-                  )}
+                        </div>
+                      </motion.div>
+                    );
+                  })}
                 </AnimatePresence>
+                {savedCards.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-border/50">
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Saved cards</p>
+                    <ul className="space-y-2">
+                      {savedCards.map((c) => (
+                        <li
+                          key={c.id}
+                          className={cn(
+                            "flex items-center justify-between rounded-lg border border-border/50 p-3 bg-card",
+                            deletedId === c.id && "opacity-50"
+                          )}
+                        >
+                          <span className="text-sm truncate">{c.title || c.company || c.id}</span>
+                          <div className="flex gap-1">
+                            {c.status === "DRAFT" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => approveCardMutation.mutate(c.id)}
+                                disabled={approveCardMutation.isPending}
+                              >
+                                Approve
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-muted-foreground hover:text-destructive"
+                              onClick={() => {
+                                setDeletedId(c.id);
+                                hideCardMutation.mutate(c.id);
+                                setTimeout(() => setDeletedId(null), 5000);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </>
             )}
+          </div>
+          <div className="flex-shrink-0 pt-4 pb-1 flex justify-end border-t border-border/50 mt-2">
+            <Button onClick={() => setSaveModalOpen(true)} disabled={!hasCards}>
+              Save Cards
+            </Button>
+          </div>
+        </div>
+      </div>
 
-            {savedCards.length > 0 && (
-              <div className="mt-6 pt-4 border-t">
-                <Label className="text-sm font-medium">Your saved cards</Label>
-                <ul className="mt-2 space-y-2">
-                  {savedCards.map((c) => (
-                    <li key={c.id} className="flex items-center justify-between rounded border p-2">
-                      <span className="truncate">{c.title || c.company || c.id}</span>
-                      <div className="flex gap-1">
-                        {c.status === "DRAFT" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => patchCardMutation.mutate({ cardId: c.id, body: {} })}
-                          >
-                            Save
-                          </Button>
-                        )}
-                        {c.status === "DRAFT" && (
-                          <Button
-                            size="sm"
-                            onClick={() => approveCardMutation.mutate(c.id)}
-                            disabled={approveCardMutation.isPending}
-                          >
-                            Approve
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => hideCardMutation.mutate(c.id)}
-                        >
-                          Hide
-                        </Button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+      {/* Save confirmation modal */}
+      {saveModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={() => setSaveModalOpen(false)}
+        >
+          <div
+            className="rounded-xl border border-border bg-card p-6 max-w-md w-full mx-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold">Save experience cards?</h3>
+            <p className="text-sm text-muted-foreground mt-2">
+              This will update your searchable profile.
+            </p>
+            {saveError && (
+              <div className="text-sm text-destructive bg-destructive/10 rounded-md p-3 mt-3">
+                {saveError}
               </div>
             )}
-          </CardContent>
-        </Card>
-      </div>
+            <div className="flex gap-2 mt-6 justify-end">
+              <Button variant="outline" onClick={() => setSaveModalOpen(false)} disabled={isSavingAll}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveCards} disabled={isSavingAll}>
+                {isSavingAll ? "Saving…" : "Confirm Save"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

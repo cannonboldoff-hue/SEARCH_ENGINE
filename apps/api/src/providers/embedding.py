@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+
 from src.config import get_settings
 
 
@@ -10,7 +10,7 @@ class EmbeddingProvider(ABC):
         pass
 
     @abstractmethod
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         pass
 
 
@@ -20,7 +20,7 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
     def __init__(self, base_url: str, api_key: str | None, model: str, dimension: int = 384):
         self.base_url = base_url.rstrip("/")
         if not self.base_url.endswith("/v1"):
-            self.base_url = self.base_url + "/v1" if "/v1" not in self.base_url else self.base_url
+            self.base_url = f"{self.base_url}/v1"
         self.api_key = api_key
         self.model = model
         self._dimension = dimension
@@ -29,7 +29,7 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
     def dimension(self) -> int:
         return self._dimension
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         import httpx
         if not texts:
             return []
@@ -55,7 +55,7 @@ class DummyEmbeddingProvider(EmbeddingProvider):
 
     dimension = 384
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         import hashlib
         result = []
         for t in texts:

@@ -18,9 +18,7 @@ class Settings(BaseSettings):
     embed_api_key: str | None = None
     embed_model: str = "bge-base-en-v1.5"
 
-    # Optional: swap to commercial later
     openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
 
     # Rate limiting
     search_rate_limit: str = "10/minute"

@@ -157,8 +157,8 @@ export default function PersonProfilePage() {
                 {card.outcome && <p><strong>Outcome:</strong> {card.outcome}</p>}
                 {card.tags?.length > 0 && (
                   <div className="flex flex-wrap gap-1">
-                    {card.tags.map((t) => (
-                      <span key={t} className="rounded bg-muted px-2 py-0.5 text-xs">
+                    {card.tags.map((t, i) => (
+                      <span key={`${t}-${i}`} className="rounded bg-muted px-2 py-0.5 text-xs">
                         {t}
                       </span>
                     ))}
