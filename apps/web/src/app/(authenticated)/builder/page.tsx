@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { TiltCard } from "@/components/tilt-card";
 import type { DraftCard, DraftSet, ExperienceCard } from "@/types";
 
 const CARD_FIELDS = [
@@ -228,19 +229,45 @@ export default function BuilderPage() {
   const displayDrafts = draftCards.map(mergeCardWithEdits);
   const hasCards = displayDrafts.length > 0 || savedCards.length > 0;
 
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+      opacity: 1,
+      transition: { staggerChildren: 0.06, delayChildren: 0.05 },
+    },
+  };
+  const panelVariants = {
+    hidden: { opacity: 0, x: -12 },
+    visible: { opacity: 1, x: 0 },
+  };
+  const panelVariantsRight = {
+    hidden: { opacity: 0, x: 12 },
+    visible: { opacity: 1, x: 0 },
+  };
+
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)]">
-      <div className="mb-4">
+    <motion.div
+      className="flex flex-col h-[calc(100vh-4rem)]"
+      initial="hidden"
+      animate="visible"
+      variants={containerVariants}
+    >
+      <motion.div className="mb-4" variants={panelVariants}>
         <Link
           href="/profile"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1 group"
         >
-          ← Back to profile
+          <span className="transition-transform group-hover:-translate-x-0.5">←</span> Back to profile
         </Link>
-      </div>
+      </motion.div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
         {/* Left: Raw input */}
-        <div className="flex flex-col min-h-0 glass border-border/50 rounded-xl p-4">
+        <motion.div
+          className="flex flex-col min-h-0 glass border-border/50 rounded-xl p-4 perspective-1000 transform-3d depth-shadow"
+          variants={panelVariants}
+          transition={{ type: "spring", stiffness: 200, damping: 24 }}
+          style={{ transformStyle: "preserve-3d" }}
+        >
           <h2 className="text-lg font-semibold mb-1">Raw experience</h2>
           <p className="text-sm text-muted-foreground mb-3">
             Write freely. Add one experience at a time or multiple. We&apos;ll structure it into cards.
@@ -262,34 +289,65 @@ export default function BuilderPage() {
               Update regenerates cards using your Bio context. Your manual edits on cards will be preserved.
             </p>
           </div>
-        </div>
+        </motion.div>
 
         {/* Right: Experience cards */}
-        <div className="flex flex-col min-h-0 glass border-border/50 rounded-xl p-4 flex-1">
+        <motion.div
+          className="flex flex-col min-h-0 glass border-border/50 rounded-xl p-4 flex-1 perspective-1000 transform-3d depth-shadow"
+          variants={panelVariantsRight}
+          transition={{ type: "spring", stiffness: 200, damping: 24 }}
+          style={{ transformStyle: "preserve-3d" }}
+        >
           <h2 className="text-lg font-semibold mb-3 flex-shrink-0">Experience cards</h2>
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0">
             {loadingCards && savedCards.length === 0 && displayDrafts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <div className="h-12 w-12 rounded-full border border-dashed border-muted-foreground/50 flex items-center justify-center mb-2" />
+              <motion.div
+                className="flex flex-col items-center justify-center py-12 text-muted-foreground"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.3 }}
+              >
+                <motion.div
+                  className="h-12 w-12 rounded-full border border-dashed border-muted-foreground/50 flex items-center justify-center mb-2"
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                />
                 <p className="text-sm">Loading…</p>
-              </div>
+              </motion.div>
             ) : !hasCards ? (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground text-center">
-                <div className="h-12 w-12 rounded-full border border-dashed border-muted-foreground/50 flex items-center justify-center mb-3" />
+              <motion.div
+                className="flex flex-col items-center justify-center py-12 text-muted-foreground text-center"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.35 }}
+              >
+                <motion.div
+                  className="h-12 w-12 rounded-full border border-dashed border-muted-foreground/50 flex items-center justify-center mb-3"
+                  animate={{ scale: [1, 1.05, 1] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                />
                 <p className="font-medium text-foreground">No cards yet</p>
                 <p className="text-sm mt-1">Write something on the left and click Update.</p>
-              </div>
+              </motion.div>
             ) : (
               <>
                 {isUpdating && (
-                  <div className="space-y-2">
+                  <motion.div
+                    className="space-y-2"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                  >
                     {[1, 2, 3].map((i) => (
-                      <div
+                      <motion.div
                         key={i}
-                        className="h-32 rounded-xl bg-muted/50 animate-pulse border border-border/50"
+                        className="h-32 rounded-xl bg-muted/50 border border-border/50"
+                        initial={{ opacity: 0.4, x: -8 }}
+                        animate={{ opacity: 0.7, x: 0 }}
+                        transition={{ delay: i * 0.1, duration: 0.4, repeat: Infinity, repeatType: "reverse", repeatDelay: 0.2 }}
                       />
                     ))}
-                  </div>
+                  </motion.div>
                 )}
                 <AnimatePresence mode="popLayout">
                   {displayDrafts.map((card) => {
@@ -299,14 +357,21 @@ export default function BuilderPage() {
                       <motion.div
                         key={card.draft_card_id}
                         layout
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        className={cn(
-                          "rounded-xl border border-border/50 glass overflow-hidden hover-lift max-w-full min-w-0",
-                          "border-l-4 border-l-primary"
-                        )}
+                        initial={{ opacity: 0, y: 16, rotateX: -12, scale: 0.96 }}
+                        animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
+                        exit={{ opacity: 0, rotateX: 8, scale: 0.96 }}
+                        transition={{ type: "spring", stiffness: 280, damping: 26 }}
+                        style={{ transformStyle: "preserve-3d", perspective: 800 }}
+                        className="max-w-full min-w-0"
                       >
+                        <TiltCard
+                          maxTilt={6}
+                          scale={1.01}
+                          className={cn(
+                            "rounded-xl border border-border/50 glass overflow-hidden hover-lift max-w-full min-w-0",
+                            "border-l-4 border-l-primary depth-shadow"
+                          )}
+                        >
                         <div className="p-4">
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
@@ -365,8 +430,15 @@ export default function BuilderPage() {
                             {card.time_range && <span>{card.time_range}</span>}
                             {card.company && <span>{card.company}</span>}
                           </div>
+                          <AnimatePresence>
                           {isExpanded && (
-                            <div className="mt-4 pt-4 border-t border-border/50 space-y-3 min-w-0">
+                            <motion.div
+                              className="mt-4 pt-4 border-t border-border/50 space-y-3 min-w-0"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              transition={{ duration: 0.2 }}
+                            >
                               {CARD_FIELDS.map((field) => (
                                 <div key={field} className="grid grid-cols-[100px_1fr] gap-2 items-start min-w-0">
                                   <Label className="text-xs capitalize pt-2">{field.replace(/_/g, " ")}</Label>
@@ -414,20 +486,30 @@ export default function BuilderPage() {
                                   Done
                                 </Button>
                               </div>
-                            </div>
+                            </motion.div>
                           )}
+                          </AnimatePresence>
                         </div>
+                        </TiltCard>
                       </motion.div>
                     );
                   })}
                 </AnimatePresence>
                 {savedCards.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-border/50">
+                  <motion.div
+                    className="mt-4 pt-4 border-t border-border/50"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.2 }}
+                  >
                     <p className="text-xs font-medium text-muted-foreground mb-2">Saved cards</p>
                     <ul className="space-y-2">
-                      {savedCards.map((c) => (
-                        <li
+                      {savedCards.map((c, idx) => (
+                        <motion.li
                           key={c.id}
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: idx * 0.05 }}
                           className={cn(
                             "flex items-center justify-between rounded-lg border border-border/50 p-3 bg-card",
                             deletedId === c.id && "opacity-50"
@@ -458,10 +540,10 @@ export default function BuilderPage() {
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
-                        </li>
+                        </motion.li>
                       ))}
                     </ul>
-                  </div>
+                  </motion.div>
                 )}
               </>
             )}
@@ -471,17 +553,27 @@ export default function BuilderPage() {
               Save Cards
             </Button>
           </div>
-        </div>
+        </motion.div>
       </div>
 
       {/* Save confirmation modal */}
+      <AnimatePresence>
       {saveModalOpen && (
-        <div
+        <motion.div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
           onClick={() => setSaveModalOpen(false)}
         >
-          <div
-            className="rounded-xl glass border border-border p-6 max-w-md w-full mx-4 shadow-xl glow-ring"
+          <motion.div
+            className="rounded-xl glass border border-border p-6 max-w-md w-full mx-4 shadow-xl glow-ring depth-shadow-lg animate-pulse-glow"
+            style={{ transformStyle: "preserve-3d", perspective: 1200 }}
+            initial={{ opacity: 0, scale: 0.92, y: 24, rotateX: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0, rotateX: 0 }}
+            exit={{ opacity: 0, scale: 0.92, rotateX: 12 }}
+            transition={{ type: "spring", stiffness: 280, damping: 26 }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold">Save experience cards?</h3>
@@ -501,9 +593,10 @@ export default function BuilderPage() {
                 {isSavingAll ? "Saving…" : "Confirm Save"}
               </Button>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
-    </div>
+      </AnimatePresence>
+    </motion.div>
   );
 }

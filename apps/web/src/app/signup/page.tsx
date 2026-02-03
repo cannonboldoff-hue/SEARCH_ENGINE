@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,7 +58,13 @@ export default function SignupPage() {
       title="Create account"
       subtitle="Start with 1,000 credits. Build your experience and get discovered."
     >
-      <Card className="glass border-border/50 shadow-xl glow-ring overflow-hidden">
+      <motion.div
+        initial={{ opacity: 0, y: 24, rotateX: 12, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
+        transition={{ type: "spring", stiffness: 260, damping: 26 }}
+        style={{ transformStyle: "preserve-3d", perspective: 1000 }}
+      >
+      <Card className="glass border-border/50 shadow-xl glow-ring overflow-hidden depth-shadow-lg perspective-1000 transform-3d">
         <CardHeader className="space-y-1">
           <CardTitle className="text-xl">Sign up</CardTitle>
           <CardDescription>
@@ -114,6 +121,7 @@ export default function SignupPage() {
           </form>
         </CardContent>
       </Card>
+      </motion.div>
     </AuthLayout>
   );
 }

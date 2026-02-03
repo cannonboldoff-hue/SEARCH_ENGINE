@@ -23,9 +23,19 @@ export default function ProfilePage() {
 
   if (isLoading) {
     return (
-      <div className="py-8 flex justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading profile…</div>
-      </div>
+      <motion.div
+        className="py-8 flex justify-center"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+      >
+        <motion.div
+          className="text-muted-foreground"
+          animate={{ opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 1.2, repeat: Infinity }}
+        >
+          Loading profile…
+        </motion.div>
+      </motion.div>
     );
   }
 
@@ -41,11 +51,19 @@ export default function ProfilePage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 200, damping: 24 }}
+      style={{ transformStyle: "preserve-3d", perspective: 1000 }}
       className="max-w-3xl mx-auto space-y-6"
     >
-      <Card className="glass border-border/50 overflow-hidden">
+      <motion.div
+        initial={{ opacity: 0, y: 12, rotateX: -6 }}
+        animate={{ opacity: 1, y: 0, rotateX: 0 }}
+        transition={{ delay: 0.06, type: "spring", stiffness: 260, damping: 24 }}
+        style={{ transformStyle: "preserve-3d" }}
+      >
+      <Card className="glass border-border/50 overflow-hidden depth-shadow perspective-1000 transform-3d">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50">
           <CardTitle className="text-xl">My profile</CardTitle>
           <div className="flex gap-2">
@@ -120,8 +138,13 @@ export default function ProfilePage() {
           </section>
         </CardContent>
       </Card>
+      </motion.div>
 
-      <section>
+      <motion.section
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+      >
         <h2 className="text-lg font-semibold mb-3">Experience cards</h2>
         {experienceCards.length === 0 ? (
           <p className="text-muted-foreground text-sm py-6 rounded-xl border border-dashed border-border/50 text-center">
@@ -133,8 +156,15 @@ export default function ProfilePage() {
           </p>
         ) : (
           <ul className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
-            {experienceCards.map((card) => (
-              <Card key={card.id} className="glass border-border/50 hover-lift">
+            {experienceCards.map((card, idx) => (
+              <motion.div
+                key={card.id}
+                initial={{ opacity: 0, x: -12, rotateY: 8 }}
+                animate={{ opacity: 1, x: 0, rotateY: 0 }}
+                transition={{ delay: idx * 0.04, type: "spring", stiffness: 280, damping: 24 }}
+                style={{ transformStyle: "preserve-3d", perspective: 800 }}
+              >
+              <Card className="glass border-border/50 hover-lift depth-shadow perspective-1000 transform-3d">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <CardTitle className="text-base">
@@ -195,10 +225,11 @@ export default function ProfilePage() {
                   )}
                 </CardContent>
               </Card>
+              </motion.div>
             ))}
           </ul>
         )}
-      </section>
+      </motion.section>
     </motion.div>
   );
 }

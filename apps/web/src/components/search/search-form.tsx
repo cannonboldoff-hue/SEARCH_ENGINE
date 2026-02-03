@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import { Search, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,10 +56,21 @@ export function SearchForm({
   };
 
   return (
-    <Card className="glass border-border/50 overflow-hidden glow-ring">
+    <motion.div
+      initial={{ opacity: 0, y: 20, rotateX: -8 }}
+      animate={{ opacity: 1, y: 0, rotateX: 0 }}
+      transition={{ type: "spring", stiffness: 260, damping: 24 }}
+      style={{ transformStyle: "preserve-3d", perspective: 1000 }}
+    >
+    <Card className="glass border-border/50 overflow-hidden glow-ring depth-shadow perspective-1000 transform-3d">
       <CardHeader className="pb-4">
         <CardTitle className="text-lg flex items-center gap-2">
-          <Search className="h-5 w-5 text-primary" />
+          <motion.span
+            animate={{ scale: [1, 1.1, 1] }}
+            transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 2 }}
+          >
+            <Search className="h-5 w-5 text-primary" />
+          </motion.span>
           Search by intent
         </CardTitle>
         <CardDescription>
@@ -112,5 +124,6 @@ export function SearchForm({
         </form>
       </CardContent>
     </Card>
+    </motion.div>
   );
 }
