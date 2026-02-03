@@ -17,11 +17,11 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: CHAT_API_BASE_URL
-        sync: false
+        value: "https://api.groq.com/openai/v1"
       - key: CHAT_API_KEY
         sync: false
       - key: CHAT_MODEL
-        value: "Qwen/Qwen2.5-7B-Instruct"
+        value: "openai/gpt-oss-120b"
       - key: EMBED_API_BASE_URL
         sync: false
       - key: EMBED_API_KEY
