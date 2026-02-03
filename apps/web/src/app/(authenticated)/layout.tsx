@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/contexts/auth";
+import { useAuth } from "@/contexts/auth-context";
+import { SearchProvider } from "@/contexts/search-context";
 import { AppNav } from "@/components/app-nav";
 
 export default function AuthenticatedLayout({
@@ -28,11 +29,11 @@ export default function AuthenticatedLayout({
   }
 
   return (
-    <>
+    <SearchProvider>
       <AppNav />
       <main className="container mx-auto px-4 py-6 min-h-[calc(100vh-3.5rem)] mesh-bg">
         {children}
       </main>
-    </>
+    </SearchProvider>
   );
 }

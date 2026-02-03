@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/contexts/auth";
+import { useAuth } from "@/contexts/auth-context";
 import { LoadingScreen } from "@/components/loading-screen";
 
 export default function RootPage() {

@@ -6,7 +6,7 @@ import { Coins, LogOut, User } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/contexts/auth";
+import { useAuth } from "@/contexts/auth-context";
 import { useCredits } from "@/hooks";
 
 export default function SettingsPage() {

@@ -12,15 +12,19 @@ import {
   User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/contexts/auth";
+import { Input } from "@/components/ui/input";
+import { useAuth } from "@/contexts/auth-context";
+import { useSearch } from "@/contexts/search-context";
 import { CreditsBadge } from "@/components/credits-badge";
 import { cn } from "@/lib/utils";
 
 export function AppNav() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const search = useSearch();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const isDiscover = pathname === "/home" || pathname === "/";
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -34,7 +38,6 @@ export function AppNav() {
 
   const primaryNav = [
     { href: "/home", label: "Discover", icon: Search },
-    { href: "/profile", label: "Profile", icon: User },
     { href: "/builder", label: "Experience", icon: Hammer },
   ];
 
@@ -43,17 +46,44 @@ export function AppNav() {
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    search.performSearch();
+  };
+
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/50 glass">
-      <div className="container flex h-14 items-center justify-between px-4">
+      <div className="container flex h-14 items-center justify-between gap-4 px-4">
         <Link
           href="/home"
-          className="font-semibold text-lg text-foreground hover:text-primary transition-colors flex items-center gap-2"
+          className="font-semibold text-lg text-foreground hover:text-primary transition-colors flex items-center gap-2 flex-shrink-0"
         >
           <span className="text-primary">Discover</span>
         </Link>
 
-        <nav className="flex items-center gap-1" aria-label="Main">
+        {isDiscover && (
+          <form
+            onSubmit={handleSearchSubmit}
+            className="flex-1 flex items-center gap-2 max-w-xl min-w-0"
+          >
+            <Input
+              placeholder="Describe who you're looking for..."
+              value={search.query}
+              onChange={(e) => search.setQuery(e.target.value)}
+              className="h-9 bg-background/50 border-border/70 flex-1 min-w-0"
+            />
+            <Button
+              type="submit"
+              size="sm"
+              disabled={search.isSearching || !search.query.trim()}
+              className="flex-shrink-0"
+            >
+              {search.isSearching ? "…" : "Search"}
+            </Button>
+          </form>
+        )}
+
+        <nav className="flex items-center gap-1 flex-shrink-0" aria-label="Main">
           {primaryNav.map(({ href, label, icon: Icon }) => {
             const isActive = pathname === href || (href === "/home" && pathname === "/");
             return (
@@ -74,7 +104,7 @@ export function AppNav() {
           })}
         </nav>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-shrink-0">
           <CreditsBadge />
           <div className="relative" ref={dropdownRef}>
             <Button

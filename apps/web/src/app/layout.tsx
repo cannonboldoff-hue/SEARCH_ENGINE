@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Outfit, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
-import { AuthProvider } from "@/contexts/auth";
+import { AuthProvider } from "@/contexts/auth-context";
 
 const outfit = Outfit({
   subsets: ["latin"],

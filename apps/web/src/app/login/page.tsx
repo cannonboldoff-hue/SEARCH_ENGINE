@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAuth } from "@/contexts/auth";
+import { useAuth } from "@/contexts/auth-context";
 import { AuthLayout } from "@/components/auth-layout";
 import { LoadingScreen } from "@/components/loading-screen";
 import { ErrorMessage } from "@/components/error-message";

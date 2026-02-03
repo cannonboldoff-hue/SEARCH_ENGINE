@@ -9,7 +9,6 @@ import {
   Building2,
   Code2,
   FlaskConical,
-  Pencil,
   Rocket,
   Trash2,
   TrendingUp,
@@ -57,7 +56,6 @@ export default function BuilderPage() {
   const [rawExperienceId, setRawExperienceId] = useState<string | null>(null);
   const [editedFields, setEditedFields] = useState<Record<string, Record<string, string | string[]>>>({});
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
-  const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [deletedId, setDeletedId] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -162,12 +160,6 @@ export default function BuilderPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experience-cards"] }),
   });
 
-  const approveCardMutation = useMutation({
-    mutationFn: (cardId: string) =>
-      api<ExperienceCard>(`/experience-cards/${cardId}/approve`, { method: "POST" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experience-cards"] }),
-  });
-
   const hideCardMutation = useMutation({
     mutationFn: (cardId: string) =>
       api<ExperienceCard>(`/experience-cards/${cardId}/hide`, { method: "POST" }),
@@ -198,7 +190,7 @@ export default function BuilderPage() {
     setIsSavingAll(true);
     const mergedDrafts = draftCards.map(mergeCardWithEdits);
     try {
-      await Promise.all(
+      const created = await Promise.all(
         mergedDrafts.map((merged) =>
           createCardMutation.mutateAsync({
             raw_experience_id: rawExperienceId || undefined,
@@ -213,6 +205,11 @@ export default function BuilderPage() {
             role_title: merged.role_title || undefined,
             time_range: merged.time_range || undefined,
           })
+        )
+      );
+      await Promise.all(
+        created.map((card) =>
+          api<ExperienceCard>(`/experience-cards/${card.id}/approve`, { method: "POST" })
         )
       );
       setSaveModalOpen(false);
@@ -351,8 +348,7 @@ export default function BuilderPage() {
                 )}
                 <AnimatePresence mode="popLayout">
                   {displayDrafts.map((card) => {
-                    const isExpanded = expandedCards.has(card.draft_card_id) || editingCardId === card.draft_card_id;
-                    const isEditing = editingCardId === card.draft_card_id;
+                    const isExpanded = expandedCards.has(card.draft_card_id);
                     return (
                       <motion.div
                         key={card.draft_card_id}
@@ -374,7 +370,18 @@ export default function BuilderPage() {
                           )}
                         >
                         <div className="p-4">
-                          <div className="flex items-start justify-between gap-2">
+                          <button
+                            type="button"
+                            className="flex items-start justify-between gap-2 w-full text-left"
+                            onClick={() =>
+                              setExpandedCards((s) => {
+                                const next = new Set(s);
+                                if (next.has(card.draft_card_id)) next.delete(card.draft_card_id);
+                                else next.add(card.draft_card_id);
+                                return next;
+                              })
+                            }
+                          >
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="text-muted-foreground flex-shrink-0">
                                 {cardTypeIcon(card.tags, card.title)}
@@ -383,21 +390,7 @@ export default function BuilderPage() {
                                 {card.title || card.company || "Untitled"}
                               </h3>
                             </div>
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => {
-                                  setEditingCardId(isEditing ? null : card.draft_card_id);
-                                  if (!expandedCards.has(card.draft_card_id)) setExpandedCards((s) => new Set(s).add(card.draft_card_id));
-                                }}
-                                title="Edit"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </div>
+                          </button>
                           {(card.tags || []).length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-2">
                               {card.tags.slice(0, 5).map((t, i) => (
@@ -483,11 +476,6 @@ export default function BuilderPage() {
                                 <Button size="sm" onClick={() => saveDraftCard(card)} disabled={createCardMutation.isPending}>
                                   Save
                                 </Button>
-                                {isEditing && (
-                                  <Button size="sm" variant="outline" onClick={() => setEditingCardId(null)}>
-                                    Done
-                                  </Button>
-                                )}
                               </div>
                             </motion.div>
                           )}
@@ -520,16 +508,6 @@ export default function BuilderPage() {
                         >
                           <span className="text-sm truncate">{c.title || c.company || c.id}</span>
                           <div className="flex gap-1">
-                            {c.status === "DRAFT" && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => approveCardMutation.mutate(c.id)}
-                                disabled={approveCardMutation.isPending}
-                              >
-                                Approve
-                              </Button>
-                            )}
                             <Button
                               size="sm"
                               variant="ghost"

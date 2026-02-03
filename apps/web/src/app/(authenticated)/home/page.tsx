@@ -1,35 +1,29 @@
 "use client";
 
-import { useState } from "react";
 import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
-import { HeroBg } from "@/components/hero-bg";
-import { SearchForm, SearchResults } from "@/components/search";
-import type { PersonSearchResult, SearchResponse } from "@/types";
+import { SearchHero } from "@/components/search-hero";
+import { SearchResults } from "@/components/search";
+import { ErrorMessage } from "@/components/error-message";
+import { useSearch } from "@/contexts/search-context";
 
 export default function HomePage() {
-  const [query, setQuery] = useState("");
-  const [openToWorkOnly, setOpenToWorkOnly] = useState(false);
-  const [searchId, setSearchId] = useState<string | null>(null);
-  const [people, setPeople] = useState<PersonSearchResult[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSearchSuccess = (data: SearchResponse) => {
-    setSearchId(data.search_id);
-    setPeople(data.people);
-    setError(null);
-  };
+  const { searchId, people, error } = useSearch();
 
   return (
     <div className="relative min-h-[calc(100vh-3.5rem)]">
-      <div className="relative -mx-4 -mt-6 px-4 pt-8 pb-12 mb-8 overflow-hidden rounded-b-2xl perspective-1000">
-        <HeroBg />
-        <div className="relative z-10 max-w-3xl space-y-2" style={{ transformStyle: "preserve-3d" }}>
+      {/* Huge 3D hero — alluding to discover people by experience */}
+      <div className="relative mb-10">
+        <SearchHero />
+        <div
+          className="relative z-10 max-w-3xl mx-auto -mt-32 sm:-mt-40 px-4 text-center space-y-2"
+          style={{ transformStyle: "preserve-3d" }}
+        >
           <motion.div
             initial={{ opacity: 0, y: 12, rotateX: -6 }}
             animate={{ opacity: 1, y: 0, rotateX: 0 }}
             transition={{ duration: 0.45 }}
-            className="flex items-center gap-2 text-primary mb-2"
+            className="flex items-center justify-center gap-2 text-primary mb-2"
           >
             <motion.span
               animate={{ rotate: [0, 10, -10, 0], y: [0, -2, 0] }}
@@ -53,7 +47,7 @@ export default function HomePage() {
             animate={{ opacity: 1, y: 0, rotateX: 0 }}
             transition={{ duration: 0.45, delay: 0.12 }}
           >
-            Describe who you&apos;re looking for in plain language. Each search costs 1 credit.
+            Use the search bar above. Each search costs 1 credit.
           </motion.p>
         </div>
       </div>
@@ -64,15 +58,7 @@ export default function HomePage() {
         animate={{ opacity: 1 }}
         transition={{ delay: 0.25, duration: 0.4 }}
       >
-        <SearchForm
-          query={query}
-          setQuery={setQuery}
-          openToWorkOnly={openToWorkOnly}
-          setOpenToWorkOnly={setOpenToWorkOnly}
-          error={error}
-          onSuccess={handleSearchSuccess}
-          onError={setError}
-        />
+        {error && <ErrorMessage message={error} />}
         <SearchResults searchId={searchId} people={people} />
       </motion.div>
     </div>
