@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from src.credits import add_credits as add_credits_to_wallet
 from src.db.models import Person, VisibilitySettings, CreditWallet, CreditLedger, Bio, ContactDetails
 from src.schemas import (
     PersonResponse,
@@ -11,6 +12,7 @@ from src.schemas import (
     VisibilitySettingsResponse,
     PatchVisibilityRequest,
     CreditsResponse,
+    PurchaseCreditsRequest,
     LedgerEntryResponse,
     BioResponse,
     BioCreateUpdate,
@@ -218,6 +220,19 @@ async def get_credits(db: AsyncSession, person_id: str) -> CreditsResponse:
     return CreditsResponse(balance=wallet.balance)
 
 
+async def purchase_credits(
+    db: AsyncSession,
+    person_id: str,
+    body: PurchaseCreditsRequest,
+) -> CreditsResponse:
+    if body.credits < 1:
+        raise HTTPException(status_code=400, detail="credits must be at least 1")
+    if body.credits > 100_000:
+        raise HTTPException(status_code=400, detail="credits per purchase limited to 100,000")
+    new_balance = await add_credits_to_wallet(db, person_id, body.credits, reason="purchase")
+    return CreditsResponse(balance=new_balance)
+
+
 async def get_credits_ledger(db: AsyncSession, person_id: str) -> list[LedgerEntryResponse]:
     result = await db.execute(
         select(CreditLedger)
@@ -321,6 +336,14 @@ class MeService:
     @staticmethod
     async def get_credits(db: AsyncSession, person_id: str) -> CreditsResponse:
         return await get_credits(db, person_id)
+
+    @staticmethod
+    async def purchase_credits(
+        db: AsyncSession,
+        person_id: str,
+        body: PurchaseCreditsRequest,
+    ) -> CreditsResponse:
+        return await purchase_credits(db, person_id, body)
 
     @staticmethod
     async def get_credits_ledger(db: AsyncSession, person_id: str) -> list[LedgerEntryResponse]:

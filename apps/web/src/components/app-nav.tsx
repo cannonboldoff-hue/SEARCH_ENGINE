@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ChevronDown,
-  FileEdit,
   Hammer,
   LogOut,
   Search,
@@ -40,7 +39,7 @@ export function AppNav() {
   ];
 
   const menuItems = [
-    { href: "/onboarding/bio", label: "Edit Bio", icon: FileEdit },
+    { href: "/profile", label: "Profile", icon: User },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 

@@ -43,6 +43,38 @@ async def deduct_credits(
     return True
 
 
+async def add_credits(
+    db: AsyncSession,
+    person_id: str,
+    amount: int,
+    reason: str = "purchase",
+) -> int:
+    """Add credits to wallet. Returns new balance."""
+    result = await db.execute(
+        select(CreditWallet)
+        .where(CreditWallet.person_id == person_id)
+        .with_for_update()
+    )
+    wallet = result.scalar_one_or_none()
+    if not wallet:
+        wallet = CreditWallet(person_id=person_id, balance=0)
+        db.add(wallet)
+        await db.flush()
+    wallet.balance += amount
+    new_balance = wallet.balance
+    ledger = CreditLedger(
+        person_id=person_id,
+        amount=amount,
+        reason=reason,
+        reference_type=None,
+        reference_id=None,
+        balance_after=new_balance,
+    )
+    db.add(ledger)
+    await db.flush()
+    return new_balance
+
+
 async def get_idempotent_response(db: AsyncSession, key: str, person_id: str, endpoint: str):
     result = await db.execute(
         select(IdempotencyKey).where(

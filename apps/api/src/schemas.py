@@ -128,6 +128,10 @@ class CreditsResponse(BaseModel):
     balance: int
 
 
+class PurchaseCreditsRequest(BaseModel):
+    credits: int
+
+
 class LedgerEntryResponse(BaseModel):
     id: str
     amount: int

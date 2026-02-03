@@ -365,10 +365,11 @@ export default function BuilderPage() {
                         className="max-w-full min-w-0"
                       >
                         <TiltCard
+                          disabled
                           maxTilt={6}
                           scale={1.01}
                           className={cn(
-                            "rounded-xl border border-border/50 glass overflow-hidden hover-lift max-w-full min-w-0",
+                            "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
                             "border-l-4 border-l-primary depth-shadow"
                           )}
                         >
@@ -482,9 +483,11 @@ export default function BuilderPage() {
                                 <Button size="sm" onClick={() => saveDraftCard(card)} disabled={createCardMutation.isPending}>
                                   Save
                                 </Button>
-                                <Button size="sm" variant="outline" onClick={() => setEditingCardId(null)}>
-                                  Done
-                                </Button>
+                                {isEditing && (
+                                  <Button size="sm" variant="outline" onClick={() => setEditingCardId(null)}>
+                                    Done
+                                  </Button>
+                                )}
                               </div>
                             </motion.div>
                           )}

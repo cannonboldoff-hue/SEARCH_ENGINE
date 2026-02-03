@@ -1,9 +1,11 @@
 "use client";
 
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { Coins, LogOut, User } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth";
 import { useCredits } from "@/hooks";
 
@@ -45,6 +47,12 @@ export default function SettingsPage() {
             </span>
             <span className="text-muted-foreground">credits</span>
           </div>
+          <Link
+            href="/credits"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-4 inline-flex")}
+          >
+            Buy credits
+          </Link>
         </CardContent>
       </Card>
 

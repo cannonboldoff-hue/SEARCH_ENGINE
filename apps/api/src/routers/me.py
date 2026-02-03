@@ -9,6 +9,7 @@ from src.schemas import (
     VisibilitySettingsResponse,
     PatchVisibilityRequest,
     CreditsResponse,
+    PurchaseCreditsRequest,
     LedgerEntryResponse,
     BioResponse,
     BioCreateUpdate,
@@ -74,6 +75,15 @@ async def get_credits(
     db: AsyncSession = Depends(get_db),
 ):
     return await me_service.get_credits(db, current_user.id)
+
+
+@router.post("/credits/purchase", response_model=CreditsResponse)
+async def purchase_credits(
+    body: PurchaseCreditsRequest,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await me_service.purchase_credits(db, current_user.id, body)
 
 
 @router.get("/credits/ledger", response_model=list[LedgerEntryResponse])
