@@ -3,14 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  ChevronDown,
-  Hammer,
-  LogOut,
-  Search,
-  Settings,
-  User,
-} from "lucide-react";
+import { ChevronDown, LogOut, Settings, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
@@ -35,11 +28,6 @@ export function AppNav() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
-
-  const primaryNav = [
-    { href: "/home", label: "Discover", icon: Search },
-    { href: "/builder", label: "Experience", icon: Hammer },
-  ];
 
   const menuItems = [
     { href: "/profile", label: "Profile", icon: User },
@@ -82,27 +70,6 @@ export function AppNav() {
             </Button>
           </form>
         )}
-
-        <nav className="flex items-center gap-1 flex-shrink-0" aria-label="Main">
-          {primaryNav.map(({ href, label, icon: Icon }) => {
-            const isActive = pathname === href || (href === "/home" && pathname === "/");
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                <span className="hidden sm:inline">{label}</span>
-              </Link>
-            );
-          })}
-        </nav>
 
         <div className="flex items-center gap-3 flex-shrink-0">
           <CreditsBadge />
