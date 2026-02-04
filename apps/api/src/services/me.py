@@ -6,6 +6,8 @@ from sqlalchemy import select
 
 from src.credits import add_credits as add_credits_to_wallet
 from src.db.models import Person, VisibilitySettings, CreditWallet, CreditLedger, Bio, ContactDetails
+from src.serializers import person_to_person_schema
+from src.domain_schemas import PersonSchema
 from src.schemas import (
     PersonResponse,
     PatchMeRequest,
@@ -47,6 +49,17 @@ def _person_response(person: Person) -> PersonResponse:
 
 async def get_profile(person: Person) -> PersonResponse:
     return _person_response(person)
+
+
+async def _get_profile_v1_response(db: AsyncSession, person: Person) -> PersonSchema:
+    """Return current user as PersonSchema (domain v1)."""
+    result_bio = await db.execute(select(Bio).where(Bio.person_id == person.id))
+    bio = result_bio.scalar_one_or_none()
+    result_vis = await db.execute(
+        select(VisibilitySettings).where(VisibilitySettings.person_id == person.id)
+    )
+    vis = result_vis.scalar_one_or_none()
+    return person_to_person_schema(person, bio=bio, visibility_settings=vis)
 
 
 async def update_profile(db: AsyncSession, person: Person, body: PatchMeRequest) -> PersonResponse:
@@ -304,6 +317,10 @@ class MeService:
     @staticmethod
     async def get_me(person: Person) -> PersonResponse:
         return await get_profile(person)
+
+    @staticmethod
+    async def get_profile_v1(db: AsyncSession, person: Person) -> PersonSchema:
+        return await _get_profile_v1_response(db, person)
 
     @staticmethod
     async def patch_me(db: AsyncSession, person: Person, body: PatchMeRequest) -> PersonResponse:

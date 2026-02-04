@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Person
-from src.dependencies import get_current_user, get_db
+from src.dependencies import get_current_user, get_db, get_card_status_filter
 from src.schemas import (
     PersonResponse,
     PatchMeRequest,
@@ -13,8 +13,12 @@ from src.schemas import (
     LedgerEntryResponse,
     BioResponse,
     BioCreateUpdate,
+    ExperienceCardResponse,
 )
+from src.domain_schemas import PersonSchema, ExperienceCardV1Schema
+from src.serializers import experience_card_to_response, experience_card_to_v1_schema
 from src.services.me import me_service
+from src.services.experience_card import experience_card_service
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -33,6 +37,15 @@ async def patch_me(
     db: AsyncSession = Depends(get_db),
 ):
     return await me_service.patch_me(db, current_user, body)
+
+
+@router.get("/profile-v1", response_model=PersonSchema)
+async def get_profile_v1(
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Current user profile in domain v1 schema (Person)."""
+    return await me_service.get_profile_v1(db, current_user)
 
 
 @router.get("/visibility", response_model=VisibilitySettingsResponse)
@@ -92,3 +105,24 @@ async def get_credits_ledger(
     db: AsyncSession = Depends(get_db),
 ):
     return await me_service.get_credits_ledger(db, current_user.id)
+
+
+@router.get("/experience-cards", response_model=list[ExperienceCardResponse])
+async def list_my_experience_cards(
+    status_filter: str | None = Depends(get_card_status_filter),
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    cards = await experience_card_service.list_cards(db, current_user.id, status_filter)
+    return [experience_card_to_response(c) for c in cards]
+
+
+@router.get("/experience-cards-v1", response_model=list[ExperienceCardV1Schema])
+async def list_my_experience_cards_v1(
+    status_filter: str | None = Depends(get_card_status_filter),
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List current user's experience cards in domain v1 schema (Experience Card v1)."""
+    cards = await experience_card_service.list_cards(db, current_user.id, status_filter)
+    return [experience_card_to_v1_schema(c) for c in cards]

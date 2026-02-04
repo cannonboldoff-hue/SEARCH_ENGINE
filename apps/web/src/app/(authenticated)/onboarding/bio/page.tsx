@@ -151,36 +151,31 @@ export default function OnboardingBioPage() {
     setServerError(null);
     try {
       await patchVisibility.mutateAsync(buildVisibilityPayload());
-      putBio.mutate(
-        {
-          first_name: data.first_name,
-          last_name: data.last_name,
-          date_of_birth: data.date_of_birth,
-          current_city: data.current_city,
-          profile_photo_url: data.profile_photo_url || undefined,
-          school: data.school,
-          college: data.college || undefined,
-          current_company: data.current_company || undefined,
-          past_companies: data.past_companies?.filter((p) => p.company_name.trim()).length
-            ? data.past_companies?.map((p) => ({
-                company_name: p.company_name,
-                role: p.role || undefined,
-                years: p.years || undefined,
-              }))
-            : undefined,
-          email: data.email,
-          linkedin_url: data.linkedin_url?.trim() || undefined,
-          phone: data.phone?.trim() || undefined,
-        },
-        {
-          onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: VISIBILITY_QUERY_KEY });
-            router.push("/home");
-          },
-        }
-      );
-    } catch {
-      // Errors handled by mutation onError
+      await putBio.mutateAsync({
+        first_name: data.first_name,
+        last_name: data.last_name,
+        date_of_birth: data.date_of_birth,
+        current_city: data.current_city,
+        profile_photo_url: data.profile_photo_url || undefined,
+        school: data.school,
+        college: data.college || undefined,
+        current_company: data.current_company || undefined,
+        past_companies: data.past_companies?.filter((p) => p.company_name.trim()).length
+          ? data.past_companies?.map((p) => ({
+              company_name: p.company_name,
+              role: p.role || undefined,
+              years: p.years || undefined,
+            }))
+          : undefined,
+        email: data.email,
+        linkedin_url: data.linkedin_url?.trim() || undefined,
+        phone: data.phone?.trim() || undefined,
+      });
+      queryClient.invalidateQueries({ queryKey: BIO_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: VISIBILITY_QUERY_KEY });
+      router.push("/home");
+    } catch (e) {
+      setServerError(e instanceof Error ? e.message : "Failed to save");
     }
   };
 

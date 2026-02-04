@@ -1,17 +1,20 @@
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     database_url: str = "postgresql://localhost/search_engine"
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
 
-    # Chat (OpenAI-compatible open-source)
+    # Chat (OpenAI-compatible open-source); None => provider-specific default
     chat_api_base_url: str | None = None
     chat_api_key: str | None = None
-    chat_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    chat_model: str | None = None
 
     # Embeddings (OpenAI-compatible)
     embed_api_base_url: str | None = None
@@ -27,9 +30,11 @@ class Settings(BaseSettings):
     # CORS (comma-separated origins; * allows all)
     cors_origins: str = "*"
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parsed CORS origins for middleware."""
+        raw = self.cors_origins.strip()
+        return ["*"] if not raw else [o.strip() for o in raw.split(",") if o.strip()]
 
 
 @lru_cache

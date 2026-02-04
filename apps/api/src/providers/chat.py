@@ -49,6 +49,10 @@ class ChatProvider(ABC):
     async def extract_experience_cards(self, raw_text: str, raw_experience_id: str) -> DraftSet:
         pass
 
+    async def chat(self, user_message: str, max_tokens: int = 2048) -> str:
+        """Send a single user message and return the assistant reply. Override if needed."""
+        return await self._chat([{"role": "user", "content": user_message}], max_tokens=max_tokens)
+
 
 class OpenAICompatibleChatProvider(ChatProvider):
     """OpenAI-compatible endpoint (vLLM, etc.)."""
@@ -84,7 +88,14 @@ class OpenAICompatibleChatProvider(ChatProvider):
                 )
                 r.raise_for_status()
                 data = r.json()
-                return data["choices"][0]["message"]["content"].strip()
+                choices = data.get("choices") or []
+                if not choices:
+                    raise ChatServiceError("Chat API returned no choices (e.g. content filter).")
+                msg = choices[0].get("message") or {}
+                content = msg.get("content")
+                if content is None or not isinstance(content, str):
+                    raise ChatServiceError("Chat API returned missing or non-string content.")
+                return content.strip()
         except httpx.HTTPStatusError as e:
             raise ChatServiceError(
                 f"Chat API returned {e.response.status_code}. Please try again later."
@@ -93,7 +104,7 @@ class OpenAICompatibleChatProvider(ChatProvider):
             raise ChatServiceError(
                 "Chat service unavailable (timeout or connection error). Please try again later."
             ) from e
-        except (KeyError, TypeError) as e:
+        except (KeyError, TypeError, IndexError) as e:
             raise ChatServiceError("Chat API returned unexpected response format.") from e
 
     async def parse_search_query(self, query: str) -> ParsedQuery:
@@ -191,8 +202,14 @@ class OpenAIChatProvider(OpenAICompatibleChatProvider):
         super().__init__(
             base_url="https://api.openai.com/v1",
             api_key=s.openai_api_key,
-            model=s.chat_model or "gpt-4o-mini",
+            model=s.chat_model or _OPENAI_DEFAULT_MODEL,
         )
+
+
+# Default model for OpenAI official API when CHAT_MODEL is not set
+_OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+# Default model for OpenAI-compatible (vLLM, etc.) when CHAT_MODEL is not set
+_OPENAI_COMPATIBLE_DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 
 def get_chat_provider() -> ChatProvider:
@@ -203,7 +220,7 @@ def get_chat_provider() -> ChatProvider:
         return OpenAICompatibleChatProvider(
             base_url=s.chat_api_base_url,
             api_key=s.chat_api_key,
-            model=s.chat_model,
+            model=s.chat_model or _OPENAI_COMPATIBLE_DEFAULT_MODEL,
         )
     raise RuntimeError(
         "Chat LLM not configured. Set OPENAI_API_KEY or CHAT_API_BASE_URL (and CHAT_MODEL)."

@@ -176,6 +176,21 @@ class DraftSetResponse(BaseModel):
     cards: list[DraftCardResponse]
 
 
+class CardFamilyV1Response(BaseModel):
+    """One parent Experience Card v1 + its child cards (validated)."""
+
+    parent: dict  # Experience Card v1 parent (depth=0)
+    children: list[dict] = []  # Experience Card v1 children (depth=1)
+
+
+class DraftSetV1Response(BaseModel):
+    """Result of Experience Card v1 pipeline: atomize → parent → children → validate."""
+
+    draft_set_id: str
+    raw_experience_id: str
+    card_families: list[CardFamilyV1Response]
+
+
 class ExperienceCardCreate(BaseModel):
     draft_card_id: Optional[str] = None
     raw_experience_id: Optional[str] = None

@@ -16,7 +16,8 @@ import { SaveCardsModal } from "@/components/builder/save-cards-modal";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useExperienceCards, EXPERIENCE_CARDS_QUERY_KEY } from "@/hooks";
-import type { DraftCard, DraftSet, ExperienceCard } from "@/types";
+import type { DraftCard, DraftSet, ExperienceCard, Intent } from "@/types";
+import { INTENTS } from "@/types";
 
 const CARD_FIELDS = [
   "title",
@@ -132,6 +133,7 @@ export default function BuilderPage() {
       team?: string;
       role_title?: string;
       time_range?: string;
+      intent?: Intent;
     }) => api<ExperienceCard>("/experience-cards", { method: "POST", body: payload }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY }),
   });
@@ -144,6 +146,7 @@ export default function BuilderPage() {
 
   const saveDraftCard = useCallback(
     (merged: DraftCard) => {
+      const intent = editedFields[merged.draft_card_id]?.intent as Intent | undefined;
       createCardMutation.mutate({
         raw_experience_id: rawExperienceId || undefined,
         title: merged.title || undefined,
@@ -156,9 +159,10 @@ export default function BuilderPage() {
         team: merged.team || undefined,
         role_title: merged.role_title || undefined,
         time_range: merged.time_range || undefined,
+        ...(intent && INTENTS.includes(intent) ? { intent } : {}),
       });
     },
-    [rawExperienceId, createCardMutation]
+    [rawExperienceId, createCardMutation, editedFields]
   );
 
   const handleSaveCards = useCallback(async () => {
@@ -167,8 +171,9 @@ export default function BuilderPage() {
     const mergedDrafts = draftCards.map(mergeCardWithEdits);
     try {
       const created = await Promise.all(
-        mergedDrafts.map((merged) =>
-          createCardMutation.mutateAsync({
+        mergedDrafts.map((merged) => {
+          const intent = editedFields[merged.draft_card_id]?.intent as Intent | undefined;
+          return createCardMutation.mutateAsync({
             raw_experience_id: rawExperienceId || undefined,
             title: merged.title || undefined,
             context: merged.context || undefined,
@@ -180,8 +185,9 @@ export default function BuilderPage() {
             team: merged.team || undefined,
             role_title: merged.role_title || undefined,
             time_range: merged.time_range || undefined,
-          })
-        )
+            ...(intent && INTENTS.includes(intent) ? { intent } : {}),
+          });
+        })
       );
       await Promise.all(
         created.map((card) =>
@@ -197,7 +203,7 @@ export default function BuilderPage() {
     } finally {
       setIsSavingAll(false);
     }
-  }, [draftCards, mergeCardWithEdits, rawExperienceId, createCardMutation, queryClient, router]);
+  }, [draftCards, mergeCardWithEdits, rawExperienceId, createCardMutation, queryClient, router, editedFields]);
 
   const displayDrafts = draftCards.map(mergeCardWithEdits);
   const hasCards = displayDrafts.length > 0 || savedCards.length > 0;
@@ -404,6 +410,27 @@ export default function BuilderPage() {
                               exit={{ opacity: 0 }}
                               transition={{ duration: 0.2 }}
                             >
+                              <div className="grid grid-cols-[100px_1fr] gap-2 items-start min-w-0">
+                                <Label className="text-xs pt-2">Intent</Label>
+                                <div className="min-w-0">
+                                  <select
+                                    value={(editedFields[card.draft_card_id]?.intent as string) ?? "other"}
+                                    onChange={(e) =>
+                                      setFieldEdit(card.draft_card_id, "intent", e.target.value as Intent)
+                                    }
+                                    className={cn(
+                                      "rounded-md border border-input bg-background px-3 py-2 text-sm w-full max-w-full",
+                                      "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                                    )}
+                                  >
+                                    {INTENTS.map((intent) => (
+                                      <option key={intent} value={intent}>
+                                        {intent.replace(/_/g, " ")}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
                               {CARD_FIELDS.map((field) => (
                                 <div key={field} className="grid grid-cols-[100px_1fr] gap-2 items-start min-w-0">
                                   <Label className="text-xs capitalize pt-2">{field.replace(/_/g, " ")}</Label>
@@ -501,7 +528,10 @@ export default function BuilderPage() {
             )}
           </div>
           <div className="flex-shrink-0 pt-4 pb-1 flex justify-end border-t border-border/50 mt-2">
-            <Button onClick={() => setSaveModalOpen(true)} disabled={!hasCards}>
+            <Button
+              onClick={() => setSaveModalOpen(true)}
+              disabled={displayDrafts.length === 0}
+            >
               Save Cards
             </Button>
           </div>

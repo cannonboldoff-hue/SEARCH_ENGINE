@@ -1,23 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Person, ExperienceCard
-from src.dependencies import get_current_user, get_db
+from src.dependencies import get_current_user, get_db, get_experience_card_or_404
 from src.schemas import (
     RawExperienceCreate,
     RawExperienceResponse,
     DraftSetResponse,
+    DraftSetV1Response,
+    CardFamilyV1Response,
     ExperienceCardCreate,
     ExperienceCardPatch,
     ExperienceCardResponse,
 )
 from src.providers import ChatServiceError, EmbeddingServiceError
 from src.serializers import experience_card_to_response
-from src.services.experience_card import (
-    experience_card_service,
-    apply_card_patch,
-    VALID_CARD_STATUSES,
-)
+from src.services.experience_card import experience_card_service, apply_card_patch
+from src.services.experience_card_v1 import run_draft_v1_pipeline
 
 router = APIRouter(tags=["builder"])
 
@@ -45,6 +44,26 @@ async def create_draft_cards(
         raise HTTPException(status_code=503, detail=str(e))
 
 
+@router.post("/experience-cards/draft-v1", response_model=DraftSetV1Response)
+async def create_draft_cards_v1(
+    body: RawExperienceCreate,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run Experience Card v1 pipeline: atomize → parent extract → child gen → validate."""
+    try:
+        draft_set_id, raw_experience_id, card_families = await run_draft_v1_pipeline(
+            db, current_user.id, body
+        )
+        return DraftSetV1Response(
+            draft_set_id=draft_set_id,
+            raw_experience_id=raw_experience_id,
+            card_families=[CardFamilyV1Response(parent=f["parent"], children=f["children"]) for f in card_families],
+        )
+    except ChatServiceError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 @router.post("/experience-cards", response_model=ExperienceCardResponse)
 async def create_experience_card(
     body: ExperienceCardCreate,
@@ -57,27 +76,19 @@ async def create_experience_card(
 
 @router.patch("/experience-cards/{card_id}", response_model=ExperienceCardResponse)
 async def patch_experience_card(
-    card_id: str,
+    card: ExperienceCard = Depends(get_experience_card_or_404),
     body: ExperienceCardPatch,
-    current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    card = await experience_card_service.get_card(db, card_id, current_user.id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Card not found")
     apply_card_patch(card, body)
     return experience_card_to_response(card)
 
 
 @router.post("/experience-cards/{card_id}/approve", response_model=ExperienceCardResponse)
 async def approve_experience_card(
-    card_id: str,
-    current_user: Person = Depends(get_current_user),
+    card: ExperienceCard = Depends(get_experience_card_or_404),
     db: AsyncSession = Depends(get_db),
 ):
-    card = await experience_card_service.get_card(db, card_id, current_user.id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Card not found")
     try:
         card = await experience_card_service.approve(db, card)
     except EmbeddingServiceError as e:
@@ -87,27 +98,7 @@ async def approve_experience_card(
 
 @router.post("/experience-cards/{card_id}/hide", response_model=ExperienceCardResponse)
 async def hide_experience_card(
-    card_id: str,
-    current_user: Person = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    card: ExperienceCard = Depends(get_experience_card_or_404),
 ):
-    card = await experience_card_service.get_card(db, card_id, current_user.id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Card not found")
     card.status = ExperienceCard.HIDDEN
     return experience_card_to_response(card)
-
-
-@router.get("/me/experience-cards", response_model=list[ExperienceCardResponse])
-async def list_my_experience_cards(
-    status_filter: str | None = Query(None, alias="status"),
-    current_user: Person = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    if status_filter is not None and status_filter not in VALID_CARD_STATUSES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"status must be one of: {', '.join(sorted(VALID_CARD_STATUSES))}",
-        )
-    cards = await experience_card_service.list_cards(db, current_user.id, status_filter)
-    return [experience_card_to_response(c) for c in cards]

@@ -1,5 +1,49 @@
 /** API / domain types shared across the app */
 
+// Re-export domain schemas and enums from @/lib/schemas for use across the app
+export {
+  INTENTS,
+  CHILD_RELATION_TYPES,
+  VISIBILITY_VALUES,
+  CLAIM_STATES,
+  CONFIDENCE_LEVELS,
+  REACTIONS,
+  ENTITY_TAXONOMY,
+  VERIFICATION_STATUS,
+  VERIFICATION_METHODS,
+  EVIDENCE_TYPES,
+  TOOL_TYPES,
+} from "@/lib/schemas";
+export type {
+  Intent,
+  ChildRelationType,
+  Visibility,
+  ClaimState,
+  Confidence,
+  Reaction,
+  EntityType,
+  Person,
+  ExperienceCardV1,
+  LocationBasic,
+  PersonVerification,
+  PersonPrivacyDefaults,
+  LanguageField,
+  TimeField,
+  LocationWithConfidence,
+  RoleItem,
+  ActionItem,
+  TopicItem,
+  EntityItem,
+  ToolItem,
+  ProcessItem,
+  ToolingField,
+  OutcomeItem,
+  EvidenceItem,
+  PrivacyField,
+  QualityField,
+  IndexField,
+} from "@/lib/schemas";
+
 export type PersonSearchResult = {
   id: string;
   display_name: string | null;

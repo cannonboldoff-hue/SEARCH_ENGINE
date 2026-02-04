@@ -7,9 +7,7 @@ from slowapi.errors import RateLimitExceeded
 
 from src.config import get_settings
 from src.limiter import limiter
-from src.routers import auth_router, me_router, contact_router, builder_router, search_router
-
-ROUTERS = (auth_router, me_router, contact_router, builder_router, search_router)
+from src.routers import ROUTERS
 
 
 @asynccontextmanager
@@ -26,11 +24,9 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-_origins = get_settings().cors_origins.strip()
-cors_origins_list = ["*"] if not _origins else [o.strip() for o in _origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins_list,
+    allow_origins=get_settings().cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

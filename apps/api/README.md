@@ -201,6 +201,19 @@ All used by routers and services for validation and serialization.
 | **`OpenAICompatibleEmbeddingProvider`** | 1) **`__init__(base_url, api_key, model, dimension=384)`**: normalize base_url to `/v1`. 2) **`embed(texts)`**: POST to `{base_url}/embeddings` with model and input=texts; return list of embeddings ordered by index; on error raise `EmbeddingServiceError`. |
 | **`get_embedding_provider()`** | If `embed_api_base_url` set → return `OpenAICompatibleEmbeddingProvider(..., dimension=384)`. Else raise RuntimeError. |
 
+### Experience Card v1 prompts (`prompts/experience_card_v1.py`)
+
+Copy-paste prompts for a universal Experience Card v1 pipeline (messy text → atoms → parent card → child cards → validated JSON). Align with `domain_schemas.ExperienceCardV1Schema`; do not assume the user is in tech.
+
+| Prompt | Purpose |
+|--------|---------|
+| **`PROMPT_ATOMIZER`** | Split user message into atomic experiences (atom_id, raw_text_span, suggested_intent, why). Placeholder: `{{USER_TEXT}}`. |
+| **`PROMPT_PARENT_EXTRACTOR`** | Convert one atom into a parent Experience Card v1 (depth=0). Placeholders: `{{ATOM_TEXT}}`, `{{PERSON_ID}}`. |
+| **`PROMPT_CHILD_GENERATOR`** | Generate 0–10 child cards from parent. Placeholders: `{{PARENT_ID}}`, `{{PARENT_CARD_JSON}}`. |
+| **`PROMPT_VALIDATOR`** | Validate and correct parent + children. Placeholder: `{{PARENT_AND_CHILDREN_JSON}}`. |
+
+Use `fill_prompt(template, user_text=..., atom_text=..., ...)` to substitute placeholders. Pipeline order: atomizer → parent extractor → child generator → validator.
+
 ---
 
 ## Services
@@ -292,6 +305,7 @@ All require `get_current_user` and `get_db`. Tags: builder.
 
 - **POST /experiences/raw** — Body: RawExperienceCreate. Creates raw experience; returns RawExperienceResponse.
 - **POST /experience-cards/draft** — Body: RawExperienceCreate. Calls `experience_card_service.create_draft_set`; on ChatServiceError → 503. Returns DraftSetResponse.
+- **POST /experience-cards/draft-v1** — Body: RawExperienceCreate. Runs Experience Card v1 pipeline (atomize → parent extract → child gen → validate); on ChatServiceError → 503. Returns DraftSetV1Response (draft_set_id, raw_experience_id, card_families: list of { parent, children }).
 - **POST /experience-cards** — Body: ExperienceCardCreate. Creates card; returns ExperienceCardResponse (via serializer).
 - **PATCH /experience-cards/{card_id}** — Body: ExperienceCardPatch. Load card for user; 404 if not found; apply_card_patch(card, body); return serialized card.
 - **POST /experience-cards/{card_id}/approve** — Load card; 404 if not found; approve (compute embedding); on EmbeddingServiceError → 503; return serialized card.
