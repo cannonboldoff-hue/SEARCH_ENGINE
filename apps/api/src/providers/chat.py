@@ -1,10 +1,13 @@
 import json
+import logging
 from abc import ABC, abstractmethod
 
 import httpx
 from pydantic import BaseModel
 
 from src.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class ChatServiceError(Exception):
@@ -54,6 +57,13 @@ class OpenAICompatibleChatProvider(ChatProvider):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:
+            logger.debug(
+                "Chat request: base_url=%s model=%s max_tokens=%s message_count=%s",
+                self.base_url,
+                self.model,
+                max_tokens,
+                len(messages),
+            )
             async with httpx.AsyncClient(timeout=60.0) as client:
                 r = await client.post(
                     f"{self.base_url}/chat/completions",
@@ -71,14 +81,26 @@ class OpenAICompatibleChatProvider(ChatProvider):
                     raise ChatServiceError("Chat API returned missing or non-string content.")
                 return content.strip()
         except httpx.HTTPStatusError as e:
+            resp_text = ""
+            try:
+                resp_text = e.response.text or ""
+            except Exception:
+                resp_text = ""
+            logger.error(
+                "Chat HTTP error: status=%s body=%s",
+                e.response.status_code,
+                resp_text[:1000],
+            )
             raise ChatServiceError(
                 f"Chat API returned {e.response.status_code}. Please try again later."
             ) from e
         except httpx.RequestError as e:
+            logger.error("Chat request error: %s", str(e))
             raise ChatServiceError(
                 "Chat service unavailable (timeout or connection error). Please try again later."
             ) from e
         except (KeyError, TypeError, IndexError) as e:
+            logger.exception("Chat response parse error.")
             raise ChatServiceError("Chat API returned unexpected response format.") from e
 
     async def parse_search_query(self, query: str) -> ParsedQuery:
