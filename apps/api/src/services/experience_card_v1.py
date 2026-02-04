@@ -61,6 +61,10 @@ def _parse_json_object(text: str) -> dict:
         data = json.loads(raw)
     except json.JSONDecodeError:
         data = _best_effort_json_parse(text)
+    if isinstance(data, list) and data:
+        candidate = data[0]
+        if isinstance(candidate, dict):
+            return candidate
     if not isinstance(data, dict):
         raise json.JSONDecodeError("Expected JSON object", raw, 0)
     return data
