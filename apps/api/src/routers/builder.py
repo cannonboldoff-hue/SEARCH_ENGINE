@@ -76,8 +76,8 @@ async def create_experience_card(
 
 @router.patch("/experience-cards/{card_id}", response_model=ExperienceCardResponse)
 async def patch_experience_card(
-    card: ExperienceCard = Depends(get_experience_card_or_404),
     body: ExperienceCardPatch,
+    card: ExperienceCard = Depends(get_experience_card_or_404),
     db: AsyncSession = Depends(get_db),
 ):
     apply_card_patch(card, body)
