@@ -31,15 +31,39 @@ def _strip_json_block(text: str) -> str:
     return s
 
 
+def _best_effort_json_parse(text: str) -> object:
+    """Try to decode JSON anywhere in the text if direct parsing fails."""
+    s = text.strip()
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(s):
+        if ch not in "[{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(s[idx:])
+            return obj
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError("No JSON object found", s, 0)
+
+
 def _parse_json_array(text: str) -> list:
     raw = _strip_json_block(text)
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = _best_effort_json_parse(text)
     return data if isinstance(data, list) else [data]
 
 
 def _parse_json_object(text: str) -> dict:
     raw = _strip_json_block(text)
-    return json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = _best_effort_json_parse(text)
+    if not isinstance(data, dict):
+        raise json.JSONDecodeError("Expected JSON object", raw, 0)
+    return data
 
 
 def _inject_parent_metadata(parent: dict, person_id: str) -> dict:
