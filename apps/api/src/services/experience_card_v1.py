@@ -31,15 +31,33 @@ def _strip_json_block(text: str) -> str:
     return s
 
 
+def _extract_json(text: str):
+    """Extract the first valid JSON object/array from text."""
+    s = _strip_json_block(text)
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(s):
+        if ch not in "{[":
+            continue
+        try:
+            data, _ = decoder.raw_decode(s[i:])
+            return data
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError("No valid JSON found in response.", s, 0)
+
+
 def _parse_json_array(text: str) -> list:
-    raw = _strip_json_block(text)
-    data = json.loads(raw)
+    data = _extract_json(text)
     return data if isinstance(data, list) else [data]
 
 
 def _parse_json_object(text: str) -> dict:
-    raw = _strip_json_block(text)
-    return json.loads(raw)
+    data = _extract_json(text)
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0]
+    raise ValueError("Expected JSON object from response.")
 
 
 def _inject_parent_metadata(parent: dict, person_id: str) -> dict:
