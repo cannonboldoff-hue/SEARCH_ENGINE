@@ -7,12 +7,10 @@ from src.db.models import RawExperience, ExperienceCard
 from src.schemas import (
     RawExperienceCreate,
     RawExperienceResponse,
-    DraftSetResponse,
-    DraftCardResponse,
     ExperienceCardCreate,
     ExperienceCardPatch,
 )
-from src.providers import get_chat_provider, get_embedding_provider, ChatServiceError, EmbeddingServiceError
+from src.providers import get_embedding_provider, EmbeddingServiceError
 from src.utils import normalize_embedding
 
 
@@ -44,42 +42,6 @@ async def create_raw_experience(
     await db.flush()
     await db.refresh(raw)
     return raw
-
-
-async def create_draft_cards(
-    db: AsyncSession,
-    person_id: str,
-    body: RawExperienceCreate,
-) -> tuple[RawExperience, DraftSetResponse]:
-    """Create raw experience and draft cards via LLM. Returns (raw, draft_set_response)."""
-    raw = RawExperience(person_id=person_id, raw_text=body.raw_text)
-    db.add(raw)
-    await db.flush()
-    chat = get_chat_provider()
-    draft_set = await chat.extract_experience_cards(body.raw_text, raw.id)
-    await db.refresh(raw)
-    response = DraftSetResponse(
-        draft_set_id=draft_set.draft_set_id,
-        raw_experience_id=raw.id,
-        cards=[
-            DraftCardResponse(
-                draft_card_id=c.draft_card_id,
-                title=c.title,
-                context=c.context,
-                constraints=c.constraints,
-                decisions=c.decisions,
-                outcome=c.outcome,
-                tags=c.tags or [],
-                company=c.company,
-                team=c.team,
-                role_title=c.role_title,
-                time_range=c.time_range,
-                source_span=c.source_span,
-            )
-            for c in draft_set.cards
-        ],
-    )
-    return raw, response
 
 
 async def create_experience_card(
@@ -190,10 +152,6 @@ class ExperienceCardService:
     @staticmethod
     async def create_raw(db: AsyncSession, person_id: str, body: RawExperienceCreate) -> RawExperience:
         return await create_raw_experience(db, person_id, body)
-
-    @staticmethod
-    async def create_draft_set(db: AsyncSession, person_id: str, body: RawExperienceCreate) -> tuple[RawExperience, DraftSetResponse]:
-        return await create_draft_cards(db, person_id, body)
 
     @staticmethod
     async def create_card(db: AsyncSession, person_id: str, body: ExperienceCardCreate) -> ExperienceCard:

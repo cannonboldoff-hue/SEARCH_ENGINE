@@ -155,27 +155,6 @@ class RawExperienceResponse(BaseModel):
     created_at: Optional[datetime] = None
 
 
-class DraftCardResponse(BaseModel):
-    draft_card_id: str
-    title: Optional[str] = None
-    context: Optional[str] = None
-    constraints: Optional[str] = None
-    decisions: Optional[str] = None
-    outcome: Optional[str] = None
-    tags: list[str]
-    company: Optional[str] = None
-    team: Optional[str] = None
-    role_title: Optional[str] = None
-    time_range: Optional[str] = None
-    source_span: Optional[str] = None
-
-
-class DraftSetResponse(BaseModel):
-    draft_set_id: str
-    raw_experience_id: str
-    cards: list[DraftCardResponse]
-
-
 class CardFamilyV1Response(BaseModel):
     """One parent Experience Card v1 + its child cards (validated)."""
 

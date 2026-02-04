@@ -210,14 +210,15 @@ export type ToolingField = {
   raw: string | null;
 };
 
+/** Matches backend OutcomeItem / OutcomeMetric (name, value, unit optional). */
 export type OutcomeItem = {
   type: string;
   label: string;
   value_text: string | null;
   metric: {
-    name: string | null;
-    value: number | null;
-    unit: string | null;
+    name?: string | null;
+    value?: number | null;
+    unit?: string | null;
   };
   confidence: Confidence;
 };

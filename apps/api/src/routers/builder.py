@@ -6,7 +6,6 @@ from src.dependencies import get_current_user, get_db, get_experience_card_or_40
 from src.schemas import (
     RawExperienceCreate,
     RawExperienceResponse,
-    DraftSetResponse,
     DraftSetV1Response,
     CardFamilyV1Response,
     ExperienceCardCreate,
@@ -29,19 +28,6 @@ async def create_raw_experience(
 ):
     raw = await experience_card_service.create_raw(db, current_user.id, body)
     return RawExperienceResponse(id=raw.id, raw_text=raw.raw_text, created_at=raw.created_at)
-
-
-@router.post("/experience-cards/draft", response_model=DraftSetResponse)
-async def create_draft_cards(
-    body: RawExperienceCreate,
-    current_user: Person = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        _, response = await experience_card_service.create_draft_set(db, current_user.id, body)
-        return response
-    except ChatServiceError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.post("/experience-cards/draft-v1", response_model=DraftSetV1Response)

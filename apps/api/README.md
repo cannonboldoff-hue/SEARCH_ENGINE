@@ -146,7 +146,7 @@ Pydantic models for request/response. Summary:
 - **Me**: `PersonResponse`, `PatchMeRequest`, `VisibilitySettingsResponse`, `PatchVisibilityRequest`, `BioResponse`, `BioCreateUpdate`, `PastCompanyItem`.
 - **Contact**: `ContactDetailsResponse`, `PatchContactRequest`.
 - **Credits**: `CreditsResponse`, `LedgerEntryResponse`.
-- **Builder**: `RawExperienceCreate`, `RawExperienceResponse`, `DraftCardResponse`, `DraftSetResponse`, `ExperienceCardCreate`, `ExperienceCardPatch`, `ExperienceCardResponse`.
+- **Builder**: `RawExperienceCreate`, `RawExperienceResponse`, `ExperienceCardCreate`, `ExperienceCardPatch`, `ExperienceCardResponse`, `DraftSetV1Response`, `CardFamilyV1Response`.
 - **Search**: `SearchRequest`, `PersonSearchResult`, `SearchResponse`, `PersonProfileResponse`, `UnlockContactResponse`.
 
 All used by routers and services for validation and serialization.
@@ -185,10 +185,8 @@ All used by routers and services for validation and serialization.
 |------------------|--------------|
 | **`ChatServiceError`** | Exception for LLM/API errors or invalid output. |
 | **`ParsedQuery`** | Pydantic: company, team, open_to_work_only, semantic_text. |
-| **`DraftCard`** | draft_card_id, title, context, constraints, decisions, outcome, tags, company, team, role_title, time_range, source_span. |
-| **`DraftSet`** | draft_set_id, raw_experience_id, cards (list of DraftCard). |
-| **`ChatProvider`** (abstract) | `parse_search_query(query)`, `extract_experience_cards(raw_text, raw_experience_id)`. |
-| **`OpenAICompatibleChatProvider`** | 1) **`__init__(base_url, api_key, model)`**: normalize base_url to end with `/v1`. 2) **`_chat(messages, max_tokens)`**: POST to `{base_url}/chat/completions` with model, messages, max_tokens, temperature=0.2; return `data["choices"][0]["message"]["content"].strip()`; on HTTP/request/KeyError raise `ChatServiceError`. 3) **`parse_search_query(query)`**: Build prompt asking for JSON with company, team, open_to_work_only, semantic_text; call `_chat`, strip markdown code block if present, parse JSON; return `ParsedQuery(...)`. 4) **`extract_experience_cards(raw_text, raw_experience_id)`**: Prompt to extract cards as JSON (draft_set_id, raw_experience_id, cards with draft_card_id, title, context, etc.); parse; return `DraftSet` with list of `DraftCard`. |
+| **`ChatProvider`** (abstract) | `parse_search_query(query)`, `chat(user_message, max_tokens)`. |
+| **`OpenAICompatibleChatProvider`** | 1) **`__init__(base_url, api_key, model)`**: normalize base_url to end with `/v1`. 2) **`_chat(messages, max_tokens)`**: POST to `{base_url}/chat/completions` with model, messages, max_tokens, temperature=0.2; return `data["choices"][0]["message"]["content"].strip()`; on HTTP/request/KeyError raise `ChatServiceError`. 3) **`parse_search_query(query)`**: Build prompt asking for JSON with company, team, open_to_work_only, semantic_text; call `_chat`, strip markdown code block if present, parse JSON; return `ParsedQuery(...)`. |
 | **`OpenAIChatProvider`** | Subclass using `openai_api_key` and `chat_model` from settings; base_url `https://api.openai.com/v1`. |
 | **`get_chat_provider()`** | If `openai_api_key` set and no `chat_api_base_url` → `OpenAIChatProvider()`. Else if `chat_api_base_url` → `OpenAICompatibleChatProvider(...)`. Else raise RuntimeError. |
 
@@ -262,13 +260,12 @@ Use `fill_prompt(template, user_text=..., atom_text=..., ...)` to substitute pla
 |----------|--------------|
 | **`_card_searchable_text(card)`** | Concatenate title, context, company, team, role_title, time_range, tags into one string for embedding. |
 | **`create_raw_experience(db, person_id, body)`** | Create RawExperience(person_id, raw_text=body.raw_text); add, refresh; return raw. |
-| **`create_draft_cards(db, person_id, body)`** | Create RawExperience, flush; call chat `extract_experience_cards(body.raw_text, raw.id)` → DraftSet; build DraftSetResponse (draft_set_id, raw_experience_id, list of DraftCardResponse); return (raw, response). |
 | **`create_experience_card(db, person_id, body)`** | Create ExperienceCard (person_id, raw_experience_id, status=DRAFT, title, context, constraints, decisions, outcome, tags, company, team, role_title, time_range); add, refresh; return card. |
 | **`get_card_for_user(db, card_id, person_id)`** | Select ExperienceCard where id=card_id and person_id=person_id; return one or None. |
 | **`apply_card_patch(card, body)`** | For each non-None field in ExperienceCardPatch (title, context, constraints, decisions, outcome, tags, company, team, role_title, time_range, locked), set on card; if any content field was set, set card.human_edited = True. |
 | **`approve_experience_card(db, card)`** | Set card.status = APPROVED; build searchable text; call embedding provider.embed([text]); normalize vector and set card.embedding; return card. Raises EmbeddingServiceError if embed fails. |
 | **`list_my_cards(db, person_id, status_filter)`** | Select ExperienceCard for person_id; if status_filter given filter by it, else exclude HIDDEN; order by created_at desc; return list. |
-| **`ExperienceCardService`** | Facade: create_raw, create_draft_set, create_card, get_card, approve, list_cards. `experience_card_service` used by builder router. |
+| **`ExperienceCardService`** | Facade: create_raw, create_card, get_card, approve, list_cards. `experience_card_service` used by builder router. |
 
 ---
 
@@ -304,7 +301,6 @@ Prefix `/me` (mounted with me). Requires `get_current_user`.
 All require `get_current_user` and `get_db`. Tags: builder.
 
 - **POST /experiences/raw** — Body: RawExperienceCreate. Creates raw experience; returns RawExperienceResponse.
-- **POST /experience-cards/draft** — Body: RawExperienceCreate. Calls `experience_card_service.create_draft_set`; on ChatServiceError → 503. Returns DraftSetResponse.
 - **POST /experience-cards/draft-v1** — Body: RawExperienceCreate. Runs Experience Card v1 pipeline (atomize → parent extract → child gen → validate); on ChatServiceError → 503. Returns DraftSetV1Response (draft_set_id, raw_experience_id, card_families: list of { parent, children }).
 - **POST /experience-cards** — Body: ExperienceCardCreate. Creates card; returns ExperienceCardResponse (via serializer).
 - **PATCH /experience-cards/{card_id}** — Body: ExperienceCardPatch. Load card for user; 404 if not found; apply_card_patch(card, body); return serialized card.
@@ -336,6 +332,6 @@ Require `get_current_user` and `get_db`.
 3. **Search** → validate body → (optional) idempotency → credits check → chat parse query → embed query → pgvector similarity → filters (open_to_work, company/team, locations, salary) → create Search + SearchResult → deduct credit → return people.
 4. **View profile** → validate search_id + searcher + not expired → ensure person in results → load person, visibility, approved cards; if unlock already done, include contact.
 5. **Unlock contact** → same search validation → open_to_contact check → if already unlocked return cached; else deduct credit, create UnlockContact, return contact details.
-6. **Builder: draft cards** → create RawExperience → chat extract_experience_cards → return draft set. **Approve card** → set APPROVED → embed card text → save embedding on card.
+6. **Builder: draft cards** → POST /experience-cards/draft-v1 runs v1 pipeline (atomize → parent → children → validate); cards persisted as DRAFT. **Approve card** → set APPROVED → embed card text → save embedding on card.
 
 This README documents each backend step and function as implemented in the codebase.

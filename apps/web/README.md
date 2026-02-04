@@ -145,23 +145,17 @@ apps/web/
 
 ### Builder — `src/app/(authenticated)/builder/page.tsx`
 
-- **Purpose:** Turn raw experience text into structured “experience cards”; edit, save single cards or save all.
-- **Main state:** `rawText`, `draftCards`, `rawExperienceId`, `editedFields`, `expandedCards`, `editingCardId`, `saveModalOpen`, `deletedId`, `isUpdating`, `saveError`, `isSavingAll`.
+- **Purpose:** Turn raw experience text into structured “experience cards” (parent + children) via the v1 pipeline; save/approve all.
+- **Main state:** `rawText`, `cardFamilies`, `expandedFamilies`, `saveModalOpen`, `deletedId`, `isUpdating`, `saveError`, `isSavingAll`.
 - **Flow:**
   1. **useQuery** loads saved experience cards from `api("/me/experience-cards")`.
-  2. User types in textarea; “Update” calls **extractDraft**: POST `/experience-cards/draft` with `raw_text`; response gives `raw_experience_id` and `cards` (draft cards). Edits from previous run are preserved by mapping old draft IDs to new ones in `editedFields`.
-  3. Each card can be expanded/edited; **mergeCardWithEdits** combines draft card with `editedFields` for that `draft_card_id`.
-  4. **setFieldEdit(draftCardId, field, value)** updates a single field in `editedFields`.
-  5. **saveDraftCard(merged)** creates one card: **createCardMutation** POST `/experience-cards` with merged fields.
-  6. **handleSaveCards** saves all current draft cards (merged with edits) via `createCardMutation.mutateAsync` for each, then closes modal, invalidates queries, and `router.push("/home")`; on error sets `saveError`.
-  7. Saved cards list: approve (POST `/experience-cards/:id/approve`), hide (POST `/experience-cards/:id/hide`). **cardTypeIcon** picks icon from tags/title (research, startup, quant, open-source, default).
+  2. User types in textarea; “Update” calls **extractDraftV1**: POST `/experience-cards/draft-v1` with `raw_text`; response gives `card_families` (parent + children per family). Cards are persisted as DRAFT on the backend.
+  3. **handleSaveCards** approves all cards in `cardFamilies` via POST `/experience-cards/:id/approve` for each, then closes modal, invalidates queries, and `router.push("/home")`; on error sets `saveError`.
+  4. Saved cards list: hide (POST `/experience-cards/:id/hide`). **CardTypeIcon** picks icon from tags/title (research, startup, quant, open-source, default).
 - **Functions:**
-  - **extractDraft():** POST draft, set `rawExperienceId`, merge previous edits into new card IDs, set `draftCards`, `prevDraftCardsRef`.
-  - **mergeCardWithEdits(card):** Returns card with `editedFields[card.draft_card_id]` overlaid (tags as array).
-  - **setFieldEdit(draftCardId, field, value):** Updates `editedFields` for that card/field.
-  - **saveDraftCard(merged):** Calls `createCardMutation.mutate` with merged card payload.
-  - **handleSaveCards():** Saves all merged drafts, then redirects or sets error.
-  - **cardTypeIcon(tags, title):** Returns Lucide icon component based on keywords.
+  - **extractDraftV1():** POST draft-v1, set `cardFamilies`, expand all family IDs in `expandedFamilies`.
+  - **handleSaveCards():** Approve all card IDs in `cardFamilies`, then redirect or set error.
+  - **v1CardTopics(card):** Returns topic labels from v1 card for display.
 
 ### Onboarding Bio — `src/app/(authenticated)/onboarding/bio/page.tsx`
 
@@ -255,8 +249,8 @@ apps/web/
 - **ExperienceCard:** id, person_id, raw_experience_id, status, human_edited, locked, title, context, constraints, decisions, outcome, tags, company, team, role_title, time_range, created_at, updated_at.
 - **ContactDetails:** email_visible, phone, linkedin_url, other.
 - **PersonProfile:** id, display_name, open_to_work, open_to_contact, work_preferred_*, experience_cards, contact.
-- **DraftCard:** draft_card_id and same content fields as experience (no id/status).
-- **DraftSet:** draft_set_id, raw_experience_id, cards: DraftCard[].
+- **CardFamilyV1Response:** parent (ExperienceCardV1), children (ExperienceCardV1[]).
+- **DraftSetV1Response:** draft_set_id, raw_experience_id, card_families: CardFamilyV1Response[].
 - **BioResponse:** first_name, last_name, date_of_birth, current_city, profile_photo_url, school, college, current_company, past_companies, email, linkedin_url, phone, complete.
 
 ---
@@ -335,7 +329,7 @@ apps/web/
 1. **Auth:** Token in `localStorage` + AuthContext. Login/signup call API, set token, fetch `/me` and `/me/bio`, redirect to `/home` or `/onboarding/bio`.
 2. **Search:** Home page → SearchForm POST `/search` (idempotent) → SearchResponse → SearchResults + PersonResultCard links to `/people/[id]?search_id=...`.
 3. **Profile:** GET `/me/bio` and `/me/experience-cards`; profile page shows them; builder and onboarding/bio mutate and invalidate these.
-4. **Builder:** POST `/experience-cards/draft` → draft cards; edits in state; POST `/experience-cards` to save one or all; approve/hide via POST on card id.
+4. **Builder:** POST `/experience-cards/draft-v1` → card families (parent + children); approve all via POST `/experience-cards/:id/approve`; hide via POST on card id.
 5. **Person profile:** GET `/people/:id?search_id=...`; unlock contact via POST with idempotency key; balance from `/me/credits`.
 
 All API calls use **lib/api.ts** with Bearer token and **API_BASE** from **lib/utils.ts**.

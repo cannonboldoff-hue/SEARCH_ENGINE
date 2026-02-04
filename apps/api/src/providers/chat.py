@@ -1,5 +1,4 @@
 import json
-import uuid
 from abc import ABC, abstractmethod
 
 import httpx
@@ -19,34 +18,9 @@ class ParsedQuery(BaseModel):
     semantic_text: str = ""
 
 
-class DraftCard(BaseModel):
-    draft_card_id: str
-    title: str | None = None
-    context: str | None = None
-    constraints: str | None = None
-    decisions: str | None = None
-    outcome: str | None = None
-    tags: list[str] = []
-    company: str | None = None
-    team: str | None = None
-    role_title: str | None = None
-    time_range: str | None = None
-    source_span: str | None = None
-
-
-class DraftSet(BaseModel):
-    draft_set_id: str
-    raw_experience_id: str
-    cards: list[DraftCard] = []
-
-
 class ChatProvider(ABC):
     @abstractmethod
     async def parse_search_query(self, query: str) -> ParsedQuery:
-        pass
-
-    @abstractmethod
-    async def extract_experience_cards(self, raw_text: str, raw_experience_id: str) -> DraftSet:
         pass
 
     async def chat(self, user_message: str, max_tokens: int = 2048) -> str:
@@ -130,67 +104,6 @@ Output format: {{"company": null or "string", "team": null or "string", "open_to
             team=data.get("team"),
             open_to_work_only=bool(data.get("open_to_work_only", False)),
             semantic_text=data.get("semantic_text", query),
-        )
-
-    async def extract_experience_cards(self, raw_text: str, raw_experience_id: str) -> DraftSet:
-        prompt = f"""Extract work experience cards from this paragraph. One paragraph may contain multiple distinct experiences (different companies, roles, or time periods). Output strict JSON only.
-
-Paragraph:
----
-{raw_text}
----
-
-Output a single JSON object:
-{{
-  "draft_set_id": "<uuid>",
-  "raw_experience_id": "{raw_experience_id}",
-  "cards": [
-    {{
-      "draft_card_id": "<uuid>",
-      "title": "short title or null",
-      "context": "context or null",
-      "constraints": "constraints or null",
-      "decisions": "decisions or null",
-      "outcome": "outcome or null",
-      "tags": ["tag1", "tag2"],
-      "company": "company name or null",
-      "team": "team or null",
-      "role_title": "role or null",
-      "time_range": "e.g. 2020-2022 or null",
-      "source_span": "exact sentence or phrase this card came from, or null"
-    }}
-  ]
-}}
-
-Rules: Extract only what is explicitly stated. If a field is missing, use null. Do not polish or invent. Split into multiple cards if there are multiple distinct work episodes."""
-        try:
-            text = await self._chat([{"role": "user", "content": prompt}], max_tokens=2048)
-            if "```" in text:
-                text = text.split("```")[1].replace("json", "").strip()
-            data = json.loads(text)
-        except (ValueError, json.JSONDecodeError) as e:
-            raise ChatServiceError("Chat returned invalid JSON for experience cards.") from e
-        cards = [
-            DraftCard(
-                draft_card_id=c.get("draft_card_id") or str(uuid.uuid4()),
-                title=c.get("title"),
-                context=c.get("context"),
-                constraints=c.get("constraints"),
-                decisions=c.get("decisions"),
-                outcome=c.get("outcome"),
-                tags=c.get("tags") or [],
-                company=c.get("company"),
-                team=c.get("team"),
-                role_title=c.get("role_title"),
-                time_range=c.get("time_range"),
-                source_span=c.get("source_span"),
-            )
-            for c in data.get("cards", [])
-        ]
-        return DraftSet(
-            draft_set_id=data.get("draft_set_id") or str(uuid.uuid4()),
-            raw_experience_id=raw_experience_id,
-            cards=cards,
         )
 
 

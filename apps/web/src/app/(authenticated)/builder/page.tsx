@@ -1,13 +1,11 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/back-link";
 import { TiltCard } from "@/components/tilt-card";
@@ -16,125 +14,55 @@ import { SaveCardsModal } from "@/components/builder/save-cards-modal";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useExperienceCards, EXPERIENCE_CARDS_QUERY_KEY } from "@/hooks";
-import type { DraftCard, DraftSet, ExperienceCard, Intent } from "@/types";
-import { INTENTS } from "@/types";
+import type {
+  ExperienceCard,
+  ExperienceCardCreate,
+  CardFamilyV1Response,
+  DraftSetV1Response,
+  ExperienceCardV1,
+} from "@/types";
 
-const CARD_FIELDS = [
-  "title",
-  "context",
-  "constraints",
-  "decisions",
-  "outcome",
-  "tags",
-  "company",
-  "team",
-  "role_title",
-  "time_range",
-] as const;
-
-const LONG_TEXT_FIELDS = new Set(["context", "constraints", "decisions", "outcome"]);
+function v1CardTopics(card: ExperienceCardV1): string[] {
+  return (card.topics ?? []).map((t) => (typeof t === "object" && t && "label" in t ? t.label : String(t)));
+}
 
 export default function BuilderPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [rawText, setRawText] = useState("");
-  const [draftCards, setDraftCards] = useState<DraftCard[]>([]);
-  const [rawExperienceId, setRawExperienceId] = useState<string | null>(null);
-  const [editedFields, setEditedFields] = useState<Record<string, Record<string, string | string[]>>>({});
-  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [cardFamilies, setCardFamilies] = useState<CardFamilyV1Response[] | null>(null);
+  const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(new Set());
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [deletedId, setDeletedId] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
-  const prevDraftCardsRef = useRef<DraftCard[]>([]);
 
   const { data: savedCards = [], isLoading: loadingCards } = useExperienceCards();
 
-  const extractDraft = useCallback(async () => {
+  const extractDraftV1 = useCallback(async () => {
     if (!rawText.trim()) {
-      setDraftCards([]);
-      setRawExperienceId(null);
+      setCardFamilies([]);
       return;
     }
     setIsUpdating(true);
     try {
-      const result = await api<DraftSet>("/experience-cards/draft", {
+      const result = await api<DraftSetV1Response>("/experience-cards/draft-v1", {
         method: "POST",
         body: { raw_text: rawText },
       });
-      setRawExperienceId(result.raw_experience_id);
-      const prev = prevDraftCardsRef.current;
-      const nextCards = result.cards;
-      setEditedFields((prevEdits) => {
-        const nextEdits: Record<string, Record<string, string | string[]>> = {};
-        const currentIds = new Set(nextCards.map((c) => c.draft_card_id));
-        for (let i = 0; i < nextCards.length; i++) {
-          const oldCard = prev[i];
-          const newCard = nextCards[i];
-          if (oldCard && prevEdits[oldCard.draft_card_id]) {
-            nextEdits[newCard.draft_card_id] = prevEdits[oldCard.draft_card_id];
-          }
-        }
-        return Object.fromEntries(
-          Object.entries(nextEdits).filter(([id]) => currentIds.has(id))
-        );
-      });
-      setDraftCards(nextCards);
-      setExpandedCards(new Set(nextCards.map((c) => c.draft_card_id)));
-      prevDraftCardsRef.current = nextCards;
+      setCardFamilies(result.card_families ?? []);
+      setExpandedFamilies(new Set((result.card_families ?? []).map((f) => f.parent?.id).filter(Boolean) as string[]));
     } catch (e) {
-      console.error("Extract failed", e);
+      console.error("Draft V1 failed", e);
     } finally {
       setIsUpdating(false);
     }
   }, [rawText]);
 
-  const mergeCardWithEdits = useCallback(
-    (card: DraftCard): DraftCard => {
-      const edits = editedFields[card.draft_card_id];
-      if (!edits) return card;
-      return {
-        ...card,
-        ...Object.fromEntries(
-          Object.entries(edits).map(([k, v]) => [
-            k,
-            k === "tags" ? (Array.isArray(v) ? v : []) : v ?? (card as Record<string, unknown>)[k],
-          ])
-        ),
-      } as DraftCard;
-    },
-    [editedFields]
-  );
-
-  const setFieldEdit = useCallback(
-    (draftCardId: string, field: string, value: string | string[]) => {
-      setEditedFields((prev) => ({
-        ...prev,
-        [draftCardId]: {
-          ...(prev[draftCardId] || {}),
-          [field]: value,
-        },
-      }));
-    },
-    []
-  );
-
   const createCardMutation = useMutation({
-    mutationFn: (payload: {
-      raw_experience_id?: string;
-      title?: string;
-      context?: string;
-      constraints?: string;
-      decisions?: string;
-      outcome?: string;
-      tags?: string[];
-      company?: string;
-      team?: string;
-      role_title?: string;
-      time_range?: string;
-      intent?: Intent;
-    }) => api<ExperienceCard>("/experience-cards", { method: "POST", body: payload }),
+    mutationFn: (payload: ExperienceCardCreate) =>
+      api<ExperienceCard>("/experience-cards", { method: "POST", body: payload }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY }),
   });
 
@@ -144,56 +72,19 @@ export default function BuilderPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY }),
   });
 
-  const saveDraftCard = useCallback(
-    (merged: DraftCard) => {
-      const intent = editedFields[merged.draft_card_id]?.intent as Intent | undefined;
-      createCardMutation.mutate({
-        raw_experience_id: rawExperienceId || undefined,
-        title: merged.title || undefined,
-        context: merged.context || undefined,
-        constraints: merged.constraints || undefined,
-        decisions: merged.decisions || undefined,
-        outcome: merged.outcome || undefined,
-        tags: merged.tags,
-        company: merged.company || undefined,
-        team: merged.team || undefined,
-        role_title: merged.role_title || undefined,
-        time_range: merged.time_range || undefined,
-        ...(intent && INTENTS.includes(intent) ? { intent } : {}),
-      });
-    },
-    [rawExperienceId, createCardMutation, editedFields]
-  );
-
   const handleSaveCards = useCallback(async () => {
     setSaveError(null);
     setIsSavingAll(true);
-    const mergedDrafts = draftCards.map(mergeCardWithEdits);
     try {
-      const created = await Promise.all(
-        mergedDrafts.map((merged) => {
-          const intent = editedFields[merged.draft_card_id]?.intent as Intent | undefined;
-          return createCardMutation.mutateAsync({
-            raw_experience_id: rawExperienceId || undefined,
-            title: merged.title || undefined,
-            context: merged.context || undefined,
-            constraints: merged.constraints || undefined,
-            decisions: merged.decisions || undefined,
-            outcome: merged.outcome || undefined,
-            tags: merged.tags,
-            company: merged.company || undefined,
-            team: merged.team || undefined,
-            role_title: merged.role_title || undefined,
-            time_range: merged.time_range || undefined,
-            ...(intent && INTENTS.includes(intent) ? { intent } : {}),
-          });
-        })
-      );
-      await Promise.all(
-        created.map((card) =>
-          api<ExperienceCard>(`/experience-cards/${card.id}/approve`, { method: "POST" })
-        )
-      );
+      if (cardFamilies && cardFamilies.length > 0) {
+        const allIds = cardFamilies.flatMap((f) => [
+          ...(f.parent?.id ? [f.parent.id] : []),
+          ...(f.children ?? []).map((c) => c.id).filter(Boolean),
+        ]);
+        await Promise.all(
+          allIds.map((id) => api<ExperienceCard>(`/experience-cards/${id}/approve`, { method: "POST" }))
+        );
+      }
       setSaveModalOpen(false);
       queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
       router.push("/home");
@@ -203,10 +94,10 @@ export default function BuilderPage() {
     } finally {
       setIsSavingAll(false);
     }
-  }, [draftCards, mergeCardWithEdits, rawExperienceId, createCardMutation, queryClient, router, editedFields]);
+  }, [cardFamilies, queryClient, router]);
 
-  const displayDrafts = draftCards.map(mergeCardWithEdits);
-  const hasCards = displayDrafts.length > 0 || savedCards.length > 0;
+  const hasV1Families = (cardFamilies?.length ?? 0) > 0;
+  const hasCards = hasV1Families || savedCards.length > 0;
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -254,13 +145,13 @@ export default function BuilderPage() {
           />
           <div className="mt-3 space-y-1">
             <Button
-              onClick={extractDraft}
+              onClick={extractDraftV1}
               disabled={!rawText.trim() || isUpdating}
             >
               {isUpdating ? "Structuring…" : "Update"}
             </Button>
             <p className="text-xs text-muted-foreground">
-              Update regenerates cards using your Bio context. Your manual edits on cards will be preserved.
+              Extracts a parent card per experience and child cards (skills, outcomes, etc.).
             </p>
           </div>
         </motion.div>
@@ -274,7 +165,7 @@ export default function BuilderPage() {
         >
           <h2 className="text-lg font-semibold mb-3 flex-shrink-0">Experience cards</h2>
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0">
-            {loadingCards && savedCards.length === 0 && displayDrafts.length === 0 ? (
+            {loadingCards && savedCards.length === 0 && !hasV1Families ? (
               <motion.div
                 className="flex flex-col items-center justify-center py-12 text-muted-foreground"
                 initial={{ opacity: 0 }}
@@ -324,165 +215,129 @@ export default function BuilderPage() {
                   </motion.div>
                 )}
                 <AnimatePresence mode="popLayout">
-                  {displayDrafts.map((card) => {
-                    const isExpanded = expandedCards.has(card.draft_card_id);
-                    return (
-                      <motion.div
-                        key={card.draft_card_id}
-                        layout
-                        initial={{ opacity: 0, y: 16, rotateX: -12, scale: 0.96 }}
-                        animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
-                        exit={{ opacity: 0, rotateX: 8, scale: 0.96 }}
-                        transition={{ type: "spring", stiffness: 280, damping: 26 }}
-                        style={{ transformStyle: "preserve-3d", perspective: 800 }}
-                        className="max-w-full min-w-0"
-                      >
-                        <TiltCard
-                          disabled
-                          maxTilt={6}
-                          scale={1.01}
-                          className={cn(
-                            "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
-                            "border-l-4 border-l-primary depth-shadow"
-                          )}
+                  {hasV1Families && cardFamilies ? cardFamilies.map((family) => {
+                      const parent = family.parent as ExperienceCardV1;
+                      const children = (family.children ?? []) as ExperienceCardV1[];
+                      const parentId = parent?.id ?? "";
+                      const isExpanded = expandedFamilies.has(parentId);
+                      const tags = parent ? v1CardTopics(parent) : [];
+                      const timeText = parent?.time && typeof parent.time === "object" && "text" in parent.time
+                        ? (parent.time as { text?: string }).text
+                        : null;
+                      const roleLabel = parent?.roles?.[0] && typeof parent.roles[0] === "object" && "label" in parent.roles[0]
+                        ? (parent.roles[0] as { label: string }).label
+                        : null;
+                      return (
+                        <motion.div
+                          key={parentId}
+                          layout
+                          initial={{ opacity: 0, y: 16, rotateX: -12, scale: 0.96 }}
+                          animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
+                          exit={{ opacity: 0, rotateX: 8, scale: 0.96 }}
+                          transition={{ type: "spring", stiffness: 280, damping: 26 }}
+                          style={{ transformStyle: "preserve-3d", perspective: 800 }}
+                          className="max-w-full min-w-0 space-y-2"
                         >
-                        <div className="p-4">
-                          <button
-                            type="button"
-                            className="flex items-start justify-between gap-2 w-full text-left"
-                            onClick={() =>
-                              setExpandedCards((s) => {
-                                const next = new Set(s);
-                                if (next.has(card.draft_card_id)) next.delete(card.draft_card_id);
-                                else next.add(card.draft_card_id);
-                                return next;
-                              })
-                            }
+                          <TiltCard
+                            disabled
+                            maxTilt={6}
+                            scale={1.01}
+                            className={cn(
+                              "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
+                              "border-l-4 border-l-primary depth-shadow"
+                            )}
                           >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-muted-foreground flex-shrink-0">
-                                <CardTypeIcon tags={card.tags ?? []} title={card.title} />
-                              </span>
-                              <h3 className="font-semibold text-sm truncate">
-                                {card.title || card.company || "Untitled"}
-                              </h3>
-                            </div>
-                          </button>
-                          {(card.tags || []).length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {card.tags.slice(0, 5).map((t, i) => (
-                                <span
-                                  key={`${card.draft_card_id}-tag-${i}-${t}`}
-                                  className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
-                                >
-                                  {t}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          {card.context && (
-                            <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
-                              {card.context}
-                            </p>
-                          )}
-                          {card.decisions && (
-                            <ul className="text-xs text-muted-foreground mt-2 list-disc list-inside space-y-0.5">
-                              {card.decisions.split("\n").filter(Boolean).slice(0, 3).map((line, i) => (
-                                <li key={i}>{line.trim()}</li>
-                              ))}
-                            </ul>
-                          )}
-                          {card.outcome && (
-                            <p className="text-xs text-muted-foreground mt-2 italic">
-                              {card.outcome}
-                            </p>
-                          )}
-                          <div className="text-xs text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-0">
-                            {card.time_range && <span>{card.time_range}</span>}
-                            {card.company && <span>{card.company}</span>}
-                          </div>
-                          <AnimatePresence>
-                          {isExpanded && (
-                            <motion.div
-                              className="mt-4 pt-4 border-t border-border/50 space-y-3 min-w-0"
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              transition={{ duration: 0.2 }}
-                            >
-                              <div className="grid grid-cols-[100px_1fr] gap-2 items-start min-w-0">
-                                <Label className="text-xs pt-2">Intent</Label>
-                                <div className="min-w-0">
-                                  <select
-                                    value={(editedFields[card.draft_card_id]?.intent as string) ?? "other"}
-                                    onChange={(e) =>
-                                      setFieldEdit(card.draft_card_id, "intent", e.target.value as Intent)
-                                    }
-                                    className={cn(
-                                      "rounded-md border border-input bg-background px-3 py-2 text-sm w-full max-w-full",
-                                      "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                                    )}
+                            <div className="p-4">
+                              <button
+                                type="button"
+                                className="flex items-start justify-between gap-2 w-full text-left"
+                                onClick={() =>
+                                  setExpandedFamilies((s) => {
+                                    const next = new Set(s);
+                                    if (next.has(parentId)) next.delete(parentId);
+                                    else next.add(parentId);
+                                    return next;
+                                  })
+                                }
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="text-muted-foreground flex-shrink-0">
+                                    <CardTypeIcon tags={tags} title={parent?.headline ?? null} />
+                                  </span>
+                                  <h3 className="font-semibold text-sm truncate">
+                                    {parent?.headline || "Untitled"}
+                                  </h3>
+                                  {children.length > 0 && (
+                                    <span className="text-xs text-muted-foreground flex-shrink-0">
+                                      +{children.length} child{children.length !== 1 ? "ren" : ""}
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                              {tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {tags.slice(0, 5).map((t, i) => (
+                                    <span
+                                      key={`${parentId}-tag-${i}-${t}`}
+                                      className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {parent?.summary && (
+                                <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
+                                  {parent.summary}
+                                </p>
+                              )}
+                              <div className="text-xs text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-0">
+                                {timeText && <span>{timeText}</span>}
+                                {roleLabel && <span>{roleLabel}</span>}
+                              </div>
+                              <AnimatePresence>
+                                {isExpanded && children.length > 0 && (
+                                  <motion.div
+                                    className="mt-4 pt-4 border-t border-border/50 space-y-3 min-w-0"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    transition={{ duration: 0.2 }}
                                   >
-                                    {INTENTS.map((intent) => (
-                                      <option key={intent} value={intent}>
-                                        {intent.replace(/_/g, " ")}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              </div>
-                              {CARD_FIELDS.map((field) => (
-                                <div key={field} className="grid grid-cols-[100px_1fr] gap-2 items-start min-w-0">
-                                  <Label className="text-xs capitalize pt-2">{field.replace(/_/g, " ")}</Label>
-                                  <div className="min-w-0">
-                                    {field === "tags" ? (
-                                      <Input
-                                        value={(card.tags || []).join(", ")}
-                                        onChange={(e) =>
-                                          setFieldEdit(
-                                            card.draft_card_id,
-                                            "tags",
-                                            e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
-                                          )
-                                        }
-                                        placeholder="tag1, tag2"
-                                        className="text-sm w-full max-w-full"
-                                      />
-                                    ) : LONG_TEXT_FIELDS.has(field) ? (
-                                      <Textarea
-                                        value={(card[field] as string) ?? ""}
-                                        onChange={(e) =>
-                                          setFieldEdit(card.draft_card_id, field, e.target.value)
-                                        }
-                                        placeholder={field}
-                                        className="text-sm w-full max-w-full min-h-[80px] resize-y"
-                                      />
-                                    ) : (
-                                      <Input
-                                        value={(card[field] as string) ?? ""}
-                                        onChange={(e) =>
-                                          setFieldEdit(card.draft_card_id, field, e.target.value)
-                                        }
-                                        placeholder={field}
-                                        className="text-sm w-full max-w-full"
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                              <div className="flex gap-2 pt-1">
-                                <Button size="sm" onClick={() => saveDraftCard(card)} disabled={createCardMutation.isPending}>
-                                  Save
-                                </Button>
-                              </div>
-                            </motion.div>
-                          )}
-                          </AnimatePresence>
-                        </div>
-                        </TiltCard>
-                      </motion.div>
-                    );
-                  })}
+                                    <p className="text-xs font-medium text-muted-foreground">Child cards</p>
+                                    <ul className="space-y-2">
+                                      {children.map((child) => {
+                                        const childRelation = child?.relation_type ?? "";
+                                        const childHeadline = child?.headline ?? "Untitled";
+                                        const childSummary = child?.summary ?? "";
+                                        return (
+                                          <li
+                                            key={child?.id ?? childHeadline}
+                                            className="rounded-lg border border-border/40 bg-muted/30 p-3"
+                                          >
+                                            {childRelation && (
+                                              <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
+                                                {String(childRelation).replace(/_/g, " ")}
+                                              </span>
+                                            )}
+                                            <p className="font-medium text-sm">{childHeadline}</p>
+                                            {childSummary && (
+                                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                                {childSummary}
+                                              </p>
+                                            )}
+                                          </li>
+                                        );
+                                      })}
+                                    </ul>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          </TiltCard>
+                        </motion.div>
+                      );
+                    }) : null}
                 </AnimatePresence>
                 {savedCards.length > 0 && (
                   <motion.div
@@ -530,7 +385,7 @@ export default function BuilderPage() {
           <div className="flex-shrink-0 pt-4 pb-1 flex justify-end border-t border-border/50 mt-2">
             <Button
               onClick={() => setSaveModalOpen(true)}
-              disabled={displayDrafts.length === 0}
+              disabled={!hasV1Families}
             >
               Save Cards
             </Button>

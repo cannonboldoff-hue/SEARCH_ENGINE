@@ -1,5 +1,7 @@
 /** API / domain types shared across the app */
 
+import type { ExperienceCardV1 } from "@/lib/schemas";
+
 // Re-export domain schemas and enums from @/lib/schemas for use across the app
 export {
   INTENTS,
@@ -56,13 +58,14 @@ export type SearchResponse = {
   people: PersonSearchResult[];
 };
 
+/** Response shape from GET /me/experience-cards and POST /experience-cards, etc. */
 export type ExperienceCard = {
   id: string;
-  person_id?: string;
-  raw_experience_id?: string | null;
+  person_id: string;
+  raw_experience_id: string | null;
   status: string;
-  human_edited?: boolean;
-  locked?: boolean;
+  human_edited: boolean;
+  locked: boolean;
   title: string | null;
   context: string | null;
   constraints: string | null;
@@ -73,8 +76,39 @@ export type ExperienceCard = {
   team: string | null;
   role_title: string | null;
   time_range: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+/** Request body for POST /experience-cards (create). Matches backend ExperienceCardCreate. */
+export type ExperienceCardCreate = {
+  draft_card_id?: string | null;
+  raw_experience_id?: string | null;
+  title?: string | null;
+  context?: string | null;
+  constraints?: string | null;
+  decisions?: string | null;
+  outcome?: string | null;
+  tags?: string[];
+  company?: string | null;
+  team?: string | null;
+  role_title?: string | null;
+  time_range?: string | null;
+};
+
+/** Request body for PATCH /experience-cards/:card_id. Matches backend ExperienceCardPatch. */
+export type ExperienceCardPatch = {
+  locked?: boolean | null;
+  title?: string | null;
+  context?: string | null;
+  constraints?: string | null;
+  decisions?: string | null;
+  outcome?: string | null;
+  tags?: string[] | null;
+  company?: string | null;
+  team?: string | null;
+  role_title?: string | null;
+  time_range?: string | null;
 };
 
 export type ContactDetails = {
@@ -98,25 +132,17 @@ export type PersonProfile = {
   contact: ContactDetails | null;
 };
 
-export type DraftCard = {
-  draft_card_id: string;
-  title: string | null;
-  context: string | null;
-  constraints: string | null;
-  decisions: string | null;
-  outcome: string | null;
-  tags: string[];
-  company: string | null;
-  team: string | null;
-  role_title: string | null;
-  time_range: string | null;
-  source_span?: string | null;
+/** One parent Experience Card v1 + its children. Matches backend CardFamilyV1Response. */
+export type CardFamilyV1Response = {
+  parent: ExperienceCardV1;
+  children: ExperienceCardV1[];
 };
 
-export type DraftSet = {
+/** Result of POST /experience-cards/draft-v1. Matches backend DraftSetV1Response. */
+export type DraftSetV1Response = {
   draft_set_id: string;
   raw_experience_id: string;
-  cards: DraftCard[];
+  card_families: CardFamilyV1Response[];
 };
 
 export type BioResponse = {
