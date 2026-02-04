@@ -1,7 +1,6 @@
 """Experience Card v1 pipeline: atomize → parent extract → child gen → validate."""
 
 import json
-import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -18,7 +17,6 @@ from src.prompts.experience_card_v1 import (
     fill_prompt,
 )
 
-logger = logging.getLogger(__name__)
 
 def _strip_json_block(text: str) -> str:
     """Remove markdown code fence around JSON if present."""
@@ -33,33 +31,15 @@ def _strip_json_block(text: str) -> str:
     return s
 
 
-def _extract_json(text: str):
-    """Extract the first valid JSON object/array from text."""
-    s = _strip_json_block(text)
-    decoder = json.JSONDecoder()
-    for i, ch in enumerate(s):
-        if ch not in "{[":
-            continue
-        try:
-            data, _ = decoder.raw_decode(s[i:])
-            return data
-        except json.JSONDecodeError:
-            continue
-    raise json.JSONDecodeError("No valid JSON found in response.", s, 0)
-
-
 def _parse_json_array(text: str) -> list:
-    data = _extract_json(text)
+    raw = _strip_json_block(text)
+    data = json.loads(raw)
     return data if isinstance(data, list) else [data]
 
 
 def _parse_json_object(text: str) -> dict:
-    data = _extract_json(text)
-    if isinstance(data, dict):
-        return data
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        return data[0]
-    raise ValueError("Expected JSON object from response.")
+    raw = _strip_json_block(text)
+    return json.loads(raw)
 
 
 def _inject_parent_metadata(parent: dict, person_id: str) -> dict:
@@ -106,7 +86,8 @@ def _v1_card_to_experience_card_fields(
     tags = [t.get("label") for t in topics if isinstance(t, dict) and t.get("label")]
 
     return {
-        "id": card.get("id") or str(uuid.uuid4()),
+        # Always generate fresh IDs for persistence to avoid LLM collisions.
+        "id": str(uuid.uuid4()),
         "person_id": person_id,
         "raw_experience_id": raw_experience_id,
         "status": ExperienceCard.DRAFT,
@@ -136,7 +117,7 @@ async def _persist_v1_family(
     parent = family.get("parent") or {}
     children = family.get("children") or []
     for card in [parent] + children:
-        if not card or not card.get("id"):
+        if not card:
             continue
         kwargs = _v1_card_to_experience_card_fields(card, person_id, raw_experience_id)
         ec = ExperienceCard(**kwargs)
@@ -155,21 +136,11 @@ async def run_draft_v1_pipeline(
     card_family is {"parent": {...}, "children": [...]}.
     Raises ChatServiceError on LLM/parse errors.
     """
-    logger.info(
-        "draft_v1 start: person_id=%s raw_len=%s",
-        person_id,
-        len(body.raw_text or ""),
-    )
     raw = RawExperience(person_id=person_id, raw_text=body.raw_text)
     db.add(raw)
     await db.flush()
     raw_experience_id = raw.id
     draft_set_id = str(uuid.uuid4())
-    logger.info(
-        "draft_v1 ids: draft_set_id=%s raw_experience_id=%s",
-        draft_set_id,
-        raw_experience_id,
-    )
 
     chat = get_chat_provider()
 
@@ -179,20 +150,16 @@ async def run_draft_v1_pipeline(
         response = await chat.chat(prompt, max_tokens=1024)
         atoms = _parse_json_array(response)
     except (ValueError, json.JSONDecodeError) as e:
-        logger.exception("draft_v1 atomizer failed")
         raise ChatServiceError("Atomizer returned invalid JSON.") from e
 
     if not atoms:
-        logger.info("draft_v1 no atoms produced")
         return draft_set_id, raw_experience_id, []
 
-    logger.info("draft_v1 atoms_count=%s", len(atoms))
     card_families: list[dict] = []
 
-    for idx, atom in enumerate(atoms):
+    for atom in atoms:
         raw_span = atom.get("raw_text_span") or atom.get("raw_text") or ""
         if not raw_span:
-            logger.info("draft_v1 atom[%s] empty raw_span", idx)
             continue
 
         # 2. Parent extractor
@@ -205,12 +172,10 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=2048)
             parent = _parse_json_object(response)
         except (ValueError, json.JSONDecodeError) as e:
-            logger.exception("draft_v1 parent extractor failed for atom[%s]", idx)
             raise ChatServiceError("Parent extractor returned invalid JSON.") from e
 
         parent = _inject_parent_metadata(parent, person_id)
         parent_id = parent["id"]
-        logger.info("draft_v1 atom[%s] parent_id=%s", idx, parent_id)
 
         # 3. Child generator
         prompt = fill_prompt(
@@ -222,11 +187,9 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=2048)
             children = _parse_json_array(response)
         except (ValueError, json.JSONDecodeError) as e:
-            logger.exception("draft_v1 child generator failed for atom[%s]", idx)
             raise ChatServiceError("Child generator returned invalid JSON.") from e
 
         children = [_inject_child_metadata(c, parent_id) for c in children]
-        logger.info("draft_v1 atom[%s] children_count=%s", idx, len(children))
 
         # 4. Validator
         combined = {"parent": parent, "children": children}
@@ -238,7 +201,6 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=4096)
             validated = _parse_json_object(response)
         except (ValueError, json.JSONDecodeError) as e:
-            logger.exception("draft_v1 validator failed for atom[%s]", idx)
             raise ChatServiceError("Validator returned invalid JSON.") from e
 
         v_parent = validated.get("parent") or parent
@@ -247,5 +209,4 @@ async def run_draft_v1_pipeline(
         card_families.append(family)
         await _persist_v1_family(db, person_id, raw_experience_id, family)
 
-    logger.info("draft_v1 done: families=%s", len(card_families))
     return draft_set_id, raw_experience_id, card_families
