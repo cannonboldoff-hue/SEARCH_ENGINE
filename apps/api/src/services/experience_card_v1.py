@@ -17,6 +17,20 @@ from src.prompts.experience_card_v1 import (
     fill_prompt,
 )
 
+_DEBUG_LOG_PATH = r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log"
+
+
+def _debug_log(payload: dict) -> None:
+    try:
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as _f:
+            _f.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
+    try:
+        print(json.dumps(payload))
+    except Exception:
+        pass
+
 
 def _strip_json_block(text: str) -> str:
     """Remove markdown code fence around JSON if present."""
@@ -103,12 +117,62 @@ def _v1_card_to_experience_card_fields(
     raw_experience_id: str,
 ) -> dict:
     """Map a v1 card dict (parent or child) to ExperienceCard column values for persistence."""
+    # region agent log
+    _debug_log(
+        {
+            "sessionId": "debug-session",
+            "runId": "pre-fix",
+            "hypothesisId": "H1",
+            "location": "experience_card_v1.py:_v1_card_to_experience_card_fields:entry",
+            "message": "card shape and time field type",
+            "data": {
+                "card_keys": list(card.keys()) if isinstance(card, dict) else None,
+                "time_type": type(card.get("time")).__name__ if isinstance(card, dict) else None,
+            },
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+    )
+    # endregion agent log
     time_obj = card.get("time") or {}
+    # region agent log
+    _debug_log(
+        {
+            "sessionId": "debug-session",
+            "runId": "pre-fix",
+            "hypothesisId": "H2",
+            "location": "experience_card_v1.py:_v1_card_to_experience_card_fields:time_obj",
+            "message": "time_obj type and value shape",
+            "data": {
+                "time_obj_type": type(time_obj).__name__,
+                "time_obj_is_list": isinstance(time_obj, list),
+                "time_obj_keys": list(time_obj.keys()) if isinstance(time_obj, dict) else None,
+                "time_obj_len": len(time_obj) if isinstance(time_obj, list) else None,
+            },
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+    )
+    # endregion agent log
     time_text = time_obj.get("text")
     if not time_text and (time_obj.get("start") or time_obj.get("end")):
         time_text = f"{time_obj.get('start', '')}-{time_obj.get('end', '')}".strip("-")
     location = card.get("location") or {}
     roles = card.get("roles") or []
+    # region agent log
+    _debug_log(
+        {
+            "sessionId": "debug-session",
+            "runId": "pre-fix",
+            "hypothesisId": "H3",
+            "location": "experience_card_v1.py:_v1_card_to_experience_card_fields:roles_topics",
+            "message": "roles/topics types",
+            "data": {
+                "roles_type": type(roles).__name__,
+                "topics_type": type((card.get("topics") or [])).__name__,
+            },
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+    )
+    # endregion agent log
     role_title = roles[0].get("label") if roles and isinstance(roles[0], dict) else None
     topics = card.get("topics") or []
     tags = [t.get("label") for t in topics if isinstance(t, dict) and t.get("label")]
