@@ -12,6 +12,10 @@ class ChatServiceError(Exception):
     """Raised when the chat/LLM API is unavailable or returns invalid or unexpected output."""
 
 
+class ChatRateLimitError(ChatServiceError):
+    """Raised when the chat/LLM API rate limits the request."""
+
+
 _DEBUG_LOG_PATH = r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log"
 
 
@@ -144,6 +148,10 @@ class OpenAICompatibleChatProvider(ChatProvider):
                 }
             )
             # endregion agent log
+            if e.response.status_code == 429:
+                raise ChatRateLimitError(
+                    "Chat API rate limited the request. Please retry later."
+                ) from e
             raise ChatServiceError(
                 f"Chat API returned {e.response.status_code}. Please try again later."
             ) from e

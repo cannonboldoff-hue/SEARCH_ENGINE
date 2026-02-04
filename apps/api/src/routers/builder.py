@@ -12,7 +12,7 @@ from src.schemas import (
     ExperienceCardPatch,
     ExperienceCardResponse,
 )
-from src.providers import ChatServiceError, EmbeddingServiceError
+from src.providers import ChatServiceError, ChatRateLimitError, EmbeddingServiceError
 from src.serializers import experience_card_to_response
 from src.services.experience_card import experience_card_service, apply_card_patch
 from src.services.experience_card_v1 import run_draft_v1_pipeline
@@ -46,6 +46,8 @@ async def create_draft_cards_v1(
             raw_experience_id=raw_experience_id,
             card_families=[CardFamilyV1Response(parent=f["parent"], children=f["children"]) for f in card_families],
         )
+    except ChatRateLimitError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except ChatServiceError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
