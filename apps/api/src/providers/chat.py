@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from abc import ABC, abstractmethod
 
 import httpx
@@ -9,6 +10,21 @@ from src.config import get_settings
 
 class ChatServiceError(Exception):
     """Raised when the chat/LLM API is unavailable or returns invalid or unexpected output."""
+
+
+_DEBUG_LOG_PATH = r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log"
+
+
+def _debug_log(payload: dict) -> None:
+    try:
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as _f:
+            _f.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
+    try:
+        print(json.dumps(payload))
+    except Exception:
+        pass
 
 
 class ParsedQuery(BaseModel):
@@ -54,6 +70,24 @@ class OpenAICompatibleChatProvider(ChatProvider):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:
+            # region agent log
+            _debug_log(
+                {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H4",
+                    "location": "chat.py:OpenAICompatibleChatProvider:_chat:entry",
+                    "message": "chat request started",
+                    "data": {
+                        "base_url": self.base_url,
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "message_count": len(messages),
+                    },
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+            )
+            # endregion agent log
             async with httpx.AsyncClient(timeout=60.0) as client:
                 r = await client.post(
                     f"{self.base_url}/chat/completions",
@@ -64,21 +98,86 @@ class OpenAICompatibleChatProvider(ChatProvider):
                 data = r.json()
                 choices = data.get("choices") or []
                 if not choices:
+                    # region agent log
+                    _debug_log(
+                        {
+                            "sessionId": "debug-session",
+                            "runId": "pre-fix",
+                            "hypothesisId": "H5",
+                            "location": "chat.py:OpenAICompatibleChatProvider:_chat:no_choices",
+                            "message": "chat returned no choices",
+                            "data": {"status_code": r.status_code},
+                            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                        }
+                    )
+                    # endregion agent log
                     raise ChatServiceError("Chat API returned no choices (e.g. content filter).")
                 msg = choices[0].get("message") or {}
                 content = msg.get("content")
                 if content is None or not isinstance(content, str):
+                    # region agent log
+                    _debug_log(
+                        {
+                            "sessionId": "debug-session",
+                            "runId": "pre-fix",
+                            "hypothesisId": "H5",
+                            "location": "chat.py:OpenAICompatibleChatProvider:_chat:bad_content",
+                            "message": "chat returned non-string content",
+                            "data": {"status_code": r.status_code},
+                            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                        }
+                    )
+                    # endregion agent log
                     raise ChatServiceError("Chat API returned missing or non-string content.")
                 return content.strip()
         except httpx.HTTPStatusError as e:
+            # region agent log
+            _debug_log(
+                {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H4",
+                    "location": "chat.py:OpenAICompatibleChatProvider:_chat:http_status_error",
+                    "message": "chat HTTP error",
+                    "data": {"status_code": e.response.status_code},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+            )
+            # endregion agent log
             raise ChatServiceError(
                 f"Chat API returned {e.response.status_code}. Please try again later."
             ) from e
         except httpx.RequestError as e:
+            # region agent log
+            _debug_log(
+                {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H4",
+                    "location": "chat.py:OpenAICompatibleChatProvider:_chat:request_error",
+                    "message": "chat request error",
+                    "data": {"error": type(e).__name__},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+            )
+            # endregion agent log
             raise ChatServiceError(
                 "Chat service unavailable (timeout or connection error). Please try again later."
             ) from e
         except (KeyError, TypeError, IndexError) as e:
+            # region agent log
+            _debug_log(
+                {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H5",
+                    "location": "chat.py:OpenAICompatibleChatProvider:_chat:unexpected_format",
+                    "message": "chat unexpected response format",
+                    "data": {"error": type(e).__name__},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+            )
+            # endregion agent log
             raise ChatServiceError("Chat API returned unexpected response format.") from e
 
     async def parse_search_query(self, query: str) -> ParsedQuery:

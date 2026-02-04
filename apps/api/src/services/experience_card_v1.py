@@ -237,11 +237,37 @@ async def run_draft_v1_pipeline(
     chat = get_chat_provider()
 
     # 1. Atomize
+    # region agent log
+    _debug_log(
+        {
+            "sessionId": "debug-session",
+            "runId": "pre-fix",
+            "hypothesisId": "H6",
+            "location": "experience_card_v1.py:run_draft_v1_pipeline:atomize_start",
+            "message": "atomize step start",
+            "data": {"raw_text_len": len(body.raw_text or "")},
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+    )
+    # endregion agent log
     prompt = fill_prompt(PROMPT_ATOMIZER, user_text=body.raw_text)
     try:
         response = await chat.chat(prompt, max_tokens=1024)
         atoms = _parse_json_array(response)
     except (ValueError, json.JSONDecodeError) as e:
+        # region agent log
+        _debug_log(
+            {
+                "sessionId": "debug-session",
+                "runId": "pre-fix",
+                "hypothesisId": "H6",
+                "location": "experience_card_v1.py:run_draft_v1_pipeline:atomize_error",
+                "message": "atomize parse error",
+                "data": {"error": type(e).__name__},
+                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+            }
+        )
+        # endregion agent log
         raise ChatServiceError("Atomizer returned invalid JSON.") from e
 
     if not atoms:
@@ -255,6 +281,19 @@ async def run_draft_v1_pipeline(
             continue
 
         # 2. Parent extractor
+        # region agent log
+        _debug_log(
+            {
+                "sessionId": "debug-session",
+                "runId": "pre-fix",
+                "hypothesisId": "H6",
+                "location": "experience_card_v1.py:run_draft_v1_pipeline:parent_start",
+                "message": "parent extractor start",
+                "data": {"raw_span_len": len(raw_span)},
+                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+            }
+        )
+        # endregion agent log
         prompt = fill_prompt(
             PROMPT_PARENT_EXTRACTOR,
             atom_text=raw_span,
@@ -264,12 +303,38 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=2048)
             parent = _parse_json_object(response)
         except (ValueError, json.JSONDecodeError) as e:
+            # region agent log
+            _debug_log(
+                {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H6",
+                    "location": "experience_card_v1.py:run_draft_v1_pipeline:parent_error",
+                    "message": "parent parse error",
+                    "data": {"error": type(e).__name__},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+            )
+            # endregion agent log
             raise ChatServiceError("Parent extractor returned invalid JSON.") from e
 
         parent = _inject_parent_metadata(parent, person_id)
         parent_id = parent["id"]
 
         # 3. Child generator
+        # region agent log
+        _debug_log(
+            {
+                "sessionId": "debug-session",
+                "runId": "pre-fix",
+                "hypothesisId": "H6",
+                "location": "experience_card_v1.py:run_draft_v1_pipeline:child_start",
+                "message": "child generator start",
+                "data": {"parent_id_present": bool(parent_id)},
+                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+            }
+        )
+        # endregion agent log
         prompt = fill_prompt(
             PROMPT_CHILD_GENERATOR,
             parent_id=parent_id,
@@ -279,11 +344,37 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=2048)
             children = _parse_json_array(response)
         except (ValueError, json.JSONDecodeError) as e:
+            # region agent log
+            _debug_log(
+                {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H6",
+                    "location": "experience_card_v1.py:run_draft_v1_pipeline:child_error",
+                    "message": "child parse error",
+                    "data": {"error": type(e).__name__},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+            )
+            # endregion agent log
             raise ChatServiceError("Child generator returned invalid JSON.") from e
 
         children = [_inject_child_metadata(c, parent_id) for c in children]
 
         # 4. Validator
+        # region agent log
+        _debug_log(
+            {
+                "sessionId": "debug-session",
+                "runId": "pre-fix",
+                "hypothesisId": "H6",
+                "location": "experience_card_v1.py:run_draft_v1_pipeline:validator_start",
+                "message": "validator start",
+                "data": {"children_count": len(children)},
+                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+            }
+        )
+        # endregion agent log
         combined = {"parent": parent, "children": children}
         prompt = fill_prompt(
             PROMPT_VALIDATOR,
@@ -293,6 +384,19 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=4096)
             validated = _parse_json_object(response)
         except (ValueError, json.JSONDecodeError) as e:
+            # region agent log
+            _debug_log(
+                {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H6",
+                    "location": "experience_card_v1.py:run_draft_v1_pipeline:validator_error",
+                    "message": "validator parse error",
+                    "data": {"error": type(e).__name__},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+            )
+            # endregion agent log
             raise ChatServiceError("Validator returned invalid JSON.") from e
 
         v_parent = validated.get("parent") or parent
