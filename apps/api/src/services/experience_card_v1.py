@@ -127,7 +127,9 @@ def _v1_card_to_experience_card_fields(
         "decisions": None,
         "outcome": None,
         "tags": tags[:50] if tags else [],
-        "company": (location.get("city") or "")[:255] if location else None,
+        "company": (location.get("city") or "")[:255]
+        if isinstance(location, dict) and location
+        else None,
         "team": None,
         "role_title": (role_title or "")[:255] if role_title else None,
         "time_range": (time_text or "")[:100] if time_text else None,
