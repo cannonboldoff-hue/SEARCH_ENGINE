@@ -104,9 +104,14 @@ def _v1_card_to_experience_card_fields(
 ) -> dict:
     """Map a v1 card dict (parent or child) to ExperienceCard column values for persistence."""
     time_obj = card.get("time") or {}
-    time_text = time_obj.get("text")
-    if not time_text and (time_obj.get("start") or time_obj.get("end")):
-        time_text = f"{time_obj.get('start', '')}-{time_obj.get('end', '')}".strip("-")
+    if isinstance(time_obj, str):
+        time_text = time_obj
+    elif isinstance(time_obj, dict):
+        time_text = time_obj.get("text")
+        if not time_text and (time_obj.get("start") or time_obj.get("end")):
+            time_text = f"{time_obj.get('start', '')}-{time_obj.get('end', '')}".strip("-")
+    else:
+        time_text = None
     location = card.get("location") or {}
     roles = card.get("roles") or []
     role_title = roles[0].get("label") if roles and isinstance(roles[0], dict) else None
