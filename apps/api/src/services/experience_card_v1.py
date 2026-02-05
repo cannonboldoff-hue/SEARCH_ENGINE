@@ -118,9 +118,13 @@ def _v1_card_to_experience_card_fields(
     topics = card.get("topics") or []
     tags = [t.get("label") for t in topics if isinstance(t, dict) and t.get("label")]
 
+    # Use the card's id so the frontend can approve by id; fallback to new UUID if missing.
+    card_id = card.get("id")
+    if not card_id:
+        card_id = str(uuid.uuid4())
+
     return {
-        # Always generate fresh IDs for persistence to avoid LLM collisions.
-        "id": str(uuid.uuid4()),
+        "id": card_id,
         "person_id": person_id,
         "raw_experience_id": raw_experience_id,
         "status": ExperienceCard.DRAFT,

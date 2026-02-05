@@ -26,6 +26,126 @@ function v1CardTopics(card: ExperienceCardV1): string[] {
   return (card.topics ?? []).map((t) => (typeof t === "object" && t && "label" in t ? t.label : String(t)));
 }
 
+/** Renders all filled ExperienceCardV1 fields so nothing is hidden. */
+function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; compact?: boolean }) {
+  if (!card) return null;
+  const topicLabels = v1CardTopics(card);
+  const timeText = card?.time && typeof card.time === "object" && "text" in card.time
+    ? (card.time as { text?: string }).text
+    : null;
+  const locationText = card?.location && typeof card.location === "object" && "text" in card.location
+    ? (card.location as { text?: string }).text
+    : (card?.location && typeof card.location === "object" && "name" in card.location
+      ? (card.location as { name?: string }).name
+      : null);
+  const roles = (card.roles ?? []).map((r) => typeof r === "object" && r && "label" in r ? (r as { label: string }).label : String(r));
+  const actions = (card.actions ?? []).map((a) => typeof a === "object" && a && "verb" in a ? (a as { verb: string }).verb : String(a));
+  const entities = (card.entities ?? []).map((e) => typeof e === "object" && e && "name" in e ? `${(e as { type?: string }).type ?? "entity"}: ${(e as { name: string }).name}` : String(e));
+  const tools = (card.tooling?.tools ?? []).map((t) => typeof t === "object" && t && "name" in t ? (t as { name: string }).name : String(t));
+  const processes = (card.tooling?.processes ?? []).map((p) => typeof p === "object" && p && "name" in p ? (p as { name: string }).name : String(p));
+  const outcomes = (card.outcomes ?? []).map((o) => {
+    if (typeof o !== "object" || !o) return null;
+    const oo = o as { label?: string; value_text?: string | null; metric?: { name?: string | null; value?: number | null; unit?: string | null } };
+    const parts = [oo.label, oo.value_text].filter(Boolean);
+    if (oo.metric?.name != null || oo.metric?.value != null) {
+      parts.push([oo.metric.name, oo.metric.value, oo.metric.unit].filter(Boolean).join(" "));
+    }
+    return parts.length ? parts.join(": ") : null;
+  }).filter(Boolean) as string[];
+  const evidence = (card.evidence ?? []).map((e) => {
+    if (typeof e !== "object" || !e) return null;
+    const ee = e as { type?: string; url?: string | null; note?: string | null };
+    return [ee.type, ee.url ?? ee.note].filter(Boolean).join(": ");
+  }).filter(Boolean) as string[];
+  const intent = card.intent && String(card.intent) !== "other" && String(card.intent) !== "mixed" ? String(card.intent).replace(/_/g, " ") : null;
+
+  const rawText = (card.raw_text ?? "").trim();
+  const hasAny = intent || timeText || locationText || roles.length > 0 || actions.length > 0
+    || topicLabels.length > 0 || entities.length > 0 || tools.length > 0 || processes.length > 0
+    || outcomes.length > 0 || evidence.length > 0 || (card.tooling?.raw ?? "").trim() || rawText;
+
+  if (!hasAny) return null;
+
+  const labelClass = compact ? "text-[10px] uppercase tracking-wide text-muted-foreground" : "text-xs font-medium text-muted-foreground";
+  const valueClass = compact ? "text-xs" : "text-sm";
+
+  return (
+    <div className={compact ? "space-y-1.5 mt-2" : "space-y-2 mt-3 pt-3 border-t border-border/40"}>
+      {intent && (
+        <div>
+          <span className={labelClass}>Intent</span>
+          <p className={valueClass}>{intent}</p>
+        </div>
+      )}
+      {timeText && (
+        <div>
+          <span className={labelClass}>Time</span>
+          <p className={valueClass}>{timeText}</p>
+        </div>
+      )}
+      {locationText && (
+        <div>
+          <span className={labelClass}>Location</span>
+          <p className={valueClass}>{locationText}</p>
+        </div>
+      )}
+      {roles.length > 0 && (
+        <div>
+          <span className={labelClass}>Roles</span>
+          <p className={valueClass}>{roles.join(", ")}</p>
+        </div>
+      )}
+      {actions.length > 0 && (
+        <div>
+          <span className={labelClass}>Actions</span>
+          <p className={valueClass}>{actions.join(", ")}</p>
+        </div>
+      )}
+      {topicLabels.length > 0 && (
+        <div>
+          <span className={labelClass}>Topics</span>
+          <p className={valueClass}>{topicLabels.join(", ")}</p>
+        </div>
+      )}
+      {entities.length > 0 && (
+        <div>
+          <span className={labelClass}>Entities</span>
+          <p className={valueClass}>{entities.join(", ")}</p>
+        </div>
+      )}
+      {(tools.length > 0 || processes.length > 0 || (card.tooling?.raw ?? "").trim()) && (
+        <div>
+          <span className={labelClass}>Tooling</span>
+          <p className={valueClass}>
+            {[...tools, ...processes].filter(Boolean).join(", ")}
+            {(card.tooling?.raw ?? "").trim() && (
+              <span className="block mt-1 text-muted-foreground">{card.tooling?.raw?.trim()}</span>
+            )}
+          </p>
+        </div>
+      )}
+      {outcomes.length > 0 && (
+        <div>
+          <span className={labelClass}>Outcomes</span>
+          <p className={valueClass}>{outcomes.join("; ")}</p>
+        </div>
+      )}
+      {evidence.length > 0 && (
+        <div>
+          <span className={labelClass}>Evidence</span>
+          <p className={valueClass}>{evidence.join("; ")}</p>
+        </div>
+      )}
+      {rawText && (
+        <div>
+          <span className={labelClass}>Raw text</span>
+          <p className={cn(valueClass, "whitespace-pre-wrap")}>{rawText}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BuilderPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -276,7 +396,7 @@ export default function BuilderPage() {
                               </button>
                               {tags.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-2">
-                                  {tags.slice(0, 5).map((t, i) => (
+                                  {tags.map((t, i) => (
                                     <span
                                       key={`${parentId}-tag-${i}-${t}`}
                                       className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
@@ -295,6 +415,7 @@ export default function BuilderPage() {
                                 {timeText && <span>{timeText}</span>}
                                 {roleLabel && <span>{roleLabel}</span>}
                               </div>
+                              <V1CardDetails card={parent} />
                               <AnimatePresence>
                                 {isExpanded && children.length > 0 && (
                                   <motion.div
@@ -326,6 +447,7 @@ export default function BuilderPage() {
                                                 {childSummary}
                                               </p>
                                             )}
+                                            <V1CardDetails card={child} compact />
                                           </li>
                                         );
                                       })}
@@ -384,7 +506,10 @@ export default function BuilderPage() {
           </div>
           <div className="flex-shrink-0 pt-4 pb-1 flex justify-end border-t border-border/50 mt-2">
             <Button
-              onClick={() => setSaveModalOpen(true)}
+              onClick={() => {
+                setSaveError(null);
+                setSaveModalOpen(true);
+              }}
               disabled={!hasV1Families}
             >
               Save Cards
