@@ -17,20 +17,6 @@ from src.prompts.experience_card_v1 import (
     fill_prompt,
 )
 
-_DEBUG_LOG_PATH = r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log"
-
-
-def _debug_log(payload: dict) -> None:
-    try:
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as _f:
-            _f.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
-    try:
-        print(json.dumps(payload))
-    except Exception:
-        pass
-
 
 def _strip_json_block(text: str) -> str:
     """Remove markdown code fence around JSON if present."""
@@ -117,62 +103,12 @@ def _v1_card_to_experience_card_fields(
     raw_experience_id: str,
 ) -> dict:
     """Map a v1 card dict (parent or child) to ExperienceCard column values for persistence."""
-    # region agent log
-    _debug_log(
-        {
-            "sessionId": "debug-session",
-            "runId": "pre-fix",
-            "hypothesisId": "H1",
-            "location": "experience_card_v1.py:_v1_card_to_experience_card_fields:entry",
-            "message": "card shape and time field type",
-            "data": {
-                "card_keys": list(card.keys()) if isinstance(card, dict) else None,
-                "time_type": type(card.get("time")).__name__ if isinstance(card, dict) else None,
-            },
-            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-        }
-    )
-    # endregion agent log
     time_obj = card.get("time") or {}
-    # region agent log
-    _debug_log(
-        {
-            "sessionId": "debug-session",
-            "runId": "pre-fix",
-            "hypothesisId": "H2",
-            "location": "experience_card_v1.py:_v1_card_to_experience_card_fields:time_obj",
-            "message": "time_obj type and value shape",
-            "data": {
-                "time_obj_type": type(time_obj).__name__,
-                "time_obj_is_list": isinstance(time_obj, list),
-                "time_obj_keys": list(time_obj.keys()) if isinstance(time_obj, dict) else None,
-                "time_obj_len": len(time_obj) if isinstance(time_obj, list) else None,
-            },
-            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-        }
-    )
-    # endregion agent log
     time_text = time_obj.get("text")
     if not time_text and (time_obj.get("start") or time_obj.get("end")):
         time_text = f"{time_obj.get('start', '')}-{time_obj.get('end', '')}".strip("-")
     location = card.get("location") or {}
     roles = card.get("roles") or []
-    # region agent log
-    _debug_log(
-        {
-            "sessionId": "debug-session",
-            "runId": "pre-fix",
-            "hypothesisId": "H3",
-            "location": "experience_card_v1.py:_v1_card_to_experience_card_fields:roles_topics",
-            "message": "roles/topics types",
-            "data": {
-                "roles_type": type(roles).__name__,
-                "topics_type": type((card.get("topics") or [])).__name__,
-            },
-            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-        }
-    )
-    # endregion agent log
     role_title = roles[0].get("label") if roles and isinstance(roles[0], dict) else None
     topics = card.get("topics") or []
     tags = [t.get("label") for t in topics if isinstance(t, dict) and t.get("label")]
@@ -237,37 +173,11 @@ async def run_draft_v1_pipeline(
     chat = get_chat_provider()
 
     # 1. Atomize
-    # region agent log
-    _debug_log(
-        {
-            "sessionId": "debug-session",
-            "runId": "pre-fix",
-            "hypothesisId": "H6",
-            "location": "experience_card_v1.py:run_draft_v1_pipeline:atomize_start",
-            "message": "atomize step start",
-            "data": {"raw_text_len": len(body.raw_text or "")},
-            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-        }
-    )
-    # endregion agent log
     prompt = fill_prompt(PROMPT_ATOMIZER, user_text=body.raw_text)
     try:
         response = await chat.chat(prompt, max_tokens=1024)
         atoms = _parse_json_array(response)
     except (ValueError, json.JSONDecodeError) as e:
-        # region agent log
-        _debug_log(
-            {
-                "sessionId": "debug-session",
-                "runId": "pre-fix",
-                "hypothesisId": "H6",
-                "location": "experience_card_v1.py:run_draft_v1_pipeline:atomize_error",
-                "message": "atomize parse error",
-                "data": {"error": type(e).__name__},
-                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-            }
-        )
-        # endregion agent log
         raise ChatServiceError("Atomizer returned invalid JSON.") from e
 
     if not atoms:
@@ -281,19 +191,6 @@ async def run_draft_v1_pipeline(
             continue
 
         # 2. Parent extractor
-        # region agent log
-        _debug_log(
-            {
-                "sessionId": "debug-session",
-                "runId": "pre-fix",
-                "hypothesisId": "H6",
-                "location": "experience_card_v1.py:run_draft_v1_pipeline:parent_start",
-                "message": "parent extractor start",
-                "data": {"raw_span_len": len(raw_span)},
-                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-            }
-        )
-        # endregion agent log
         prompt = fill_prompt(
             PROMPT_PARENT_EXTRACTOR,
             atom_text=raw_span,
@@ -303,38 +200,12 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=2048)
             parent = _parse_json_object(response)
         except (ValueError, json.JSONDecodeError) as e:
-            # region agent log
-            _debug_log(
-                {
-                    "sessionId": "debug-session",
-                    "runId": "pre-fix",
-                    "hypothesisId": "H6",
-                    "location": "experience_card_v1.py:run_draft_v1_pipeline:parent_error",
-                    "message": "parent parse error",
-                    "data": {"error": type(e).__name__},
-                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-                }
-            )
-            # endregion agent log
             raise ChatServiceError("Parent extractor returned invalid JSON.") from e
 
         parent = _inject_parent_metadata(parent, person_id)
         parent_id = parent["id"]
 
         # 3. Child generator
-        # region agent log
-        _debug_log(
-            {
-                "sessionId": "debug-session",
-                "runId": "pre-fix",
-                "hypothesisId": "H6",
-                "location": "experience_card_v1.py:run_draft_v1_pipeline:child_start",
-                "message": "child generator start",
-                "data": {"parent_id_present": bool(parent_id)},
-                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-            }
-        )
-        # endregion agent log
         prompt = fill_prompt(
             PROMPT_CHILD_GENERATOR,
             parent_id=parent_id,
@@ -344,37 +215,11 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=2048)
             children = _parse_json_array(response)
         except (ValueError, json.JSONDecodeError) as e:
-            # region agent log
-            _debug_log(
-                {
-                    "sessionId": "debug-session",
-                    "runId": "pre-fix",
-                    "hypothesisId": "H6",
-                    "location": "experience_card_v1.py:run_draft_v1_pipeline:child_error",
-                    "message": "child parse error",
-                    "data": {"error": type(e).__name__},
-                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-                }
-            )
-            # endregion agent log
             raise ChatServiceError("Child generator returned invalid JSON.") from e
 
         children = [_inject_child_metadata(c, parent_id) for c in children]
 
         # 4. Validator
-        # region agent log
-        _debug_log(
-            {
-                "sessionId": "debug-session",
-                "runId": "pre-fix",
-                "hypothesisId": "H6",
-                "location": "experience_card_v1.py:run_draft_v1_pipeline:validator_start",
-                "message": "validator start",
-                "data": {"children_count": len(children)},
-                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-            }
-        )
-        # endregion agent log
         combined = {"parent": parent, "children": children}
         prompt = fill_prompt(
             PROMPT_VALIDATOR,
@@ -384,19 +229,6 @@ async def run_draft_v1_pipeline(
             response = await chat.chat(prompt, max_tokens=4096)
             validated = _parse_json_object(response)
         except (ValueError, json.JSONDecodeError) as e:
-            # region agent log
-            _debug_log(
-                {
-                    "sessionId": "debug-session",
-                    "runId": "pre-fix",
-                    "hypothesisId": "H6",
-                    "location": "experience_card_v1.py:run_draft_v1_pipeline:validator_error",
-                    "message": "validator parse error",
-                    "data": {"error": type(e).__name__},
-                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-                }
-            )
-            # endregion agent log
             raise ChatServiceError("Validator returned invalid JSON.") from e
 
         v_parent = validated.get("parent") or parent
