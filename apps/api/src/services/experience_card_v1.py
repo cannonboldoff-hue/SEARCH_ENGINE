@@ -102,7 +102,10 @@ def _v1_card_to_experience_card_fields(
     person_id: str,
     raw_experience_id: str,
 ) -> dict:
-    """Map a v1 card dict (parent or child) to ExperienceCard column values for persistence."""
+    """Map a v1 card dict (parent or child) to ExperienceCard column values for persistence.
+    Does not set id; DB generates it (v2: never use LLM-provided ids as DB ids).
+    Company: use only organization/company from model, not location_city.
+    """
     time_obj = card.get("time") or {}
     if isinstance(time_obj, str):
         time_text = time_obj
@@ -118,13 +121,19 @@ def _v1_card_to_experience_card_fields(
     topics = card.get("topics") or []
     tags = [t.get("label") for t in topics if isinstance(t, dict) and t.get("label")]
 
-    # Use the card's id so the frontend can approve by id; fallback to new UUID if missing.
-    card_id = card.get("id")
-    if not card_id:
-        card_id = str(uuid.uuid4())
+    # Company: only from organization/company extracted by model; do NOT use location for company (v2).
+    company_raw = card.get("company") or card.get("organization")
+    company = (company_raw or "")[:255].strip() or None if company_raw else None
+
+    # Location: city/place from model's location object (separate from company).
+    loc_obj = card.get("location") or {}
+    if isinstance(loc_obj, dict):
+        location_raw = loc_obj.get("city") or loc_obj.get("text") or loc_obj.get("name")
+    else:
+        location_raw = str(loc_obj) if loc_obj else None
+    location = (location_raw or "")[:255].strip() or None if location_raw else None
 
     return {
-        "id": card_id,
         "person_id": person_id,
         "raw_experience_id": raw_experience_id,
         "status": ExperienceCard.DRAFT,
@@ -136,13 +145,30 @@ def _v1_card_to_experience_card_fields(
         "decisions": None,
         "outcome": None,
         "tags": tags[:50] if tags else [],
-        "company": (location.get("city") or "")[:255]
-        if isinstance(location, dict) and location
-        else None,
+        "company": company,
         "team": None,
         "role_title": (role_title or "")[:255] if role_title else None,
         "time_range": (time_text or "")[:100] if time_text else None,
+        "location": location,
         "embedding": None,
+    }
+
+
+def _draft_card_to_family_item(card: ExperienceCard) -> dict:
+    """Serialize a persisted draft ExperienceCard for API response (id, title, context, tags + UI fields)."""
+    tags = card.tags or []
+    return {
+        "id": card.id,
+        "title": card.title,
+        "context": card.context,
+        "tags": tags,
+        "headline": card.title,
+        "summary": card.context,
+        "topics": [{"label": t} for t in tags],
+        "time_range": card.time_range,
+        "role_title": card.role_title,
+        "company": card.company,
+        "location": card.location,
     }
 
 
@@ -151,17 +177,29 @@ async def _persist_v1_family(
     person_id: str,
     raw_experience_id: str,
     family: dict,
-) -> None:
-    """Persist one v1 card family (parent + children) as ExperienceCard rows with status DRAFT."""
+) -> tuple[ExperienceCard, list[ExperienceCard]]:
+    """Persist one v1 card family (parent + children) as DRAFT; return (parent, children) with server-generated ids."""
     parent = family.get("parent") or {}
     children = family.get("children") or []
-    for card in [parent] + children:
+    parent_kw = _v1_card_to_experience_card_fields(parent, person_id, raw_experience_id)
+    parent_ec = ExperienceCard(**parent_kw)
+    db.add(parent_ec)
+    await db.flush()
+    await db.refresh(parent_ec)
+
+    child_ecs: list[ExperienceCard] = []
+    for card in children:
         if not card:
             continue
         kwargs = _v1_card_to_experience_card_fields(card, person_id, raw_experience_id)
         ec = ExperienceCard(**kwargs)
         db.add(ec)
-    await db.flush()
+        child_ecs.append(ec)
+    if child_ecs:
+        await db.flush()
+        for ec in child_ecs:
+            await db.refresh(ec)
+    return parent_ec, child_ecs
 
 
 async def run_draft_v1_pipeline(
@@ -178,8 +216,8 @@ async def run_draft_v1_pipeline(
     raw = RawExperience(person_id=person_id, raw_text=body.raw_text)
     db.add(raw)
     await db.flush()
-    raw_experience_id = raw.id
-    draft_set_id = str(uuid.uuid4())
+    raw_experience_id = str(raw.id)
+    draft_set_id = raw_experience_id  # v2: one raw experience = one draft set for commit
 
     chat = get_chat_provider()
 
@@ -245,7 +283,10 @@ async def run_draft_v1_pipeline(
         v_parent = validated.get("parent") or parent
         v_children = validated.get("children") or children
         family = {"parent": v_parent, "children": v_children}
-        card_families.append(family)
-        await _persist_v1_family(db, person_id, raw_experience_id, family)
+        parent_ec, child_ecs = await _persist_v1_family(db, person_id, raw_experience_id, family)
+        card_families.append({
+            "parent": _draft_card_to_family_item(parent_ec),
+            "children": [_draft_card_to_family_item(c) for c in child_ecs],
+        })
 
     return draft_set_id, raw_experience_id, card_families

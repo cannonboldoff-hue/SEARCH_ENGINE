@@ -26,6 +26,7 @@ def _card_searchable_text(card: ExperienceCard) -> str:
         card.team or "",
         card.role_title or "",
         card.time_range or "",
+        card.location or "",
         " ".join(card.tags or []),
     ]
     return " ".join(filter(None, parts))
@@ -64,6 +65,7 @@ async def create_experience_card(
         team=body.team,
         role_title=body.role_title,
         time_range=body.time_range,
+        location=body.location,
     )
     db.add(card)
     await db.flush()
@@ -108,11 +110,13 @@ def apply_card_patch(card: ExperienceCard, body: ExperienceCardPatch) -> None:
         card.role_title = body.role_title
     if body.time_range is not None:
         card.time_range = body.time_range
+    if body.location is not None:
+        card.location = body.location
     if body.locked is not None:
         card.locked = body.locked
     content_fields = (
         body.title, body.context, body.constraints, body.decisions, body.outcome,
-        body.tags, body.company, body.team, body.role_title, body.time_range,
+        body.tags, body.company, body.team, body.role_title, body.time_range, body.location,
     )
     if any(f is not None for f in content_fields):
         card.human_edited = True
@@ -146,6 +150,44 @@ async def list_my_cards(
     return list(result.scalars().all())
 
 
+async def list_draft_cards_by_raw_experience(
+    db: AsyncSession,
+    person_id: str,
+    raw_experience_id: str,
+    card_ids: list[str] | None = None,
+) -> list[ExperienceCard]:
+    """List DRAFT cards for the user for the given raw_experience_id (draft set). Optionally filter by card_ids."""
+    q = (
+        select(ExperienceCard)
+        .where(ExperienceCard.person_id == person_id)
+        .where(ExperienceCard.raw_experience_id == raw_experience_id)
+        .where(ExperienceCard.status == ExperienceCard.DRAFT)
+    )
+    if card_ids:
+        q = q.where(ExperienceCard.id.in_(card_ids))
+    q = q.order_by(ExperienceCard.created_at.asc())
+    result = await db.execute(q)
+    return list(result.scalars().all())
+
+
+async def approve_cards_batch(
+    db: AsyncSession,
+    cards: list[ExperienceCard],
+) -> list[ExperienceCard]:
+    """Transition cards to APPROVED and compute/store embeddings (batch). Raises EmbeddingServiceError on failure."""
+    if not cards:
+        return []
+    texts = [_card_searchable_text(c) for c in cards]
+    embed_provider = get_embedding_provider()
+    vectors = await embed_provider.embed(texts)
+    if len(vectors) != len(cards):
+        raise EmbeddingServiceError("Embedding model returned wrong number of vectors.")
+    for card, vec in zip(cards, vectors):
+        card.status = ExperienceCard.APPROVED
+        card.embedding = normalize_embedding(vec)
+    return cards
+
+
 class ExperienceCardService:
     """Facade for experience card operations (for dependency injection if needed)."""
 
@@ -168,6 +210,19 @@ class ExperienceCardService:
     @staticmethod
     async def list_cards(db: AsyncSession, person_id: str, status_filter: str | None) -> list[ExperienceCard]:
         return await list_my_cards(db, person_id, status_filter)
+
+    @staticmethod
+    async def list_drafts_by_raw_experience(
+        db: AsyncSession,
+        person_id: str,
+        raw_experience_id: str,
+        card_ids: list[str] | None = None,
+    ) -> list[ExperienceCard]:
+        return await list_draft_cards_by_raw_experience(db, person_id, raw_experience_id, card_ids)
+
+    @staticmethod
+    async def approve_batch(db: AsyncSession, cards: list[ExperienceCard]) -> list[ExperienceCard]:
+        return await approve_cards_batch(db, cards)
 
 
 experience_card_service = ExperienceCardService()

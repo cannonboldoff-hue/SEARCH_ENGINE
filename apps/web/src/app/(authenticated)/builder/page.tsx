@@ -4,8 +4,10 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Trash2 } from "lucide-react";
+import { Trash2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/back-link";
 import { TiltCard } from "@/components/tilt-card";
@@ -17,6 +19,7 @@ import { useExperienceCards, EXPERIENCE_CARDS_QUERY_KEY } from "@/hooks";
 import type {
   ExperienceCard,
   ExperienceCardCreate,
+  ExperienceCardPatch,
   CardFamilyV1Response,
   DraftSetV1Response,
   ExperienceCardV1,
@@ -33,11 +36,16 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
   const timeText = card?.time && typeof card.time === "object" && "text" in card.time
     ? (card.time as { text?: string }).text
     : null;
-  const locationText = card?.location && typeof card.location === "object" && "text" in card.location
-    ? (card.location as { text?: string }).text
-    : (card?.location && typeof card.location === "object" && "name" in card.location
-      ? (card.location as { name?: string }).name
-      : null);
+  const locationText =
+    typeof card?.location === "string"
+      ? card.location
+      : card?.location && typeof card.location === "object" && "text" in card.location
+        ? (card.location as { text?: string }).text
+        : (card?.location && typeof card.location === "object" && "name" in card.location
+          ? (card.location as { name?: string }).name
+          : (card?.location && typeof card.location === "object" && "city" in card.location
+            ? (card.location as { city?: string }).city
+            : null));
   const roles = (card.roles ?? []).map((r) => typeof r === "object" && r && "label" in r ? (r as { label: string }).label : String(r));
   const actions = (card.actions ?? []).map((a) => typeof a === "object" && a && "verb" in a ? (a as { verb: string }).verb : String(a));
   const entities = (card.entities ?? []).map((e) => typeof e === "object" && e && "name" in e ? `${(e as { type?: string }).type ?? "entity"}: ${(e as { name: string }).name}` : String(e));
@@ -150,18 +158,20 @@ export default function BuilderPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [rawText, setRawText] = useState("");
+  const [draftSetId, setDraftSetId] = useState<string | null>(null);
   const [cardFamilies, setCardFamilies] = useState<CardFamilyV1Response[] | null>(null);
-  const [expandedFamilies, setExpandedFamilies] = useState<Set<string>>(new Set());
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [deletedId, setDeletedId] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
 
   const { data: savedCards = [], isLoading: loadingCards } = useExperienceCards();
 
   const extractDraftV1 = useCallback(async () => {
     if (!rawText.trim()) {
+      setDraftSetId(null);
       setCardFamilies([]);
       return;
     }
@@ -171,8 +181,8 @@ export default function BuilderPage() {
         method: "POST",
         body: { raw_text: rawText },
       });
+      setDraftSetId(result.draft_set_id ?? null);
       setCardFamilies(result.card_families ?? []);
-      setExpandedFamilies(new Set((result.card_families ?? []).map((f) => f.parent?.id).filter(Boolean) as string[]));
     } catch (e) {
       console.error("Draft V1 failed", e);
     } finally {
@@ -192,20 +202,153 @@ export default function BuilderPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY }),
   });
 
+  const [editForm, setEditForm] = useState<{
+    title: string;
+    context: string;
+    tagsStr: string;
+    time_range: string;
+    role_title: string;
+    company: string;
+    location: string;
+  }>({ title: "", context: "", tagsStr: "", time_range: "", role_title: "", company: "", location: "" });
+
+  const deleteCardMutation = useMutation({
+    mutationFn: (cardId: string) =>
+      api<void>(`/experience-cards/${cardId}`, { method: "DELETE" }),
+    onSuccess: (_, cardId) => {
+      setCardFamilies((prev) => {
+        if (!prev) return prev;
+        const next = prev
+          .map((fam) => {
+            if (fam.parent?.id === cardId) return null;
+            if (fam.children?.some((c) => c.id === cardId)) {
+              return { ...fam, children: fam.children?.filter((c) => c.id !== cardId) ?? [] };
+            }
+            return fam;
+          })
+          .filter((f): f is CardFamilyV1Response => f != null);
+        return next.length ? next : null;
+      });
+      setEditingCardId(null);
+    },
+  });
+
+  const patchCardMutation = useMutation({
+    mutationFn: ({ cardId, body }: { cardId: string; body: ExperienceCardPatch }) =>
+      api<ExperienceCard>(`/experience-cards/${cardId}`, { method: "PATCH", body }),
+    onSuccess: (updated) => {
+      const locObj =
+        updated.location != null
+          ? { city: updated.location, text: updated.location, region: null, country: null, confidence: "medium" as const }
+          : undefined;
+      setCardFamilies((prev) => {
+        const next =
+          prev?.map((fam) => {
+            if (fam.parent?.id === updated.id) {
+              return {
+                ...fam,
+                parent: {
+                  ...fam.parent,
+                  title: updated.title ?? undefined,
+                  context: updated.context ?? undefined,
+                  tags: updated.tags ?? [],
+                  headline: updated.title ?? fam.parent.headline,
+                  summary: updated.context ?? fam.parent.summary,
+                  topics: (updated.tags ?? []).map((l) => ({ label: l })),
+                  time_range: updated.time_range ?? undefined,
+                  role_title: updated.role_title ?? undefined,
+                  company: updated.company ?? undefined,
+                  ...(locObj ? { location: locObj } : {}),
+                },
+              };
+            }
+            return {
+              ...fam,
+              children: fam.children?.map((c) =>
+                c.id === updated.id
+                  ? {
+                      ...c,
+                      title: updated.title ?? undefined,
+                      context: updated.context ?? undefined,
+                      tags: updated.tags ?? [],
+                      headline: updated.title ?? c.headline,
+                      summary: updated.context ?? c.summary,
+                      topics: (updated.tags ?? []).map((l) => ({ label: l })),
+                      time_range: updated.time_range ?? undefined,
+                      role_title: updated.role_title ?? undefined,
+                      company: updated.company ?? undefined,
+                      ...(locObj ? { location: locObj } : {}),
+                    }
+                  : c
+              ),
+            };
+          }) ?? prev;
+        return next as CardFamilyV1Response[] | null;
+      });
+      setEditingCardId(null);
+    },
+  });
+
+  const startEditingCard = useCallback(
+    (card: ExperienceCardV1 | (Record<string, unknown> & { id?: string; title?: string; headline?: string; context?: string; summary?: string; tags?: string[]; time_range?: string; role_title?: string; company?: string; location?: string | { city?: string; text?: string } })) => {
+      const id = (card as { id?: string }).id ?? "";
+      if (!id) return;
+      const tags = (card as { tags?: string[] }).tags ?? v1CardTopics(card as ExperienceCardV1);
+      const loc = (card as { location?: string | { city?: string; text?: string } }).location;
+      const locationStr =
+        typeof loc === "string" ? loc : (loc && typeof loc === "object" && "city" in loc ? loc.city : (loc && typeof loc === "object" && "text" in loc ? loc.text : "")) ?? "";
+      setEditingCardId(id);
+      setEditForm({
+        title: (card as { title?: string }).title ?? (card as { headline?: string }).headline ?? "",
+        context: (card as { context?: string }).context ?? (card as { summary?: string }).summary ?? "",
+        tagsStr: tags.join(", "),
+        time_range: (card as { time_range?: string }).time_range ?? "",
+        role_title: (card as { role_title?: string }).role_title ?? "",
+        company: (card as { company?: string }).company ?? "",
+        location: locationStr,
+      });
+    },
+    []
+  );
+
+  const submitEditCard = useCallback(() => {
+    if (!editingCardId) return;
+    const tags = editForm.tagsStr
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    patchCardMutation.mutate({
+      cardId: editingCardId,
+      body: {
+        title: editForm.title || null,
+        context: editForm.context || null,
+        tags,
+        time_range: editForm.time_range || null,
+        role_title: editForm.role_title || null,
+        company: editForm.company || null,
+        location: editForm.location || null,
+      },
+    });
+  }, [editingCardId, editForm]);
+
+  const handleDeleteCard = useCallback(() => {
+    if (!editingCardId) return;
+    deleteCardMutation.mutate(editingCardId);
+  }, [editingCardId, deleteCardMutation]);
+
   const handleSaveCards = useCallback(async () => {
     setSaveError(null);
     setIsSavingAll(true);
     try {
-      if (cardFamilies && cardFamilies.length > 0) {
-        const allIds = cardFamilies.flatMap((f) => [
-          ...(f.parent?.id ? [f.parent.id] : []),
-          ...(f.children ?? []).map((c) => c.id).filter(Boolean),
-        ]);
-        await Promise.all(
-          allIds.map((id) => api<ExperienceCard>(`/experience-cards/${id}/approve`, { method: "POST" }))
-        );
+      if (draftSetId) {
+        await api<ExperienceCard[]>("/draft-sets/" + encodeURIComponent(draftSetId) + "/commit", {
+          method: "POST",
+          body: {},
+        });
       }
       setSaveModalOpen(false);
+      setDraftSetId(null);
+      setCardFamilies(null);
       queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
       router.push("/home");
     } catch (e) {
@@ -214,7 +357,7 @@ export default function BuilderPage() {
     } finally {
       setIsSavingAll(false);
     }
-  }, [cardFamilies, queryClient, router]);
+  }, [draftSetId, queryClient, router]);
 
   const hasV1Families = (cardFamilies?.length ?? 0) > 0;
   const hasCards = hasV1Families || savedCards.length > 0;
@@ -339,7 +482,6 @@ export default function BuilderPage() {
                       const parent = family.parent as ExperienceCardV1;
                       const children = (family.children ?? []) as ExperienceCardV1[];
                       const parentId = parent?.id ?? "";
-                      const isExpanded = expandedFamilies.has(parentId);
                       const tags = parent ? v1CardTopics(parent) : [];
                       const timeText = parent?.time && typeof parent.time === "object" && "text" in parent.time
                         ? (parent.time as { text?: string }).text
@@ -347,6 +489,14 @@ export default function BuilderPage() {
                       const roleLabel = parent?.roles?.[0] && typeof parent.roles[0] === "object" && "label" in parent.roles[0]
                         ? (parent.roles[0] as { label: string }).label
                         : null;
+                      const parentLocation =
+                        typeof parent?.location === "string"
+                          ? parent.location
+                          : (parent?.location && typeof parent.location === "object" && "city" in parent.location
+                            ? (parent.location as { city?: string }).city
+                            : (parent?.location && typeof parent.location === "object" && "text" in parent.location
+                              ? (parent.location as { text?: string }).text
+                              : null));
                       return (
                         <motion.div
                           key={parentId}
@@ -368,19 +518,8 @@ export default function BuilderPage() {
                             )}
                           >
                             <div className="p-4">
-                              <button
-                                type="button"
-                                className="flex items-start justify-between gap-2 w-full text-left"
-                                onClick={() =>
-                                  setExpandedFamilies((s) => {
-                                    const next = new Set(s);
-                                    if (next.has(parentId)) next.delete(parentId);
-                                    else next.add(parentId);
-                                    return next;
-                                  })
-                                }
-                              >
-                                <span className="flex items-center gap-2 min-w-0">
+                              <div className="flex items-start justify-between gap-2 w-full">
+                                <span className="flex items-center gap-2 min-w-0 flex-1">
                                   <span className="text-muted-foreground flex-shrink-0">
                                     <CardTypeIcon tags={tags} title={parent?.headline ?? null} />
                                   </span>
@@ -393,68 +532,280 @@ export default function BuilderPage() {
                                     </span>
                                   )}
                                 </span>
-                              </button>
-                              {tags.length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-2">
-                                  {tags.map((t, i) => (
-                                    <span
-                                      key={`${parentId}-tag-${i}-${t}`}
-                                      className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
+                                {editingCardId === parentId ? (
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                      onClick={handleDeleteCard}
+                                      disabled={deleteCardMutation.isPending}
                                     >
-                                      {t}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                              {parent?.summary && (
-                                <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
-                                  {parent.summary}
-                                </p>
-                              )}
-                              <div className="text-xs text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-0">
-                                {timeText && <span>{timeText}</span>}
-                                {roleLabel && <span>{roleLabel}</span>}
-                              </div>
-                              <V1CardDetails card={parent} />
-                              <AnimatePresence>
-                                {isExpanded && children.length > 0 && (
-                                  <motion.div
-                                    className="mt-4 pt-4 border-t border-border/50 space-y-3 min-w-0"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    exit={{ opacity: 0 }}
-                                    transition={{ duration: 0.2 }}
+                                      Delete
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="default"
+                                      onClick={submitEditCard}
+                                      disabled={patchCardMutation.isPending}
+                                    >
+                                      <Check className="h-4 w-4 mr-1" />
+                                      Done
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="flex-shrink-0 text-muted-foreground hover:text-foreground"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      startEditingCard(parent);
+                                    }}
                                   >
+                                    Edit
+                                  </Button>
+                                )}
+                              </div>
+                              {editingCardId === parentId ? (
+                                <div className="mt-3 space-y-3 pt-3 border-t border-border/50">
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Title</Label>
+                                    <Input
+                                      value={editForm.title}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                                      placeholder="Card title"
+                                      className="text-sm"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Summary</Label>
+                                    <Textarea
+                                      value={editForm.context}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, context: e.target.value }))}
+                                      placeholder="Context / summary"
+                                      rows={3}
+                                      className="text-sm resize-y"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Tags (comma-separated)</Label>
+                                    <Input
+                                      value={editForm.tagsStr}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, tagsStr: e.target.value }))}
+                                      placeholder="e.g. Python, API design"
+                                      className="text-sm"
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Time range</Label>
+                                      <Input
+                                        value={editForm.time_range}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, time_range: e.target.value }))}
+                                        placeholder="e.g. 2020–2022"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Role</Label>
+                                      <Input
+                                        value={editForm.role_title}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, role_title: e.target.value }))}
+                                        placeholder="Role title"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Company</Label>
+                                      <Input
+                                        value={editForm.company}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, company: e.target.value }))}
+                                        placeholder="Company"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Location</Label>
+                                      <Input
+                                        value={editForm.location}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
+                                        placeholder="City / location"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  {tags.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-2">
+                                      {tags.map((t, i) => (
+                                        <span
+                                          key={`${parentId}-tag-${i}-${t}`}
+                                          className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
+                                        >
+                                          {t}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {parent?.summary && (
+                                    <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
+                                      {parent.summary}
+                                    </p>
+                                  )}
+                                  <div className="text-xs text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-0">
+                                    {timeText && <span>{timeText}</span>}
+                                    {roleLabel && <span>{roleLabel}</span>}
+                                    {parentLocation && <span>{parentLocation}</span>}
+                                  </div>
+                                  <V1CardDetails card={parent} />
+                                </>
+                              )}
+                              {children.length > 0 && (
+                                  <div className="mt-4 pt-4 border-t border-border/50 space-y-3 min-w-0">
                                     <p className="text-xs font-medium text-muted-foreground">Child cards</p>
                                     <ul className="space-y-2">
                                       {children.map((child) => {
+                                        const childId = child?.id ?? "";
                                         const childRelation = child?.relation_type ?? "";
                                         const childHeadline = child?.headline ?? "Untitled";
                                         const childSummary = child?.summary ?? "";
+                                        const isEditingChild = editingCardId === childId;
                                         return (
                                           <li
-                                            key={child?.id ?? childHeadline}
+                                            key={childId || childHeadline}
                                             className="rounded-lg border border-border/40 bg-muted/30 p-3"
                                           >
-                                            {childRelation && (
-                                              <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
-                                                {String(childRelation).replace(/_/g, " ")}
-                                              </span>
+                                            <div className="flex items-start justify-between gap-2">
+                                              <div className="min-w-0 flex-1">
+                                                {childRelation && (
+                                                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
+                                                    {String(childRelation).replace(/_/g, " ")}
+                                                  </span>
+                                                )}
+                                                {isEditingChild ? null : (
+                                                  <>
+                                                    <p className="font-medium text-sm">{childHeadline}</p>
+                                                    {childSummary && (
+                                                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                                        {childSummary}
+                                                      </p>
+                                                    )}
+                                                  </>
+                                                )}
+                                              </div>
+                                              {isEditingChild ? (
+                                                <div className="flex items-center gap-1 flex-shrink-0">
+                                                  <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                    onClick={handleDeleteCard}
+                                                    disabled={deleteCardMutation.isPending}
+                                                  >
+                                                    Delete
+                                                  </Button>
+                                                  <Button
+                                                    size="sm"
+                                                    variant="default"
+                                                    onClick={submitEditCard}
+                                                    disabled={patchCardMutation.isPending}
+                                                  >
+                                                    <Check className="h-4 w-4 mr-1" />
+                                                    Done
+                                                  </Button>
+                                                </div>
+                                              ) : (
+                                                <Button
+                                                  size="sm"
+                                                  variant="ghost"
+                                                  className="flex-shrink-0 text-muted-foreground hover:text-foreground"
+                                                  onClick={() => startEditingCard(child)}
+                                                >
+                                                  Edit
+                                                </Button>
+                                              )}
+                                            </div>
+                                            {isEditingChild ? (
+                                              <div className="mt-3 space-y-3 pt-3 border-t border-border/40">
+                                                <div className="space-y-1.5">
+                                                  <Label className="text-xs">Title</Label>
+                                                  <Input
+                                                    value={editForm.title}
+                                                    onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                                                    placeholder="Card title"
+                                                    className="text-sm"
+                                                  />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                  <Label className="text-xs">Summary</Label>
+                                                  <Textarea
+                                                    value={editForm.context}
+                                                    onChange={(e) => setEditForm((f) => ({ ...f, context: e.target.value }))}
+                                                    placeholder="Context / summary"
+                                                    rows={2}
+                                                    className="text-sm resize-y"
+                                                  />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                  <Label className="text-xs">Tags (comma-separated)</Label>
+                                                  <Input
+                                                    value={editForm.tagsStr}
+                                                    onChange={(e) => setEditForm((f) => ({ ...f, tagsStr: e.target.value }))}
+                                                    placeholder="e.g. Python, API"
+                                                    className="text-sm"
+                                                  />
+                                                </div>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                  <div className="space-y-1.5">
+                                                    <Label className="text-xs">Time range</Label>
+                                                    <Input
+                                                      value={editForm.time_range}
+                                                      onChange={(e) => setEditForm((f) => ({ ...f, time_range: e.target.value }))}
+                                                      className="text-sm"
+                                                    />
+                                                  </div>
+                                                  <div className="space-y-1.5">
+                                                    <Label className="text-xs">Role</Label>
+                                                    <Input
+                                                      value={editForm.role_title}
+                                                      onChange={(e) => setEditForm((f) => ({ ...f, role_title: e.target.value }))}
+                                                      className="text-sm"
+                                                    />
+                                                  </div>
+                                                </div>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                  <div className="space-y-1.5">
+                                                    <Label className="text-xs">Company</Label>
+                                                    <Input
+                                                      value={editForm.company}
+                                                      onChange={(e) => setEditForm((f) => ({ ...f, company: e.target.value }))}
+                                                      className="text-sm"
+                                                    />
+                                                  </div>
+                                                  <div className="space-y-1.5">
+                                                    <Label className="text-xs">Location</Label>
+                                                    <Input
+                                                      value={editForm.location}
+                                                      onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
+                                                      className="text-sm"
+                                                    />
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ) : (
+                                              <V1CardDetails card={child} compact />
                                             )}
-                                            <p className="font-medium text-sm">{childHeadline}</p>
-                                            {childSummary && (
-                                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                                                {childSummary}
-                                              </p>
-                                            )}
-                                            <V1CardDetails card={child} compact />
                                           </li>
                                         );
                                       })}
                                     </ul>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
+                                  </div>
+                              )}
                             </div>
                           </TiltCard>
                         </motion.div>
@@ -481,7 +832,12 @@ export default function BuilderPage() {
                             deletedId === c.id && "opacity-50"
                           )}
                         >
-                          <span className="text-sm truncate">{c.title || c.company || c.id}</span>
+                          <span className="text-sm truncate">
+                            {c.title || c.company || c.location || c.id}
+                            {c.location && (c.title || c.company) && (
+                              <span className="text-muted-foreground"> · {c.location}</span>
+                            )}
+                          </span>
                           <div className="flex gap-1">
                             <Button
                               size="sm"

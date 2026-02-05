@@ -187,6 +187,7 @@ class ExperienceCard(Base):
     team = Column(String(255), nullable=True)
     role_title = Column(String(255), nullable=True)
     time_range = Column(String(100), nullable=True)
+    location = Column(String(255), nullable=True)
 
     embedding = Column(Vector(384), nullable=True)  # bge-base typically 384 or 768
 

@@ -8,6 +8,7 @@ from src.schemas import (
     RawExperienceResponse,
     DraftSetV1Response,
     CardFamilyV1Response,
+    CommitDraftSetRequest,
     ExperienceCardCreate,
     ExperienceCardPatch,
     ExperienceCardResponse,
@@ -36,7 +37,7 @@ async def create_draft_cards_v1(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run Experience Card v1 pipeline: atomize → parent extract → child gen → validate."""
+    """Run Experience Card v1 pipeline: atomize → parent extract → child gen → validate. Persists drafts with server-generated ids."""
     try:
         draft_set_id, raw_experience_id, card_families = await run_draft_v1_pipeline(
             db, current_user.id, body
@@ -50,6 +51,26 @@ async def create_draft_cards_v1(
         raise HTTPException(status_code=429, detail=str(e))
     except ChatServiceError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/draft-sets/{draft_set_id}/commit", response_model=list[ExperienceCardResponse])
+async def commit_draft_set(
+    draft_set_id: str,
+    body: CommitDraftSetRequest | None = None,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve (commit) draft cards in this set: DRAFT → APPROVED, compute embeddings. Optional card_ids for partial selection."""
+    cards = await experience_card_service.list_drafts_by_raw_experience(
+        db, current_user.id, draft_set_id, card_ids=(body.card_ids if body else None)
+    )
+    if not cards:
+        raise HTTPException(status_code=404, detail="No draft cards found for this draft set.")
+    try:
+        cards = await experience_card_service.approve_batch(db, cards)
+    except EmbeddingServiceError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return [experience_card_to_response(c) for c in cards]
 
 
 @router.post("/experience-cards", response_model=ExperienceCardResponse)
@@ -90,3 +111,18 @@ async def hide_experience_card(
 ):
     card.status = ExperienceCard.HIDDEN
     return experience_card_to_response(card)
+
+
+@router.delete("/experience-cards/{card_id}", status_code=204)
+async def delete_experience_card(
+    card: ExperienceCard = Depends(get_experience_card_or_404),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a draft experience card. Only DRAFT cards can be deleted."""
+    if card.status != ExperienceCard.DRAFT:
+        raise HTTPException(
+            status_code=400,
+            detail="Only draft cards can be deleted.",
+        )
+    await db.delete(card)
+    return None

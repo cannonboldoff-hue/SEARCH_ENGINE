@@ -170,6 +170,12 @@ class DraftSetV1Response(BaseModel):
     card_families: list[CardFamilyV1Response]
 
 
+class CommitDraftSetRequest(BaseModel):
+    """Optional body for commit: approve only selected card ids, or all if omitted."""
+
+    card_ids: Optional[list[str]] = None
+
+
 class ExperienceCardCreate(BaseModel):
     draft_card_id: Optional[str] = None
     raw_experience_id: Optional[str] = None
@@ -183,6 +189,7 @@ class ExperienceCardCreate(BaseModel):
     team: Optional[str] = None
     role_title: Optional[str] = None
     time_range: Optional[str] = None
+    location: Optional[str] = None
 
 
 class ExperienceCardPatch(BaseModel):
@@ -197,6 +204,7 @@ class ExperienceCardPatch(BaseModel):
     team: Optional[str] = None
     role_title: Optional[str] = None
     time_range: Optional[str] = None
+    location: Optional[str] = None
 
 
 class ExperienceCardResponse(BaseModel):
@@ -216,6 +224,7 @@ class ExperienceCardResponse(BaseModel):
     team: Optional[str] = None
     role_title: Optional[str] = None
     time_range: Optional[str] = None
+    location: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

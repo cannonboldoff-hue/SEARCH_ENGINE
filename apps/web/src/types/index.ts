@@ -76,6 +76,7 @@ export type ExperienceCard = {
   team: string | null;
   role_title: string | null;
   time_range: string | null;
+  location: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -94,6 +95,7 @@ export type ExperienceCardCreate = {
   team?: string | null;
   role_title?: string | null;
   time_range?: string | null;
+  location?: string | null;
 };
 
 /** Request body for PATCH /experience-cards/:card_id. Matches backend ExperienceCardPatch. */
@@ -109,6 +111,7 @@ export type ExperienceCardPatch = {
   team?: string | null;
   role_title?: string | null;
   time_range?: string | null;
+  location?: string | null;
 };
 
 export type ContactDetails = {

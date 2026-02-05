@@ -44,6 +44,7 @@ def experience_card_to_response(card: ExperienceCard) -> ExperienceCardResponse:
         team=card.team,
         role_title=card.role_title,
         time_range=card.time_range,
+        location=card.location,
         created_at=card.created_at,
         updated_at=card.updated_at,
     )
@@ -97,10 +98,10 @@ def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema
         confidence="medium",
     )
     location = LocationWithConfidence(
-        city=card.company,
+        city=card.location,
         region=None,
         country=None,
-        text=None,
+        text=card.location,
         confidence="medium",
     )
     roles = []
