@@ -260,19 +260,19 @@ export default function BuilderPage() {
                                   })
                                 }
                               >
-                                <div className="flex items-center gap-2 min-w-0">
+                                <span className="flex items-center gap-2 min-w-0">
                                   <span className="text-muted-foreground flex-shrink-0">
                                     <CardTypeIcon tags={tags} title={parent?.headline ?? null} />
                                   </span>
-                                  <h3 className="font-semibold text-sm truncate">
+                                  <span className="font-semibold text-sm truncate">
                                     {parent?.headline || "Untitled"}
-                                  </h3>
+                                  </span>
                                   {children.length > 0 && (
                                     <span className="text-xs text-muted-foreground flex-shrink-0">
                                       +{children.length} child{children.length !== 1 ? "ren" : ""}
                                     </span>
                                   )}
-                                </div>
+                                </span>
                               </button>
                               {tags.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-2">
