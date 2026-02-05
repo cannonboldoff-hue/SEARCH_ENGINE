@@ -20,8 +20,13 @@ Rules:
 - Do not invent facts.
 - If multiple experiences appear in one message, split them.
 - Normalize exaggerated or metaphorical phrases into factual descriptions
-  when selecting raw_text_span, without adding new information.
-  (Example: "conquered the city" → "expanded presence across the city")
+  without adding new information.
+  Example:
+  - "conquered the city" → "expanded presence across the city"
+
+IMPORTANT:
+- Do NOT create atoms for generic employment context.
+- Only extract atoms that describe a concrete outcome or responsibility.
 
 User message:
 {{USER_TEXT}}
@@ -37,32 +42,41 @@ Expected output shape:
 ]
 """
 
-
 # -----------------------------------------------------------------------------
 # 2.2 Parent extractor (atom → Experience Card v1)
 # -----------------------------------------------------------------------------
 PROMPT_PARENT_EXTRACTOR = """Convert ONE atom into a universal Experience Card v1.
 
-Hard rules:
-- Set: parent_id = null, depth = 0, relation_type = null
-- Treat each atom as an INDEPENDENT parent Experience Card unless
-  explicit hierarchical dependency is stated in the text.
-- Do NOT merge atoms at this stage.
+HARD GATES (STRICT):
+- Do NOT infer job roles, skills, or duties based on the company’s industry.
+- Do NOT invent responsibilities the user did not explicitly state.
+- Do NOT create cards for generic employment context.
+- If the atom does NOT clearly represent:
+  (a) a measurable Outcome, or
+  (b) a concrete Responsibility,
+  then DO NOT create an Experience Card.
 
-Classification:
-- Determine whether the atom primarily represents:
-  (a) an Outcome (measurable result or achievement), OR
-  (b) a Responsibility (ongoing duty or role).
+Schema rules:
+- Set: parent_id = null, depth = 0, relation_type = null
+- Treat each atom as an INDEPENDENT parent Experience Card.
+- Never merge atoms at this stage.
+
+Classification (MANDATORY):
+- Classify the atom as either:
+  - Outcome (measurable result, growth, achievement), OR
+  - Responsibility (ongoing duty, ownership, accountability).
 - Headlines and summaries MUST reflect this classification.
 
 Headline rules:
-- Headline must describe the specific outcome or responsibility.
-- Do NOT use generic employment headlines
-  (e.g., "Worked at a company", "Job experience").
+- Headline must describe the outcome or responsibility.
+- NEVER use generic headlines such as:
+  - "Worked at a company"
+  - "Employment experience"
+  - "Provided services"
 
 Language normalization:
-- Rewrite metaphorical, exaggerated, or absolute language into
-  professional, factual phrasing.
+- Rewrite exaggerated or metaphorical language into factual,
+  professional phrasing.
 - Never preserve violent, military, or absolute metaphors.
   Examples:
   - "conquered a city" → "expanded operations across the city"
@@ -70,37 +84,36 @@ Language normalization:
 
 Extraction rules:
 - Fill: intent, headline, summary, raw_text
-- Extract where possible:
+- Extract ONLY what is explicitly stated:
   - actions (canonical verb + verb_raw)
-  - roles
-  - topics
-  - entities
+  - responsibilities OR outcomes
+  - roles (ONLY if explicitly mentioned)
   - time
   - location
-  - outcomes or responsibilities
-- Extract universal tooling ONLY if explicitly mentioned:
-  - tools: software / equipment / system / platform / instrument / other
-  - processes: repeatable workflows or methods
-- NEVER guess tools or processes.
-  If uncertain, place text in tooling.raw with low confidence.
+- Extract topics that are high-signal and professional.
+- Remove low-signal topics (e.g., "company", "places").
+
+Tooling:
+- Extract tools or processes ONLY if explicitly named.
+- NEVER guess tools, software, or workflows.
+- If unclear, leave tooling empty.
 
 Language:
-- Detect raw_text language (e.g., en / hi / mr) if possible.
-- If uncertain, set language=null and confidence=low.
+- Detect raw_text language if possible.
+- If uncertain, set language=null with low confidence.
 
 Privacy:
-- If health, legal, sexual, or private family data appears:
+- If sensitive personal data appears:
   - privacy.sensitive = true
-  - default visibility = "profile_only"
+  - visibility = "profile_only"
 
 Clarification:
-- If ambiguity blocks correct indexing:
+- If ambiguity blocks correct classification:
   - quality.needs_clarification = true
-  - propose AT MOST ONE short clarifying_question.
+  - ask AT MOST ONE short clarifying_question.
 
 Indexing:
-- Create index.search_phrases (5–15 short, professional phrases).
-- Remove low-signal topics (e.g., "company", "places").
+- Create 5–15 concise, searchable index.search_phrases.
 
 Return ONLY valid JSON matching ExperienceCardV1Schema.
 
@@ -117,14 +130,13 @@ created_by = {{PERSON_ID}}
 # -----------------------------------------------------------------------------
 PROMPT_CHILD_GENERATOR = """Generate 0–10 child Experience Cards under this parent.
 
-Rules:
-- Do NOT generate children if the parent Experience Card is already
-  atomic and complete as an Outcome or Responsibility.
-- Only generate children if they add meaningful, distinct information.
+STRICT RULE:
+- If the parent Experience Card fully captures a single
+  Outcome or Responsibility, RETURN AN EMPTY ARRAY.
 
 Grounding:
 - Children MUST be directly grounded in the parent's raw_text or summary.
-- Do NOT invent new facts.
+- Do NOT invent facts or infer duties.
 
 Schema rules:
 - Use the SAME schema.
@@ -133,7 +145,7 @@ Schema rules:
   - depth = 1
   - relation_type MUST be valid and meaningful.
 
-Preferred child intents:
+Allowed child intents:
 - responsibility
 - outcome
 - skill_application
@@ -144,14 +156,14 @@ Preferred child intents:
 - artifact_created
 
 Tooling:
-- Extract tools and processes ONLY if explicitly stated.
-- Do NOT guess tools or workflows.
+- Extract tools or processes ONLY if explicitly mentioned.
+- NEVER guess.
 
 Searchability:
-- Keep children specific, factual, and professionally phrased.
-- Avoid vague or low-signal topics.
+- Children must add NEW, distinct, searchable value.
+- Avoid generic or restated content.
 
-Return ONLY a JSON array of child Experience Cards.
+Return ONLY a JSON array.
 
 Parent card JSON:
 {{PARENT_CARD_JSON}}
@@ -167,28 +179,28 @@ Input:
 - Its child Experience Cards (if any)
 
 Goals:
-- Ensure full schema validity.
-- Remove hallucinations or ungrounded claims.
+- Ensure strict schema validity.
+- Remove hallucinated roles, skills, or duties.
+- Remove employment-context cards with no outcome or responsibility.
 - Normalize verbs while preserving verb_raw.
-- Ensure relation_type is valid and meaningful for children.
-- Remove literal interpretations of metaphorical language.
-- Enforce professional, factual phrasing throughout.
-- Eliminate low-signal or noisy topics
-  (e.g., "company", "places", "conquest").
+- Ensure Outcome vs Responsibility classification is correct.
+- Rewrite or remove any remaining metaphorical language.
+- Eliminate low-signal or abstract topics.
+
+Children rules:
+- If children add no new information, REMOVE ALL children.
 
 Privacy:
-- If sensitive data exists, enforce conservative privacy defaults.
+- Enforce conservative defaults for sensitive data.
 
 Consistency:
-- Fix inconsistencies in time, location, outcomes, or confidence.
-- Ensure Outcome vs Responsibility classification is correct.
+- Fix inconsistencies in time, location, numbers, or confidence.
 
 Clarification:
 - Allow AT MOST ONE clarification question total.
-- Prefer assigning it to the parent.
-- Remove duplicates from children.
+- Prefer parent-level clarification.
 
-Return ONLY valid JSON in this shape:
+Return ONLY valid JSON in this structure:
 {
   "parent": { ... },
   "children": [ ... ]
