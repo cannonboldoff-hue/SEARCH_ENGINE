@@ -1,8 +1,11 @@
 """Experience Card pipeline: rewrite+cleanup → extract-all → validate-all."""
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone, date
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -555,7 +558,11 @@ async def run_draft_v1_pipeline(
         response = await chat.chat(prompt, max_tokens=8192)
         validated_families = _parse_families_from_response(response)
     except (ValueError, json.JSONDecodeError) as e:
-        raise ChatServiceError("Validator returned invalid JSON.") from e
+        logger.warning("Validator returned invalid or empty JSON, using extractor output: %s", e)
+        validated_families = normalized_families
+
+    if not validated_families:
+        validated_families = normalized_families
 
     card_families: list[dict] = []
     parents_to_embed: list[ExperienceCard] = []
