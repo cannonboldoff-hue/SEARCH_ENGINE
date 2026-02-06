@@ -125,28 +125,16 @@ export default function PersonProfilePage() {
             <Card key={card.id} className="glass border-border/50 hover-lift">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">
-                  {card.title || card.company || "Untitled"}
+                  {card.title || card.company_name || "Untitled"}
                 </CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {[card.company, card.team, card.role_title, card.time_range]
+                  {[card.company_name, card.normalized_role, card.location, card.start_date, card.end_date]
                     .filter(Boolean)
                     .join(" · ")}
                 </p>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
-                {card.context && <p>{card.context}</p>}
-                {card.constraints && <p><strong>Constraints:</strong> {card.constraints}</p>}
-                {card.decisions && <p><strong>Decisions:</strong> {card.decisions}</p>}
-                {card.outcome && <p><strong>Outcome:</strong> {card.outcome}</p>}
-                {card.tags?.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {card.tags.map((t, i) => (
-                      <span key={`${t}-${i}`} className="rounded bg-muted px-2 py-0.5 text-xs">
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {card.summary && <p>{card.summary}</p>}
               </CardContent>
             </Card>
           ))}

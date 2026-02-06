@@ -252,6 +252,48 @@ class ExperienceCardResponse(BaseModel):
 
 
 # -----------------------------------------------------------------------------
+# Experience Card Children (dimension cards stored in experience_card_children)
+# -----------------------------------------------------------------------------
+
+class ExperienceCardChildPatch(BaseModel):
+    """
+    Patch payload for ExperienceCardChild.
+
+    This intentionally mirrors the "draft-v1" child DTO fields that the web builder displays.
+    Updates are applied into ExperienceCardChild.label and ExperienceCardChild.value (dimension container).
+    """
+
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    tags: Optional[list[str]] = None
+    time_range: Optional[str] = None
+    company: Optional[str] = None
+    location: Optional[str] = None
+
+
+class ExperienceCardChildResponse(BaseModel):
+    """
+    Response DTO for ExperienceCardChild.
+
+    Kept compatible with the structure returned inside draft-v1 `card_families[].children[]`.
+    """
+
+    id: str
+    title: str = ""
+    context: str = ""
+    tags: list[str] = []
+    headline: str = ""
+    summary: str = ""
+    topics: list[dict] = []
+    time_range: Optional[str] = None
+    role_title: Optional[str] = None
+    company: Optional[str] = None
+    location: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# -----------------------------------------------------------------------------
 # Search
 # -----------------------------------------------------------------------------
 class SearchRequest(BaseModel):

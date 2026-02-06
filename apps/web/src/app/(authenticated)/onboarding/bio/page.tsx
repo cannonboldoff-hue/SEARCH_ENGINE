@@ -121,8 +121,6 @@ export default function OnboardingBioPage() {
         work_preferred_locations: workPreferredLocations.length ? workPreferredLocations : undefined,
         work_preferred_salary_min: minNum != null && !Number.isNaN(minNum) ? minNum : null,
         work_preferred_salary_max: null,
-        contact_preferred_salary_min: null,
-        contact_preferred_salary_max: null,
       };
     }
     if (visibilityMode === "open_to_contact") {
@@ -132,8 +130,6 @@ export default function OnboardingBioPage() {
         work_preferred_locations: [],
         work_preferred_salary_min: null,
         work_preferred_salary_max: null,
-        contact_preferred_salary_min: null,
-        contact_preferred_salary_max: null,
       };
     }
     return {
@@ -142,8 +138,6 @@ export default function OnboardingBioPage() {
       work_preferred_locations: [],
       work_preferred_salary_min: null,
       work_preferred_salary_max: null,
-      contact_preferred_salary_min: null,
-      contact_preferred_salary_max: null,
     };
   };
 

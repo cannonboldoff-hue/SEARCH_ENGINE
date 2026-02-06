@@ -92,3 +92,13 @@ async def patch_experience_card(
 ):
     apply_card_patch(card, body)
     return experience_card_to_response(card)
+
+
+@router.post("/experience-cards/{card_id}/hide", response_model=ExperienceCardResponse)
+async def hide_experience_card(
+    card: ExperienceCard = Depends(get_experience_card_or_404),
+    db: AsyncSession = Depends(get_db),
+):
+    response = experience_card_to_response(card)
+    await db.delete(card)
+    return response

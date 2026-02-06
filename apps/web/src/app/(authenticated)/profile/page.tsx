@@ -150,61 +150,17 @@ export default function ProfilePage() {
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <CardTitle className="text-base">
-                      {card.title || card.company || "Untitled"}
+                      {card.title || card.company_name || "Untitled"}
                     </CardTitle>
-                    <div className="flex items-center gap-2">
-                      {card.human_edited && (
-                        <span className="rounded bg-violet-900/40 px-2 py-0.5 text-xs text-violet-400">
-                          Edited
-                        </span>
-                      )}
-                      {card.locked && (
-                        <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                          Locked
-                        </span>
-                      )}
-                      <span
-                        className={
-                          card.status === "APPROVED"
-                            ? "rounded bg-green-900/40 px-2 py-0.5 text-xs text-green-400"
-                            : card.status === "DRAFT"
-                              ? "rounded bg-amber-900/40 px-2 py-0.5 text-xs text-amber-400"
-                              : "rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-                        }
-                      >
-                        {card.status}
-                      </span>
-                    </div>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    {[card.company, card.team, card.role_title, card.time_range]
+                    {[card.company_name, card.normalized_role, card.location, card.start_date, card.end_date]
                       .filter(Boolean)
                       .join(" · ")}
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm">
-                  {card.context && <p>{card.context}</p>}
-                  {card.constraints && (
-                    <p><strong>Constraints:</strong> {card.constraints}</p>
-                  )}
-                  {card.decisions && (
-                    <p><strong>Decisions:</strong> {card.decisions}</p>
-                  )}
-                  {card.outcome && (
-                    <p><strong>Outcome:</strong> {card.outcome}</p>
-                  )}
-                  {card.tags?.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {card.tags.map((t, i) => (
-                        <span
-                          key={`${t}-${i}`}
-                          className="rounded bg-muted px-2 py-0.5 text-xs"
-                        >
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  {card.summary && <p>{card.summary}</p>}
                 </CardContent>
               </Card>
               </motion.div>

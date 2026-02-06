@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
 import { SearchProvider } from "@/contexts/search-context";
@@ -13,14 +13,18 @@ export default function AuthenticatedLayout({
 }) {
   const { token } = useAuth();
   const router = useRouter();
-
-  const hasToken = token !== null || (typeof window !== "undefined" && !!localStorage.getItem("token"));
+  const [hasToken, setHasToken] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!hasToken) router.replace("/login");
+    const storedToken = localStorage.getItem("token");
+    setHasToken(Boolean(token || storedToken));
+  }, [token]);
+
+  useEffect(() => {
+    if (hasToken === false) router.replace("/login");
   }, [hasToken, router]);
 
-  if (!hasToken) {
+  if (hasToken !== true) {
     return (
       <div className="min-h-screen flex items-center justify-center mesh-bg">
         <div className="animate-pulse text-muted-foreground">Loading…</div>

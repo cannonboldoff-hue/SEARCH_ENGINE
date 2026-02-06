@@ -58,60 +58,74 @@ export type SearchResponse = {
   people: PersonSearchResult[];
 };
 
-/** Response shape from GET /me/experience-cards and POST /experience-cards, etc. */
+/** Response shape from GET `/me/experience-cards` and POST/PATCH `/experience-cards`. Matches backend `ExperienceCardResponse`. */
 export type ExperienceCard = {
   id: string;
-  person_id: string;
-  raw_experience_id: string | null;
-  status: string;
-  human_edited: boolean;
-  locked: boolean;
+  user_id: string;
   title: string | null;
-  context: string | null;
-  constraints: string | null;
-  decisions: string | null;
-  outcome: string | null;
-  tags: string[];
-  company: string | null;
-  team: string | null;
-  role_title: string | null;
-  time_range: string | null;
+  normalized_role: string | null;
+  domain: string | null;
+  sub_domain: string | null;
+  company_name: string | null;
+  company_type: string | null;
+  start_date: string | null; // YYYY-MM-DD
+  end_date: string | null; // YYYY-MM-DD
+  is_current: boolean | null;
   location: string | null;
+  employment_type: string | null;
+  summary: string | null;
+  raw_text: string | null;
+  intent_primary: string | null;
+  intent_secondary: string[];
+  seniority_level: string | null;
+  confidence_score: number | null;
+  visibility: boolean;
   created_at: string | null;
   updated_at: string | null;
 };
 
-/** Request body for POST /experience-cards (create). Matches backend ExperienceCardCreate. */
+/** Request body for POST `/experience-cards` (create). Matches backend `ExperienceCardCreate`. */
 export type ExperienceCardCreate = {
-  draft_card_id?: string | null;
-  raw_experience_id?: string | null;
   title?: string | null;
-  context?: string | null;
-  constraints?: string | null;
-  decisions?: string | null;
-  outcome?: string | null;
-  tags?: string[];
-  company?: string | null;
-  team?: string | null;
-  role_title?: string | null;
-  time_range?: string | null;
+  normalized_role?: string | null;
+  domain?: string | null;
+  sub_domain?: string | null;
+  company_name?: string | null;
+  company_type?: string | null;
+  start_date?: string | null; // YYYY-MM-DD
+  end_date?: string | null; // YYYY-MM-DD
+  is_current?: boolean | null;
   location?: string | null;
+  employment_type?: string | null;
+  summary?: string | null;
+  raw_text?: string | null;
+  intent_primary?: string | null;
+  intent_secondary?: string[] | null;
+  seniority_level?: string | null;
+  confidence_score?: number | null;
+  visibility?: boolean | null;
 };
 
-/** Request body for PATCH /experience-cards/:card_id. Matches backend ExperienceCardPatch. */
+/** Request body for PATCH `/experience-cards/:card_id`. Matches backend `ExperienceCardPatch`. */
 export type ExperienceCardPatch = {
-  locked?: boolean | null;
   title?: string | null;
-  context?: string | null;
-  constraints?: string | null;
-  decisions?: string | null;
-  outcome?: string | null;
-  tags?: string[] | null;
-  company?: string | null;
-  team?: string | null;
-  role_title?: string | null;
-  time_range?: string | null;
+  normalized_role?: string | null;
+  domain?: string | null;
+  sub_domain?: string | null;
+  company_name?: string | null;
+  company_type?: string | null;
+  start_date?: string | null; // YYYY-MM-DD
+  end_date?: string | null; // YYYY-MM-DD
+  is_current?: boolean | null;
   location?: string | null;
+  employment_type?: string | null;
+  summary?: string | null;
+  raw_text?: string | null;
+  intent_primary?: string | null;
+  intent_secondary?: string[] | null;
+  seniority_level?: string | null;
+  confidence_score?: number | null;
+  visibility?: boolean | null;
 };
 
 export type ContactDetails = {
@@ -129,8 +143,6 @@ export type PersonProfile = {
   work_preferred_locations: string[];
   work_preferred_salary_min: number | null;
   work_preferred_salary_max: number | null;
-  contact_preferred_salary_min: number | null;
-  contact_preferred_salary_max: number | null;
   experience_cards: ExperienceCard[];
   contact: ContactDetails | null;
 };
@@ -175,8 +187,6 @@ export type VisibilitySettingsResponse = {
   work_preferred_salary_min: number | null;
   work_preferred_salary_max: number | null;
   open_to_contact: boolean;
-  contact_preferred_salary_min: number | null;
-  contact_preferred_salary_max: number | null;
 };
 
 export type PatchVisibilityRequest = {
@@ -185,6 +195,4 @@ export type PatchVisibilityRequest = {
   work_preferred_salary_min?: number | null;
   work_preferred_salary_max?: number | null;
   open_to_contact?: boolean;
-  contact_preferred_salary_min?: number | null;
-  contact_preferred_salary_max?: number | null;
 };

@@ -46,7 +46,7 @@ User message:
 # 2. Extract ALL parents + children (SINGLE PASS)
 # -----------------------------------------------------------------------------
 
-PROMPT_EXTRACT_ALL_CARDS = f"""You are a structured data extraction system.
+PROMPT_EXTRACT_ALL_CARDS = """You are a structured data extraction system.
 
 Your job is to extract ALL Experience Card parents and their dimension-based
 children from cleaned user text.
@@ -64,7 +64,7 @@ PARENT CARD RULES
 ========================
 * One parent = one dominant experience or intent block.
 * intent MUST be one of:
-  {INTENT_ENUM}
+  {{INTENT_ENUM}}
 * headline: <=120 chars, outcome- or responsibility-focused. Never use "Unspecified experience"; use a brief phrase from the text or "General experience" for vague content.
 * summary: 1–3 factual sentences.
 * raw_text: verbatim supporting text.
@@ -77,7 +77,7 @@ CHILD CARD RULES (VERY IMPORTANT)
 * You may create AT MOST 10 children per parent.
 * Each child represents ONE dimension only.
 * Allowed child_type values:
-  {ALLOWED_CHILD_TYPES_STR}
+  {{ALLOWED_CHILD_TYPES}}
 
 * NEVER create multiple children of the same child_type.
 * ALL items of the same type MUST be grouped inside one child.
@@ -89,9 +89,9 @@ WRONG:
 
 * Each child MUST add searchable value beyond the parent.
 * Child intent MUST be one of:
-  {CHILD_INTENT_ENUM}
+  {{CHILD_INTENT_ENUM}}
 * relation_type (how child relates to parent) MUST be one of:
-  {CHILD_RELATION_TYPE_ENUM}
+  {{CHILD_RELATION_TYPE_ENUM}}
 
 ========================
 CHILD STORAGE MODEL
@@ -128,14 +128,14 @@ OUTPUT FORMAT
 ========================
 Return ONLY valid JSON.
 
-{{
+{
   "parents": [
-    {{
-      "parent": {{ <ExperienceCardParentV1Schema> }},
-      "children": [ {{ <ExperienceCardChildV1Schema> }} ]
-    }}
+    {
+      "parent": { <ExperienceCardParentV1Schema> },
+      "children": [ { <ExperienceCardChildV1Schema> } ]
+    }
   ]
-}}
+}
 
 ========================
 INPUT
@@ -152,7 +152,7 @@ created_by = {{PERSON_ID}}
 # 4. Validate + Normalize (FINAL GATE)
 # -----------------------------------------------------------------------------
 
-PROMPT_VALIDATE_ALL_CARDS = f"""You are a strict validator for Experience Card v1 JSON.
+PROMPT_VALIDATE_ALL_CARDS = """You are a strict validator for Experience Card v1 JSON.
 
 MISSION:
 Validate, normalize, prune, and finalize parents + children.
@@ -161,13 +161,13 @@ Validate, normalize, prune, and finalize parents + children.
 SCHEMA ENFORCEMENT
 ========================
 * Parent intent MUST be one of:
-  {INTENT_ENUM}
+  {{INTENT_ENUM}}
 * Child intent MUST be one of:
-  {CHILD_INTENT_ENUM}
+  {{CHILD_INTENT_ENUM}}
 * Child relation_type MUST be one of:
-  {CHILD_RELATION_TYPE_ENUM}
+  {{CHILD_RELATION_TYPE_ENUM}}
 * child_type MUST be one of:
-  {ALLOWED_CHILD_TYPES_STR}
+  {{ALLOWED_CHILD_TYPES}}
 * Max 10 children per parent.
 
 ========================
@@ -206,16 +206,16 @@ OUTPUT
 ========================
 Return ONLY valid JSON.
 
-{{
+{
   "raw_text_original": "...",
   "raw_text_cleaned": "...",
   "parents": [
-    {{
-      "parent": {{ <validated parent> }},
+    {
+      "parent": { <validated parent> },
       "children": [ <validated children or []> ]
-    }}
+    }
   ]
-}}
+}
 
 INPUT:
 {{PARENT_AND_CHILDREN_JSON}}
@@ -233,6 +233,12 @@ def fill_prompt(
     parent_and_children_json: str | None = None,
 ) -> str:
     out = template
+    # Replace enum placeholders (previously handled by f-string, now explicit)
+    out = out.replace("{{INTENT_ENUM}}", INTENT_ENUM)
+    out = out.replace("{{CHILD_INTENT_ENUM}}", CHILD_INTENT_ENUM)
+    out = out.replace("{{CHILD_RELATION_TYPE_ENUM}}", CHILD_RELATION_TYPE_ENUM)
+    out = out.replace("{{ALLOWED_CHILD_TYPES}}", ALLOWED_CHILD_TYPES_STR)
+    # Replace caller-provided placeholders
     if user_text is not None:
         out = out.replace("{{USER_TEXT}}", user_text)
     if person_id is not None:

@@ -18,7 +18,6 @@ import { cn } from "@/lib/utils";
 import { useExperienceCards, EXPERIENCE_CARDS_QUERY_KEY } from "@/hooks";
 import type {
   ExperienceCard,
-  ExperienceCardCreate,
   ExperienceCardPatch,
   CardFamilyV1Response,
   DraftSetV1Response,
@@ -210,12 +209,6 @@ export default function BuilderPage() {
     }
   }, [rawText]);
 
-  const createCardMutation = useMutation({
-    mutationFn: (payload: ExperienceCardCreate) =>
-      api<ExperienceCard>("/experience-cards", { method: "POST", body: payload }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY }),
-  });
-
   const hideCardMutation = useMutation({
     mutationFn: (cardId: string) =>
       api<ExperienceCard>(`/experience-cards/${cardId}/hide`, { method: "POST" }),
@@ -224,51 +217,36 @@ export default function BuilderPage() {
 
   const [editForm, setEditForm] = useState<{
     title: string;
-    context: string;
-    tagsStr: string;
-    time_range: string;
-    role_title: string;
-    company: string;
-    team: string;
+    summary: string;
+    normalized_role: string;
+    company_name: string;
     location: string;
-    constraints: string;
-    decisions: string;
-    outcome: string;
-    locked: boolean;
+    start_date: string;
+    end_date: string;
+    is_current: boolean;
+    visibility: boolean;
   }>({
-    title: "", context: "", tagsStr: "", time_range: "", role_title: "", company: "", team: "", location: "",
-    constraints: "", decisions: "", outcome: "", locked: false,
-  });
-
-  const deleteCardMutation = useMutation({
-    mutationFn: (cardId: string) =>
-      api<void>(`/experience-cards/${cardId}`, { method: "DELETE" }),
-    onSuccess: (_, cardId) => {
-      setCardFamilies((prev) => {
-        if (!prev) return prev;
-        const next = prev
-          .map((fam) => {
-            if (fam.parent?.id === cardId) return null;
-            if (fam.children?.some((c) => c.id === cardId)) {
-              return { ...fam, children: fam.children?.filter((c) => c.id !== cardId) ?? [] };
-            }
-            return fam;
-          })
-          .filter((f): f is CardFamilyV1Response => f != null);
-        return next.length ? next : null;
-      });
-      setEditingCardId(null);
-    },
+    title: "",
+    summary: "",
+    normalized_role: "",
+    company_name: "",
+    location: "",
+    start_date: "",
+    end_date: "",
+    is_current: false,
+    visibility: true,
   });
 
   const patchCardMutation = useMutation({
     mutationFn: ({ cardId, body }: { cardId: string; body: ExperienceCardPatch }) =>
       api<ExperienceCard>(`/experience-cards/${cardId}`, { method: "PATCH", body }),
     onSuccess: (updated) => {
-      const locObj =
-        updated.location != null
-          ? { city: updated.location, text: updated.location, region: null, country: null, confidence: "medium" as const }
-          : undefined;
+      const timeRange =
+        updated.start_date || updated.end_date
+          ? [updated.start_date, updated.end_date].filter(Boolean).join(" – ")
+          : updated.is_current
+            ? "Ongoing"
+            : null;
       setCardFamilies((prev) => {
         const next =
           prev?.map((fam) => {
@@ -278,45 +256,20 @@ export default function BuilderPage() {
                 parent: {
                   ...fam.parent,
                   title: updated.title ?? undefined,
-                  context: updated.context ?? undefined,
-                  tags: updated.tags ?? [],
                   headline: updated.title ?? fam.parent.headline,
-                  summary: updated.context ?? fam.parent.summary,
-                  topics: (updated.tags ?? []).map((l) => ({ label: l })),
-                  time_range: updated.time_range ?? undefined,
-                  role_title: updated.role_title ?? undefined,
-                  company: updated.company ?? undefined,
-                  team: updated.team ?? undefined,
-                  constraints: updated.constraints ?? undefined,
-                  decisions: updated.decisions ?? undefined,
-                  outcome: updated.outcome ?? undefined,
-                  ...(locObj ? { location: locObj } : {}),
+                  context: updated.summary ?? undefined,
+                  summary: updated.summary ?? fam.parent.summary,
+                  role_title: updated.normalized_role ?? undefined,
+                  company: updated.company_name ?? undefined,
+                  location: updated.location ?? undefined,
+                  ...(timeRange ? { time_range: timeRange } : {}),
                 },
               };
             }
             return {
               ...fam,
-              children: fam.children?.map((c) =>
-                c.id === updated.id
-                  ? {
-                      ...c,
-                      title: updated.title ?? undefined,
-                      context: updated.context ?? undefined,
-                      tags: updated.tags ?? [],
-                      headline: updated.title ?? c.headline,
-                      summary: updated.context ?? c.summary,
-                      topics: (updated.tags ?? []).map((l) => ({ label: l })),
-                      time_range: updated.time_range ?? undefined,
-                      role_title: updated.role_title ?? undefined,
-                      company: updated.company ?? undefined,
-                      team: updated.team ?? undefined,
-                      constraints: updated.constraints ?? undefined,
-                      decisions: updated.decisions ?? undefined,
-                      outcome: updated.outcome ?? undefined,
-                      ...(locObj ? { location: locObj } : {}),
-                    }
-                  : c
-              ),
+              // Note: children are `ExperienceCardChild` records and are not patchable via `/experience-cards/:id`.
+              children: fam.children,
             };
           }) ?? prev;
         return next as CardFamilyV1Response[] | null;
@@ -326,28 +279,26 @@ export default function BuilderPage() {
   });
 
   const startEditingCard = useCallback(
-    (card: ExperienceCardV1 | (Record<string, unknown> & { id?: string; title?: string; headline?: string; context?: string; summary?: string; tags?: string[]; time_range?: string; role_title?: string; company?: string; team?: string; location?: string | { city?: string; text?: string }; constraints?: string; decisions?: string; outcome?: string; locked?: boolean })) => {
+    (card: ExperienceCardV1 | (Record<string, unknown> & { id?: string })) => {
       const id = (card as { id?: string }).id ?? "";
       if (!id) return;
-      const tags = (card as { tags?: string[] }).tags ?? v1CardTopics(card as ExperienceCardV1);
-      const loc = (card as { location?: string | { city?: string; text?: string } }).location;
-      const locationStr =
-        typeof loc === "string" ? loc : (loc && typeof loc === "object" && "city" in loc ? loc.city : (loc && typeof loc === "object" && "text" in loc ? loc.text : "")) ?? "";
       const c = card as Record<string, unknown>;
+      const loc = c.location as unknown;
+      const locationStr =
+        typeof loc === "string"
+          ? loc
+          : (loc && typeof loc === "object" && "text" in (loc as Record<string, unknown>) ? String((loc as Record<string, unknown>).text ?? "") : "");
       setEditingCardId(id);
       setEditForm({
         title: (c.title as string) ?? (c.headline as string) ?? "",
-        context: (c.context as string) ?? (c.summary as string) ?? "",
-        tagsStr: tags.join(", "),
-        time_range: (c.time_range as string) ?? "",
-        role_title: (c.role_title as string) ?? "",
-        company: (c.company as string) ?? "",
-        team: (c.team as string) ?? "",
+        summary: (c.context as string) ?? (c.summary as string) ?? "",
+        normalized_role: (c.normalized_role as string) ?? (c.role_title as string) ?? "",
+        company_name: (c.company_name as string) ?? (c.company as string) ?? "",
         location: locationStr,
-        constraints: (c.constraints as string) ?? "",
-        decisions: (c.decisions as string) ?? "",
-        outcome: (c.outcome as string) ?? "",
-        locked: (c.locked as boolean) ?? false,
+        start_date: (c.start_date as string) ?? "",
+        end_date: (c.end_date as string) ?? "",
+        is_current: (c.is_current as boolean) ?? false,
+        visibility: (c.visibility as boolean) ?? true,
       });
     },
     []
@@ -355,44 +306,32 @@ export default function BuilderPage() {
 
   const submitEditCard = useCallback(() => {
     if (!editingCardId) return;
-    const tags = editForm.tagsStr
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const toNull = (s: string) => (s.trim() ? s.trim() : null);
     patchCardMutation.mutate({
       cardId: editingCardId,
       body: {
-        title: editForm.title || null,
-        context: editForm.context || null,
-        tags,
-        time_range: editForm.time_range || null,
-        role_title: editForm.role_title || null,
-        company: editForm.company || null,
-        team: editForm.team || null,
-        location: editForm.location || null,
-        constraints: editForm.constraints || null,
-        decisions: editForm.decisions || null,
-        outcome: editForm.outcome || null,
-        locked: editForm.locked,
+        title: toNull(editForm.title),
+        summary: toNull(editForm.summary),
+        normalized_role: toNull(editForm.normalized_role),
+        company_name: toNull(editForm.company_name),
+        location: toNull(editForm.location),
+        start_date: toNull(editForm.start_date),
+        end_date: toNull(editForm.end_date),
+        is_current: editForm.is_current,
+        visibility: editForm.visibility,
       },
     });
-  }, [editingCardId, editForm]);
+  }, [editingCardId, editForm, patchCardMutation]);
 
   const handleDeleteCard = useCallback(() => {
     if (!editingCardId) return;
-    deleteCardMutation.mutate(editingCardId);
-  }, [editingCardId, deleteCardMutation]);
+    hideCardMutation.mutate(editingCardId);
+  }, [editingCardId, hideCardMutation]);
 
   const handleSaveCards = useCallback(async () => {
     setSaveError(null);
     setIsSavingAll(true);
     try {
-      if (draftSetId) {
-        await api<ExperienceCard[]>("/draft-sets/" + encodeURIComponent(draftSetId) + "/commit", {
-          method: "POST",
-          body: {},
-        });
-      }
       setSaveModalOpen(false);
       setDraftSetId(null);
       setCardFamilies(null);
@@ -407,7 +346,7 @@ export default function BuilderPage() {
   }, [draftSetId, queryClient, router]);
 
   const hasV1Families = (cardFamilies?.length ?? 0) > 0;
-  const hasCards = hasV1Families || savedCards.length > 0;
+  const hasCards = hasV1Families || (draftSetId == null && savedCards.length > 0);
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -427,7 +366,7 @@ export default function BuilderPage() {
 
   return (
     <motion.div
-      className="flex flex-col h-[calc(100vh-4rem)]"
+      className="flex flex-col h-[calc(100vh-6.5rem)] overflow-hidden"
       initial="hidden"
       animate="visible"
       variants={containerVariants}
@@ -599,7 +538,7 @@ export default function BuilderPage() {
                                       variant="ghost"
                                       className="text-destructive hover:text-destructive hover:bg-destructive/10"
                                       onClick={handleDeleteCard}
-                                      disabled={deleteCardMutation.isPending}
+                                      disabled={hideCardMutation.isPending}
                                     >
                                       Delete
                                     </Button>
@@ -641,48 +580,49 @@ export default function BuilderPage() {
                                   <div className="space-y-1.5">
                                     <Label className="text-xs">Summary</Label>
                                     <Textarea
-                                      value={editForm.context}
-                                      onChange={(e) => setEditForm((f) => ({ ...f, context: e.target.value }))}
-                                      placeholder="Context / summary"
+                                      value={editForm.summary}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, summary: e.target.value }))}
+                                      placeholder="A short summary"
                                       rows={3}
                                       className="text-sm resize-y"
                                     />
                                   </div>
-                                  <div className="space-y-1.5">
-                                    <Label className="text-xs">Tags (comma-separated)</Label>
-                                    <Input
-                                      value={editForm.tagsStr}
-                                      onChange={(e) => setEditForm((f) => ({ ...f, tagsStr: e.target.value }))}
-                                      placeholder="e.g. Python, API design"
-                                      className="text-sm"
-                                    />
-                                  </div>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div className="space-y-1.5">
-                                      <Label className="text-xs">Time range</Label>
+                                      <Label className="text-xs">Start date</Label>
                                       <Input
-                                        value={editForm.time_range}
-                                        onChange={(e) => setEditForm((f) => ({ ...f, time_range: e.target.value }))}
-                                        placeholder="e.g. 2020–2022"
+                                        type="date"
+                                        value={editForm.start_date}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, start_date: e.target.value }))}
                                         className="text-sm"
                                       />
                                     </div>
                                     <div className="space-y-1.5">
-                                      <Label className="text-xs">Role</Label>
+                                      <Label className="text-xs">End date</Label>
                                       <Input
-                                        value={editForm.role_title}
-                                        onChange={(e) => setEditForm((f) => ({ ...f, role_title: e.target.value }))}
-                                        placeholder="Role title"
+                                        type="date"
+                                        value={editForm.end_date}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, end_date: e.target.value }))}
                                         className="text-sm"
                                       />
                                     </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      id="edit-is-current-parent"
+                                      checked={editForm.is_current}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, is_current: e.target.checked }))}
+                                      className="rounded border-border"
+                                    />
+                                    <Label htmlFor="edit-is-current-parent" className="text-xs cursor-pointer">Current / ongoing</Label>
                                   </div>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div className="space-y-1.5">
                                       <Label className="text-xs">Company</Label>
                                       <Input
-                                        value={editForm.company}
-                                        onChange={(e) => setEditForm((f) => ({ ...f, company: e.target.value }))}
+                                        value={editForm.company_name}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, company_name: e.target.value }))}
                                         placeholder="Company"
                                         className="text-sm"
                                       />
@@ -698,53 +638,23 @@ export default function BuilderPage() {
                                     </div>
                                   </div>
                                   <div className="space-y-1.5">
-                                    <Label className="text-xs">Team (optional)</Label>
+                                    <Label className="text-xs">Role (normalized)</Label>
                                     <Input
-                                      value={editForm.team}
-                                      onChange={(e) => setEditForm((f) => ({ ...f, team: e.target.value }))}
-                                      placeholder="Team name"
+                                      value={editForm.normalized_role}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, normalized_role: e.target.value }))}
+                                      placeholder="e.g. Backend Engineer"
                                       className="text-sm"
-                                    />
-                                  </div>
-                                  <div className="space-y-1.5">
-                                    <Label className="text-xs">Constraints (optional)</Label>
-                                    <Textarea
-                                      value={editForm.constraints}
-                                      onChange={(e) => setEditForm((f) => ({ ...f, constraints: e.target.value }))}
-                                      placeholder="Constraints or context"
-                                      rows={2}
-                                      className="text-sm resize-y"
-                                    />
-                                  </div>
-                                  <div className="space-y-1.5">
-                                    <Label className="text-xs">Decisions (optional)</Label>
-                                    <Textarea
-                                      value={editForm.decisions}
-                                      onChange={(e) => setEditForm((f) => ({ ...f, decisions: e.target.value }))}
-                                      placeholder="Key decisions"
-                                      rows={2}
-                                      className="text-sm resize-y"
-                                    />
-                                  </div>
-                                  <div className="space-y-1.5">
-                                    <Label className="text-xs">Outcome (optional)</Label>
-                                    <Textarea
-                                      value={editForm.outcome}
-                                      onChange={(e) => setEditForm((f) => ({ ...f, outcome: e.target.value }))}
-                                      placeholder="Outcome or result"
-                                      rows={2}
-                                      className="text-sm resize-y"
                                     />
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <input
                                       type="checkbox"
-                                      id="edit-locked-parent"
-                                      checked={editForm.locked}
-                                      onChange={(e) => setEditForm((f) => ({ ...f, locked: e.target.checked }))}
+                                      id="edit-visible-parent"
+                                      checked={editForm.visibility}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, visibility: e.target.checked }))}
                                       className="rounded border-border"
                                     />
-                                    <Label htmlFor="edit-locked-parent" className="text-xs cursor-pointer">Locked</Label>
+                                    <Label htmlFor="edit-visible-parent" className="text-xs cursor-pointer">Visible</Label>
                                   </div>
                                 </div>
                               ) : (
@@ -778,7 +688,6 @@ export default function BuilderPage() {
                                   const childId = child?.id ?? "";
                                   const childRelation = child?.relation_type ?? "";
                                   const childTitle = (child as { title?: string })?.title ?? child?.headline ?? "Untitled";
-                                  const isEditingChild = editingCardId === childId;
                                   return (
                                     <li
                                       key={childId || childTitle}
@@ -794,161 +703,11 @@ export default function BuilderPage() {
                                                 {String(childRelation).replace(/_/g, " ")}
                                               </span>
                                             )}
-                                            {isEditingChild ? null : (
-                                              <p className="font-medium text-sm">{childTitle}</p>
-                                            )}
+                                            <p className="font-medium text-sm">{childTitle}</p>
                                           </div>
-                                          {isEditingChild ? (
-                                            <div className="flex items-center gap-1 flex-shrink-0">
-                                              <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                onClick={handleDeleteCard}
-                                                disabled={deleteCardMutation.isPending}
-                                              >
-                                                Delete
-                                              </Button>
-                                              <Button
-                                                size="sm"
-                                                variant="default"
-                                                onClick={submitEditCard}
-                                                disabled={patchCardMutation.isPending}
-                                              >
-                                                <Check className="h-4 w-4 mr-1" />
-                                                Done
-                                              </Button>
-                                            </div>
-                                          ) : (
-                                            <Button
-                                              size="sm"
-                                              variant="ghost"
-                                              className="flex-shrink-0 text-muted-foreground hover:text-foreground"
-                                              onClick={() => startEditingCard(child)}
-                                            >
-                                              Edit
-                                            </Button>
-                                          )}
+                                          {/* Child cards are persisted as ExperienceCardChild and are not patchable via `/experience-cards/:id`. */}
                                         </div>
-                                        {isEditingChild ? (
-                                          <div className="mt-3 space-y-3 pt-3 border-t border-border/40">
-                                            <div className="space-y-1.5">
-                                              <Label className="text-xs">Title</Label>
-                                              <Input
-                                                value={editForm.title}
-                                                onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
-                                                placeholder="Card title"
-                                                className="text-sm"
-                                              />
-                                            </div>
-                                            <div className="space-y-1.5">
-                                              <Label className="text-xs">Summary</Label>
-                                              <Textarea
-                                                value={editForm.context}
-                                                onChange={(e) => setEditForm((f) => ({ ...f, context: e.target.value }))}
-                                                placeholder="Context / summary"
-                                                rows={2}
-                                                className="text-sm resize-y"
-                                              />
-                                            </div>
-                                            <div className="space-y-1.5">
-                                              <Label className="text-xs">Tags (comma-separated)</Label>
-                                              <Input
-                                                value={editForm.tagsStr}
-                                                onChange={(e) => setEditForm((f) => ({ ...f, tagsStr: e.target.value }))}
-                                                placeholder="e.g. Python, API"
-                                                className="text-sm"
-                                              />
-                                            </div>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                              <div className="space-y-1.5">
-                                                <Label className="text-xs">Time range</Label>
-                                                <Input
-                                                  value={editForm.time_range}
-                                                  onChange={(e) => setEditForm((f) => ({ ...f, time_range: e.target.value }))}
-                                                  className="text-sm"
-                                                />
-                                              </div>
-                                              <div className="space-y-1.5">
-                                                <Label className="text-xs">Role</Label>
-                                                <Input
-                                                  value={editForm.role_title}
-                                                  onChange={(e) => setEditForm((f) => ({ ...f, role_title: e.target.value }))}
-                                                  className="text-sm"
-                                                />
-                                              </div>
-                                            </div>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                              <div className="space-y-1.5">
-                                                <Label className="text-xs">Company</Label>
-                                                <Input
-                                                  value={editForm.company}
-                                                  onChange={(e) => setEditForm((f) => ({ ...f, company: e.target.value }))}
-                                                  className="text-sm"
-                                                />
-                                              </div>
-                                              <div className="space-y-1.5">
-                                                <Label className="text-xs">Location</Label>
-                                                <Input
-                                                  value={editForm.location}
-                                                  onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
-                                                  className="text-sm"
-                                                />
-                                              </div>
-                                            </div>
-                                            <div className="space-y-1.5">
-                                              <Label className="text-xs">Team (optional)</Label>
-                                              <Input
-                                                value={editForm.team}
-                                                onChange={(e) => setEditForm((f) => ({ ...f, team: e.target.value }))}
-                                                placeholder="Team name"
-                                                className="text-sm"
-                                              />
-                                            </div>
-                                            <div className="space-y-1.5">
-                                              <Label className="text-xs">Constraints (optional)</Label>
-                                              <Textarea
-                                                value={editForm.constraints}
-                                                onChange={(e) => setEditForm((f) => ({ ...f, constraints: e.target.value }))}
-                                                placeholder="Constraints or context"
-                                                rows={2}
-                                                className="text-sm resize-y"
-                                              />
-                                            </div>
-                                            <div className="space-y-1.5">
-                                              <Label className="text-xs">Decisions (optional)</Label>
-                                              <Textarea
-                                                value={editForm.decisions}
-                                                onChange={(e) => setEditForm((f) => ({ ...f, decisions: e.target.value }))}
-                                                placeholder="Key decisions"
-                                                rows={2}
-                                                className="text-sm resize-y"
-                                              />
-                                            </div>
-                                            <div className="space-y-1.5">
-                                              <Label className="text-xs">Outcome (optional)</Label>
-                                              <Textarea
-                                                value={editForm.outcome}
-                                                onChange={(e) => setEditForm((f) => ({ ...f, outcome: e.target.value }))}
-                                                placeholder="Outcome or result"
-                                                rows={2}
-                                                className="text-sm resize-y"
-                                              />
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              <input
-                                                type="checkbox"
-                                                id="edit-locked-child"
-                                                checked={editForm.locked}
-                                                onChange={(e) => setEditForm((f) => ({ ...f, locked: e.target.checked }))}
-                                                className="rounded border-border"
-                                              />
-                                              <Label htmlFor="edit-locked-child" className="text-xs cursor-pointer">Locked</Label>
-                                            </div>
-                                          </div>
-                                        ) : (
-                                          <V1CardDetails card={child} compact />
-                                        )}
+                                        <V1CardDetails card={child} compact />
                                       </div>
                                     </li>
                                   );
@@ -961,7 +720,7 @@ export default function BuilderPage() {
                     );
                     }) : null}
                 </AnimatePresence>
-                {savedCards.length > 0 && (
+                {draftSetId == null && savedCards.length > 0 && (
                   <motion.div
                     className="mt-4 pt-4 border-t border-border/50"
                     initial={{ opacity: 0 }}
@@ -982,7 +741,7 @@ export default function BuilderPage() {
                           )}
                         >
                           <span className="text-sm truncate">
-                            {c.title || c.company || "Untitled"}
+                            {c.title || c.company_name || "Untitled"}
                           </span>
                           <div className="flex gap-1">
                             <Button

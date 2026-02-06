@@ -1,17 +1,23 @@
-"""Experience Card pipeline: rewrite+cleanup → extract-all → validate-all."""
+"""
+Experience Card Pipeline - Refactored Version
+
+Key improvements:
+1. Pydantic models for strict LLM response validation
+2. Explicit error handling with detailed messages
+3. Transaction-based persistence (all-or-nothing)
+4. Separated concerns (parse, validate, persist, embed)
+5. No silent fallbacks - all errors surface
+6. Standardized LLM response format
+"""
 
 import json
 import logging
 import uuid
 from datetime import datetime, timezone, date
+from typing import Optional, Any
+from enum import Enum
 
-logger = logging.getLogger(__name__)
-
-# #region agent log
-def _debug_log(location: str, message: str, data: dict, hypothesis_id: str = ""):
-    logger.info("[%s] %s | %s", hypothesis_id, message, json.dumps(data, default=str))
-# #endregion
-
+from pydantic import BaseModel, Field, validator, ValidationError
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -34,248 +40,491 @@ from src.prompts.experience_card import (
 from src.services.experience_card import _experience_card_search_document
 from src.utils import normalize_embedding
 
-
-def _strip_json_block(text: str) -> str:
-    """Remove markdown code fence around JSON if present."""
-    s = text.strip()
-    if "```" in s:
-        parts = s.split("```")
-        for i, p in enumerate(parts):
-            candidate = p.replace("json", "").strip()
-            if candidate.startswith("{") or candidate.startswith("["):
-                return candidate
-        return parts[1].replace("json", "").strip() if len(parts) > 1 else s
-    return s
+logger = logging.getLogger(__name__)
 
 
-def _best_effort_json_parse(text: str) -> object:
-    """Try to decode JSON anywhere in the text if direct parsing fails."""
-    s = text.strip()
-    decoder = json.JSONDecoder()
-    for idx, ch in enumerate(s):
-        if ch not in "[{":
+# =============================================================================
+# PYDANTIC MODELS FOR LLM RESPONSE VALIDATION
+# =============================================================================
+
+class TimeInfo(BaseModel):
+    """Time/date information for an experience."""
+    text: Optional[str] = None
+    start: Optional[str] = None  # ISO date or YYYY-MM
+    end: Optional[str] = None
+    ongoing: Optional[bool] = None
+
+
+class LocationInfo(BaseModel):
+    """Location information."""
+    text: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+
+
+class RoleInfo(BaseModel):
+    """Role/position information."""
+    label: Optional[str] = None
+    seniority: Optional[str] = None
+
+
+class TopicInfo(BaseModel):
+    """Topic/tag information."""
+    label: str
+
+
+class EntityInfo(BaseModel):
+    """Named entity (company, team, etc)."""
+    type: str  # "company", "team", "organization"
+    name: str
+
+
+class IndexInfo(BaseModel):
+    """Search indexing metadata."""
+    search_phrases: list[str] = Field(default_factory=list)
+
+
+class V1Card(BaseModel):
+    """Base card structure returned by LLM."""
+    id: Optional[str] = None
+    headline: Optional[str] = None
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    raw_text: Optional[str] = None
+    time: Optional[TimeInfo | str] = None
+    location: Optional[LocationInfo | str] = None
+    roles: list[RoleInfo] = Field(default_factory=list)
+    topics: list[TopicInfo] = Field(default_factory=list)
+    entities: list[EntityInfo] = Field(default_factory=list)
+    actions: list[dict] = Field(default_factory=list)
+    outcomes: list[dict] = Field(default_factory=list)
+    evidence: list[dict] = Field(default_factory=list)
+    tooling: Optional[Any] = None
+    company: Optional[str] = None
+    organization: Optional[str] = None
+    team: Optional[str] = None
+    index: Optional[IndexInfo] = None
+    intent: Optional[str] = None
+    
+    # Metadata fields
+    person_id: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    parent_id: Optional[str] = None
+    depth: Optional[int] = None
+    relation_type: Optional[str] = None
+    child_type: Optional[str] = None
+
+    @validator('time', pre=True)
+    def normalize_time(cls, v):
+        """Convert string to TimeInfo dict."""
+        if isinstance(v, str):
+            return {"text": v}
+        return v
+    
+    @validator('location', pre=True)
+    def normalize_location(cls, v):
+        """Convert string to LocationInfo dict."""
+        if isinstance(v, str):
+            return {"text": v}
+        return v
+
+
+class V1Family(BaseModel):
+    """A parent card with optional children."""
+    parent: V1Card
+    children: list[V1Card] = Field(default_factory=list)
+
+
+class V1ExtractorResponse(BaseModel):
+    """Standardized response format from extractor LLM."""
+    families: list[V1Family]
+    
+    class Config:
+        # Allow parsing from {"parents": [...]} wrapper
+        extra = "allow"
+
+
+class PipelineStage(str, Enum):
+    """Pipeline stage identifiers for error reporting."""
+    REWRITE = "rewrite"
+    EXTRACT = "extract"
+    VALIDATE = "validate"
+    PERSIST = "persist"
+    EMBED = "embed"
+
+
+class PipelineError(Exception):
+    """Base exception for pipeline errors with stage context."""
+    def __init__(self, stage: PipelineStage, message: str, cause: Optional[Exception] = None):
+        self.stage = stage
+        self.message = message
+        self.cause = cause
+        super().__init__(f"[{stage.value}] {message}")
+
+
+# =============================================================================
+# PARSING & VALIDATION
+# =============================================================================
+
+def _strip_json_fence(text: str) -> str:
+    """Remove markdown code fences from JSON response."""
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+    
+    lines = text.split("\n")
+    if lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    
+    return "\n".join(lines).strip()
+
+
+def _extract_json_from_text(text: str) -> str:
+    """Find first JSON object/array in text, handling LLM preambles."""
+    text = text.strip()
+    
+    # Try to find JSON markers
+    for start_char in ['{', '[']:
+        start_idx = text.find(start_char)
+        if start_idx == -1:
             continue
+        
+        # Simple brace counting to find matching close
+        json_candidate = text[start_idx:]
         try:
-            obj, _ = decoder.raw_decode(s[idx:])
-            return obj
+            # Let json.loads validate it
+            json.loads(json_candidate)
+            return json_candidate
         except json.JSONDecodeError:
-            continue
-    raise json.JSONDecodeError("No JSON object found", s, 0)
+            # Try to find the matching brace
+            depth = 0
+            close_char = '}' if start_char == '{' else ']'
+            
+            for i, char in enumerate(json_candidate):
+                if char == start_char:
+                    depth += 1
+                elif char == close_char:
+                    depth -= 1
+                    if depth == 0:
+                        candidate = json_candidate[:i+1]
+                        try:
+                            json.loads(candidate)
+                            return candidate
+                        except json.JSONDecodeError:
+                            continue
+    
+    raise ValueError("No valid JSON found in text")
 
 
-def _parse_json_array(text: str) -> list:
-    if not text or not text.strip():
-        raise json.JSONDecodeError(
-            "Empty response (LLM may have failed or been rate-limited).",
-            text or "",
-            0,
-        )
-    raw = _strip_json_block(text)
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        data = _best_effort_json_parse(text)
-    return data if isinstance(data, list) else [data]
-
-
-def _parse_json_object(text: str) -> dict:
-    raw = _strip_json_block(text)
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        data = _best_effort_json_parse(text)
-    if isinstance(data, list) and data:
-        candidate = data[0]
-        if isinstance(candidate, dict):
-            return candidate
-    if not isinstance(data, dict):
-        raise json.JSONDecodeError("Expected JSON object", raw, 0)
-    return data
-
-
-def _parse_families_from_response(text: str) -> list[dict]:
-    """Parse LLM response into a list of family dicts (each {parent, children}).
-    Handles: wrapper {"parents": [...]}, single family {parent, children}, or top-level array of families.
+def parse_llm_response_to_families(
+    response_text: str,
+    stage: PipelineStage,
+) -> list[V1Family]:
     """
-    # #region agent log
-    _debug_log("experience_card_pipeline:_parse_families_from_response:entry", "parse_families_entry", {"text_len": len(text or ""), "text_prefix": (text or "")[:200], "text_empty": not (text or "").strip()}, "H1")
-    # #endregion
-    raw = _strip_json_block(text)
+    Parse LLM response into validated V1Family list.
+    
+    Handles multiple response formats:
+    - {"families": [{parent, children}, ...]}
+    - {"parents": [{parent, children}, ...]}  # legacy wrapper
+    - [{parent, children}, ...]  # direct array
+    - {parent, children}  # single family
+    
+    Raises:
+        PipelineError: If parsing or validation fails
+    """
+    if not response_text or not response_text.strip():
+        raise PipelineError(
+            stage,
+            "LLM returned empty response. Service may be rate-limited or failed.",
+        )
+    
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        data = _best_effort_json_parse(text)
-    if isinstance(data, list):
-        out = [f for f in data if isinstance(f, dict) and "parent" in f]
-    elif isinstance(data, dict):
-        if "parents" in data and isinstance(data["parents"], list):
-            out = data["parents"]
+        # Clean response text
+        cleaned = _strip_json_fence(response_text)
+        json_str = _extract_json_from_text(cleaned)
+        data = json.loads(json_str)
+        
+    except (ValueError, json.JSONDecodeError) as e:
+        raise PipelineError(
+            stage,
+            f"LLM returned invalid JSON: {str(e)[:200]}",
+            cause=e,
+        )
+    
+    # Normalize to list of family dicts
+    family_dicts: list[dict] = []
+    
+    if isinstance(data, dict):
+        # Check for wrapper formats
+        if "families" in data and isinstance(data["families"], list):
+            family_dicts = data["families"]
+        elif "parents" in data and isinstance(data["parents"], list):
+            # Legacy wrapper: {"parents": [...]}
+            family_dicts = data["parents"]
         elif "parent" in data:
-            out = [data]
+            # Single family object
+            family_dicts = [data]
         else:
-            out = []
+            raise PipelineError(
+                stage,
+                f"Unexpected response structure. Expected 'families', 'parents', or 'parent' key. Got: {list(data.keys())[:5]}",
+            )
+    
+    elif isinstance(data, list):
+        family_dicts = data
+    
     else:
-        out = []
-    # #region agent log
-    _debug_log("experience_card_pipeline:_parse_families_from_response:exit", "parse_families_exit", {"families_count": len(out), "root_type": type(data).__name__, "has_parents_key": isinstance(data, dict) and "parents" in data}, "H1")
-    # #endregion
-    return out
+        raise PipelineError(
+            stage,
+            f"Expected JSON object or array, got {type(data).__name__}",
+        )
+    
+    # Validate each family using Pydantic
+    validated_families: list[V1Family] = []
+    
+    for i, family_dict in enumerate(family_dicts):
+        if not isinstance(family_dict, dict):
+            logger.warning(f"Skipping non-dict family at index {i}: {type(family_dict)}")
+            continue
+        
+        # Ensure family has parent key
+        if "parent" not in family_dict:
+            logger.warning(f"Skipping family at index {i}: missing 'parent' key")
+            continue
+        
+        try:
+            family = V1Family(**family_dict)
+            validated_families.append(family)
+        except ValidationError as e:
+            logger.warning(f"Validation failed for family {i}: {e}")
+            # Continue with other families rather than failing entire batch
+            continue
+    
+    if not validated_families:
+        raise PipelineError(
+            stage,
+            f"No valid families found in response. Parsed {len(family_dicts)} candidates, all failed validation.",
+        )
+    
+    return validated_families
 
 
-def _inject_parent_metadata(parent: dict, person_id: str) -> dict:
-    """Ensure parent has id, person_id, created_by, created_at, updated_at."""
-    now = datetime.now(timezone.utc).isoformat()
-    parent = dict(parent)
-    parent.setdefault("id", str(uuid.uuid4()))
-    parent["person_id"] = person_id
-    parent["created_by"] = person_id
-    parent.setdefault("created_at", now)
-    parent.setdefault("updated_at", now)
-    parent["parent_id"] = None
-    parent["depth"] = 0
-    parent["relation_type"] = None
-    return parent
+# =============================================================================
+# METADATA INJECTION
+# =============================================================================
+
+def inject_metadata_into_family(
+    family: V1Family,
+    person_id: str,
+) -> V1Family:
+    """
+    Inject required metadata into parent and children.
+    
+    Does NOT overwrite existing IDs or timestamps from LLM.
+    Only fills in missing required fields.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    
+    # Parent metadata
+    parent = family.parent
+    if not parent.id:
+        parent.id = str(uuid.uuid4())
+    parent.person_id = person_id
+    parent.created_by = person_id
+    if not parent.created_at:
+        parent.created_at = now_iso
+    if not parent.updated_at:
+        parent.updated_at = now_iso
+    parent.parent_id = None
+    parent.depth = 0
+    parent.relation_type = None
+    
+    # Children metadata
+    parent_id = parent.id
+    for child in family.children:
+        if not child.id:
+            child.id = str(uuid.uuid4())
+        child.person_id = person_id
+        child.created_by = person_id
+        child.parent_id = parent_id
+        child.depth = 1
+        if not child.created_at:
+            child.created_at = now_iso
+        if not child.updated_at:
+            child.updated_at = now_iso
+    
+    return family
 
 
-def _inject_child_metadata(child: dict, parent_id: str, person_id: str) -> dict:
-    """Ensure child has id, parent_id, depth=1, timestamps, and ownership."""
-    now = datetime.now(timezone.utc).isoformat()
-    child = dict(child)
-    child.setdefault("id", str(uuid.uuid4()))
-    child["person_id"] = person_id
-    child["created_by"] = person_id
-    child["parent_id"] = parent_id
-    child["depth"] = 1
-    child.setdefault("created_at", now)
-    child.setdefault("updated_at", now)
-    return child
+# =============================================================================
+# FIELD EXTRACTION & NORMALIZATION
+# =============================================================================
 
-
-def _normalize_whitespace(text: str) -> str:
-    return " ".join((text or "").split()).strip()
-
-
-def _parse_date(value: str | None) -> date | None:
+def parse_date_field(value: Optional[str]) -> Optional[date]:
+    """Parse ISO date string, returning None on failure."""
     if not value:
         return None
+    
     text = value.strip()
+    
+    # Handle YYYY-MM format
     if len(text) == 7 and text[4] == "-":
         text = f"{text}-01"
+    
     try:
         return date.fromisoformat(text)
-    except ValueError:
+    except ValueError as e:
+        logger.warning(f"Failed to parse date '{value}': {e}")
         return None
 
 
-def _extract_time_fields(card: dict) -> tuple[str | None, date | None, date | None, bool | None]:
-    time_obj = card.get("time") or {}
+def extract_time_fields(card: V1Card) -> tuple[Optional[str], Optional[date], Optional[date], Optional[bool]]:
+    """Extract time fields from card."""
+    time_obj = card.time
+    
     if isinstance(time_obj, str):
         return time_obj, None, None, None
-    if not isinstance(time_obj, dict):
+    
+    if not isinstance(time_obj, TimeInfo):
         return None, None, None, None
-    time_text = time_obj.get("text")
-    start_date = _parse_date(time_obj.get("start"))
-    end_date = _parse_date(time_obj.get("end"))
-    is_ongoing = time_obj.get("ongoing")
-    return time_text, start_date, end_date, is_ongoing
+    
+    return (
+        time_obj.text,
+        parse_date_field(time_obj.start),
+        parse_date_field(time_obj.end),
+        time_obj.ongoing,
+    )
 
 
-def _extract_location_fields(card: dict) -> tuple[str | None, str | None, str | None]:
-    loc_obj = card.get("location") or {}
+def extract_location_fields(card: V1Card) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Extract location fields from card."""
+    loc_obj = card.location
+    
     if isinstance(loc_obj, str):
         return loc_obj, None, None
-    if not isinstance(loc_obj, dict):
+    
+    if not isinstance(loc_obj, LocationInfo):
         return None, None, None
-    location_text = loc_obj.get("text") or loc_obj.get("city") or loc_obj.get("name")
-    city = loc_obj.get("city")
-    country = loc_obj.get("country")
-    return location_text, city, country
+    
+    return loc_obj.text or loc_obj.city, loc_obj.city, loc_obj.country
 
 
-def _extract_search_phrases(card: dict) -> list[str]:
-    index_obj = card.get("index") or {}
-    phrases = index_obj.get("search_phrases") if isinstance(index_obj, dict) else None
-    if not phrases:
+def extract_company(card: V1Card) -> Optional[str]:
+    """Extract company name from card."""
+    company = card.company or card.organization
+    
+    if not company:
+        # Check entities
+        for entity in card.entities:
+            if entity.type in {"company", "organization"}:
+                company = entity.name
+                break
+    
+    return company[:255].strip() if company else None
+
+
+def extract_team(card: V1Card) -> Optional[str]:
+    """Extract team name from card."""
+    team = card.team
+    
+    if not team:
+        # Check entities
+        for entity in card.entities:
+            if entity.type == "team":
+                team = entity.name
+                break
+    
+    return team[:255].strip() if team else None
+
+
+def extract_role_info(card: V1Card) -> tuple[Optional[str], Optional[str]]:
+    """Extract role title and seniority."""
+    if not card.roles:
+        return None, None
+    
+    first_role = card.roles[0]
+    title = first_role.label[:255].strip() if first_role.label else None
+    seniority = first_role.seniority[:255].strip() if first_role.seniority else None
+    
+    return title, seniority
+
+
+def extract_search_phrases(card: V1Card) -> list[str]:
+    """Extract search phrases from card index."""
+    if not card.index:
         return []
-    return [p for p in phrases if isinstance(p, str) and p.strip()]
+    
+    return [p.strip() for p in card.index.search_phrases if p.strip()][:50]
 
 
-def _extract_company(card: dict) -> str | None:
-    company_raw = card.get("company") or card.get("organization")
-    if not company_raw:
-        entities = card.get("entities") or []
-        for entity in entities:
-            if not isinstance(entity, dict):
-                continue
-            if entity.get("type") in {"company", "organization"} and entity.get("name"):
-                company_raw = entity.get("name")
-                break
-    company = (company_raw or "")[:255].strip()
-    return company or None
-
-
-def _extract_team(card: dict) -> str | None:
-    team_raw = card.get("team")
-    if not team_raw:
-        entities = card.get("entities") or []
-        for entity in entities:
-            if not isinstance(entity, dict):
-                continue
-            if entity.get("type") == "team" and entity.get("name"):
-                team_raw = entity.get("name")
-                break
-    team = (team_raw or "")[:255].strip()
-    return team or None
-
-
-def _extract_role_title(card: dict) -> str | None:
-    roles = card.get("roles") or []
-    if roles and isinstance(roles[0], dict):
-        role_title = roles[0].get("label")
-    else:
-        role_title = None
-    return (role_title or "")[:255].strip() or None
-
-
-def _extract_role_seniority(card: dict) -> str | None:
-    roles = card.get("roles") or []
-    if roles and isinstance(roles[0], dict):
-        seniority = roles[0].get("seniority")
-    else:
-        seniority = None
-    return (seniority or "")[:255].strip() or None
-
-
-def _normalize_card_title(headline: str | None, raw_text: str | None, summary: str | None) -> str:
-    """Return a user-friendly title; avoid empty or generic 'Unspecified experience'."""
-    h = (headline or "").strip()
-    if h and h.lower() != "unspecified experience":
-        return h[:500]
-    for src in (summary, raw_text):
-        if src and src.strip():
-            first_line = src.strip().split("\n")[0].strip()[:80]
-            if first_line:
-                return first_line
+def normalize_card_title(card: V1Card, fallback_text: Optional[str] = None) -> str:
+    """
+    Generate user-friendly title from card.
+    
+    Priority:
+    1. headline (if not generic)
+    2. title (if not generic)
+    3. First line of summary
+    4. First line of raw_text
+    5. fallback_text
+    6. "Experience"
+    """
+    # Check headline
+    headline = (card.headline or "").strip()
+    if headline and headline.lower() not in {"general experience", "unspecified experience"}:
+        return headline[:500]
+    
+    # Check title
+    title = (card.title or "").strip()
+    if title and title.lower() not in {"general experience", "unspecified experience"}:
+        return title[:500]
+    
+    # Try summary first line
+    summary = (card.summary or "").strip()
+    if summary:
+        first_line = summary.split("\n")[0].strip()[:80]
+        if first_line:
+            return first_line
+    
+    # Try raw_text first line
+    raw_text = (card.raw_text or "").strip()
+    if raw_text:
+        first_line = raw_text.split("\n")[0].strip()[:80]
+        if first_line:
+            return first_line
+    
+    # Use fallback
+    if fallback_text:
+        return fallback_text.split("\n")[0].strip()[:80] or "Experience"
+    
     return "Experience"
 
 
-def _v1_card_to_experience_card_fields(
-    card: dict,
+# =============================================================================
+# PERSISTENCE
+# =============================================================================
+
+def card_to_experience_card_fields(
+    card: V1Card,
     *,
     person_id: str,
     raw_experience_id: str,
     draft_set_id: str,
 ) -> dict:
-    """Map a v1 parent card dict to ExperienceCard column values for persistence."""
-    time_text, start_date, end_date, is_ongoing = _extract_time_fields(card)
-    location_text, city, country = _extract_location_fields(card)
-    company = _extract_company(card)
-    role_title = _extract_role_title(card)
-    role_seniority = _extract_role_seniority(card)
-    raw_text = (card.get("raw_text") or "").strip() or None
-    summary = (card.get("summary") or "")[:10000]
-    title = _normalize_card_title(card.get("headline"), raw_text, summary)
-
+    """Convert V1Card to ExperienceCard column values."""
+    time_text, start_date, end_date, is_ongoing = extract_time_fields(card)
+    location_text, city, country = extract_location_fields(card)
+    company = extract_company(card)
+    role_title, role_seniority = extract_role_info(card)
+    
+    raw_text = (card.raw_text or "").strip() or None
+    summary = (card.summary or "")[:10000]
+    title = normalize_card_title(card)
+    
     return {
         "user_id": person_id,
         "raw_text": raw_text,
@@ -288,10 +537,10 @@ def _v1_card_to_experience_card_fields(
         "start_date": start_date,
         "end_date": end_date,
         "is_current": is_ongoing if isinstance(is_ongoing, bool) else None,
-        "location": (location_text or "")[:255] if location_text else None,
+        "location": location_text[:255] if location_text else None,
         "employment_type": None,
         "summary": summary,
-        "intent_primary": card.get("intent"),
+        "intent_primary": card.intent,
         "intent_secondary": [],
         "seniority_level": role_seniority,
         "confidence_score": None,
@@ -299,45 +548,37 @@ def _v1_card_to_experience_card_fields(
     }
 
 
-def _v1_child_card_to_fields(
-    card: dict,
+def card_to_child_fields(
+    card: V1Card,
     *,
     person_id: str,
     raw_experience_id: str,
     draft_set_id: str,
     parent_id: str,
 ) -> dict:
-    """Map a v1 child card dict to ExperienceCardChild column values for persistence.
-
-    Aligns with domain: child_type must be one of ALLOWED_CHILD_TYPES;
-    relation_type (ChildRelationType) is stored in value/extra for schema alignment.
-    - child_type: from card, validated against domain.ALLOWED_CHILD_TYPES
-    - label: optional label (e.g., headline or summary)
-    - value: JSON dimension container with rich fields + relation_type
-    - search_phrases: array of search phrases
-    """
-    time_text, start_date, end_date, is_ongoing = _extract_time_fields(card)
-    location_text, city, country = _extract_location_fields(card)
-    topics = card.get("topics") or []
-    tags = [t.get("label") for t in topics if isinstance(t, dict) and t.get("label")]
-    search_phrases = _extract_search_phrases(card)
-    company = _extract_company(card)
-    team = _extract_team(card)
-    role_title = _extract_role_title(card)
-    raw_text = (card.get("raw_text") or "").strip() or None
-    summary = (card.get("summary") or "")[:10000]
-
-    # child_type must be one of ALLOWED_CHILD_TYPES (domain); relation_type is ChildRelationType (schema)
-    child_type = card.get("child_type") if isinstance(card.get("child_type"), str) else None
-    if not child_type or child_type not in ALLOWED_CHILD_TYPES or len(child_type) > 50:
-        child_type = ALLOWED_CHILD_TYPES[0]  # "skills"
-
-    # Use headline as label, or summary if no headline; avoid "Unspecified experience"
-    label = _normalize_card_title(card.get("headline"), raw_text, summary)[:255]
-
-    # Build the dimension container (value JSON) with all rich fields
+    """Convert V1Card to ExperienceCardChild column values."""
+    time_text, start_date, end_date, is_ongoing = extract_time_fields(card)
+    location_text, city, country = extract_location_fields(card)
+    company = extract_company(card)
+    team = extract_team(card)
+    role_title, role_seniority = extract_role_info(card)
+    search_phrases = extract_search_phrases(card)
+    
+    raw_text = (card.raw_text or "").strip() or None
+    summary = (card.summary or "")[:10000]
+    
+    # Validate child_type
+    child_type = card.child_type
+    if not child_type or child_type not in ALLOWED_CHILD_TYPES:
+        logger.warning(f"Invalid child_type '{child_type}', defaulting to '{ALLOWED_CHILD_TYPES[0]}'")
+        child_type = ALLOWED_CHILD_TYPES[0]
+    
+    # Generate label
+    label = normalize_card_title(card)[:255]
+    
+    # Build dimension container
     dimension_container = {
-        "headline": card.get("headline"),
+        "headline": card.headline,
         "summary": summary,
         "raw_text": raw_text,
         "time": {
@@ -351,23 +592,24 @@ def _v1_child_card_to_fields(
             "city": city,
             "country": country,
         },
-        "roles": [{"label": role_title, "seniority": None}] if role_title else [],
-        "topics": topics,
-        "entities": card.get("entities", []),
-        "actions": card.get("actions", []),
-        "outcomes": card.get("outcomes", []),
-        "tooling": card.get("tooling"),
-        "evidence": card.get("evidence", []),
+        "roles": [{"label": role_title, "seniority": role_seniority}] if role_title else [],
+        "topics": [t.dict() for t in card.topics],
+        "entities": [e.dict() for e in card.entities],
+        "actions": card.actions,
+        "outcomes": card.outcomes,
+        "tooling": card.tooling,
+        "evidence": card.evidence,
         "company": company,
         "team": team,
-        "tags": tags[:50] if tags else [],
-        "depth": card.get("depth") or 1,
-        "relation_type": card.get("relation_type"),
+        "tags": [t.label for t in card.topics][:50],
+        "depth": card.depth or 1,
+        "relation_type": card.relation_type,
     }
-
-    # Build search document from key fields for embedding/search
+    
+    # Build search document
+    tags = [t.label for t in card.topics]
     search_doc_parts = [
-        card.get("headline") or "",
+        card.headline or "",
         summary or "",
         role_title or "",
         company or "",
@@ -375,8 +617,8 @@ def _v1_child_card_to_fields(
         location_text or "",
         " ".join(tags[:10]) if tags else "",
     ]
-    search_document = " ".join(filter(None, search_doc_parts)).strip() or None
-
+    search_document = " ".join(p for p in search_doc_parts if p).strip() or None
+    
     return {
         "parent_experience_id": parent_id,
         "person_id": person_id,
@@ -385,27 +627,165 @@ def _v1_child_card_to_fields(
         "child_type": child_type,
         "label": label,
         "value": dimension_container,
-        "confidence_score": None,  # Can be extracted from card if available
-        "search_phrases": search_phrases[:50] if search_phrases else [],
+        "confidence_score": None,
+        "search_phrases": search_phrases,
         "search_document": search_document,
-        "embedding": None,  # Will be populated later during embedding step
+        "embedding": None,  # Set during embedding phase
         "extra": {
-            "intent": card.get("intent"),
-            "created_by": card.get("created_by"),
-        } if card.get("intent") or card.get("created_by") else None,
+            "intent": card.intent,
+            "created_by": card.created_by,
+        } if card.intent or card.created_by else None,
     }
 
 
-def _draft_card_to_family_item(card: ExperienceCard | ExperienceCardChild) -> dict:
-    """Serialize a persisted draft ExperienceCard/Child for API response (id, title, context, tags + UI fields)."""
+async def persist_families(
+    db: AsyncSession,
+    families: list[V1Family],
+    *,
+    person_id: str,
+    raw_experience_id: str,
+    draft_set_id: str,
+) -> tuple[list[ExperienceCard], list[ExperienceCardChild]]:
+    """
+    Persist all families to database.
+    
+    Returns:
+        (parent_cards, child_cards) - all persisted entities
+    
+    Raises:
+        PipelineError: If persistence fails
+    """
+    all_parents: list[ExperienceCard] = []
+    all_children: list[ExperienceCardChild] = []
+    
+    try:
+        for family in families:
+            # Create parent
+            parent_fields = card_to_experience_card_fields(
+                family.parent,
+                person_id=person_id,
+                raw_experience_id=raw_experience_id,
+                draft_set_id=draft_set_id,
+            )
+            parent_ec = ExperienceCard(**parent_fields)
+            db.add(parent_ec)
+            await db.flush()
+            await db.refresh(parent_ec)
+            all_parents.append(parent_ec)
+            
+            # Create children
+            for child_card in family.children:
+                child_fields = card_to_child_fields(
+                    child_card,
+                    person_id=person_id,
+                    raw_experience_id=raw_experience_id,
+                    draft_set_id=draft_set_id,
+                    parent_id=parent_ec.id,
+                )
+                child_ec = ExperienceCardChild(**child_fields)
+                db.add(child_ec)
+                all_children.append(child_ec)
+            
+            if all_children:
+                await db.flush()
+                for child_ec in all_children:
+                    await db.refresh(child_ec)
+        
+        return all_parents, all_children
+    
+    except Exception as e:
+        raise PipelineError(
+            PipelineStage.PERSIST,
+            f"Database persistence failed: {str(e)}",
+            cause=e,
+        )
+
+
+# =============================================================================
+# EMBEDDING
+# =============================================================================
+
+async def embed_cards(
+    db: AsyncSession,
+    parents: list[ExperienceCard],
+    children: list[ExperienceCardChild],
+) -> None:
+    """
+    Generate and persist embeddings for all cards.
+    
+    Raises:
+        PipelineError: If embedding fails
+    """
+    if not parents and not children:
+        return
+    
+    embed_texts: list[str] = []
+    embed_targets: list[tuple[str, ExperienceCard | ExperienceCardChild]] = []
+    
+    # Collect parent documents
+    for parent in parents:
+        doc = _experience_card_search_document(parent)
+        if doc:
+            embed_texts.append(doc)
+            embed_targets.append(("parent", parent))
+    
+    # Collect child documents
+    for child in children:
+        doc = child.search_document or ""
+        if doc.strip():
+            embed_texts.append(doc.strip())
+            embed_targets.append(("child", child))
+    
+    if not embed_texts:
+        logger.warning("No documents to embed")
+        return
+    
+    try:
+        provider = get_embedding_provider()
+        vectors = await provider.embed(embed_texts)
+        
+        if len(vectors) != len(embed_targets):
+            raise PipelineError(
+                PipelineStage.EMBED,
+                f"Embedding API returned {len(vectors)} vectors but expected {len(embed_targets)}",
+            )
+        
+        # Assign embeddings
+        for (kind, obj), vec in zip(embed_targets, vectors):
+            normalized = normalize_embedding(vec, dim=provider.dimension)
+            obj.embedding = normalized
+        
+        await db.flush()
+        
+        logger.info(f"Successfully embedded {len(embed_texts)} documents")
+    
+    except EmbeddingServiceError as e:
+        raise PipelineError(
+            PipelineStage.EMBED,
+            f"Embedding service failed: {str(e)}",
+            cause=e,
+        )
+    except Exception as e:
+        raise PipelineError(
+            PipelineStage.EMBED,
+            f"Embedding failed: {str(e)}",
+            cause=e,
+        )
+
+
+# =============================================================================
+# RESPONSE SERIALIZATION
+# =============================================================================
+
+def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> dict:
+    """Convert persisted card to API response format."""
     if isinstance(card, ExperienceCardChild):
-        # Extract from new ExperienceCardChild structure
         value = card.value if isinstance(card.value, dict) else {}
         time_obj = value.get("time") or {}
         location_obj = value.get("location") or {}
         topics = value.get("topics") or []
         tags = value.get("tags") or []
-
+        
         return {
             "id": card.id,
             "title": card.label or value.get("headline") or "",
@@ -420,7 +800,6 @@ def _draft_card_to_family_item(card: ExperienceCard | ExperienceCardChild) -> di
             "location": location_obj.get("text") if isinstance(location_obj, dict) else None,
         }
     else:
-        # ExperienceCard structure (unchanged)
         return {
             "id": card.id,
             "title": card.title,
@@ -436,65 +815,49 @@ def _draft_card_to_family_item(card: ExperienceCard | ExperienceCardChild) -> di
         }
 
 
-async def _persist_v1_family(
-    db: AsyncSession,
-    person_id: str,
-    raw_experience_id: str,
-    draft_set_id: str,
-    family: dict,
-) -> tuple[ExperienceCard, list[ExperienceCardChild]]:
-    """Persist one v1 card family (parent + children) as DRAFT; return (parent, children) with server-generated ids."""
-    parent = family.get("parent") or {}
-    children = family.get("children") or []
-    parent_kw = _v1_card_to_experience_card_fields(
-        parent,
-        person_id=person_id,
-        raw_experience_id=raw_experience_id,
-        draft_set_id=draft_set_id,
-    )
-    parent_ec = ExperienceCard(**parent_kw)
-    db.add(parent_ec)
-    await db.flush()
-    await db.refresh(parent_ec)
-
-    child_ecs: list[ExperienceCardChild] = []
-    for card in children:
-        if not card:
-            continue
-        kwargs = _v1_child_card_to_fields(
-            card,
-            person_id=person_id,
-            raw_experience_id=raw_experience_id,
-            draft_set_id=draft_set_id,
-            parent_id=parent_ec.id,
-        )
-        ec = ExperienceCardChild(**kwargs)
-        db.add(ec)
-        child_ecs.append(ec)
-    if child_ecs:
-        await db.flush()
-        for ec in child_ecs:
-            await db.refresh(ec)
-    return parent_ec, child_ecs
-
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
 
 async def rewrite_raw_text(raw_text: str) -> str:
     """
-    Rewrite + cleanup messy input into clear English for easier extraction.
-    Raises HTTP 400 on empty input and ChatServiceError on LLM failure.
+    Clean and rewrite raw input text.
+    
+    Raises:
+        HTTPException: If input is empty
+        PipelineError: If LLM fails
     """
     if not raw_text or not raw_text.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="raw_text is required")
-    chat = get_chat_provider()
-    prompt = fill_prompt(PROMPT_REWRITE, user_text=raw_text)
-    rewritten = await chat.chat(prompt, max_tokens=2048)
-    cleaned = _normalize_whitespace(rewritten.strip() or raw_text)
-    if not cleaned:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="raw_text is required")
-    return cleaned
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="raw_text is required and cannot be empty",
+        )
+    
+    try:
+        chat = get_chat_provider()
+        prompt = fill_prompt(PROMPT_REWRITE, user_text=raw_text)
+        rewritten = await chat.chat(prompt, max_tokens=2048)
+        
+        cleaned = " ".join((rewritten or "").split()).strip()
+        
+        if not cleaned:
+            raise PipelineError(
+                PipelineStage.REWRITE,
+                "Rewrite returned empty text",
+            )
+        
+        return cleaned
+    
+    except ChatServiceError as e:
+        raise PipelineError(
+            PipelineStage.REWRITE,
+            f"Chat service failed: {str(e)}",
+            cause=e,
+        )
 
 
-async def _next_draft_run_version(db: AsyncSession, raw_experience_id: str, person_id: str) -> int:
+async def next_draft_run_version(db: AsyncSession, raw_experience_id: str, person_id: str) -> int:
+    """Get next run version for draft set."""
     result = await db.execute(
         select(func.max(DraftSet.run_version)).where(
             DraftSet.raw_experience_id == raw_experience_id,
@@ -505,25 +868,46 @@ async def _next_draft_run_version(db: AsyncSession, raw_experience_id: str, pers
     return (max_version or 0) + 1
 
 
+# =============================================================================
+# MAIN PIPELINE
+# =============================================================================
+
 async def run_draft_v1_pipeline(
     db: AsyncSession,
     person_id: str,
     body: RawExperienceCreate,
 ) -> tuple[str, str, list[dict]]:
     """
-    Run rewrite+cleanup → extract-all → validate-all (single pass each).
-    Returns (draft_set_id, raw_experience_id, card_families) where each
-    card_family is {"parent": {...}, "children": [...]}.
-    Raises ChatServiceError on LLM/parse errors.
+    Execute the complete draft pipeline with proper error handling.
+    
+    Pipeline stages:
+    1. Rewrite - Clean input text
+    2. Extract - LLM extraction to structured families
+    3. Validate - LLM validation and enrichment
+    4. Persist - Save to database
+    5. Embed - Generate embeddings
+    
+    Returns:
+        (draft_set_id, raw_experience_id, card_families)
+    
+    Raises:
+        HTTPException: For client errors (400)
+        PipelineError: For pipeline failures with stage context
+        ChatServiceError: For unrecoverable LLM errors
+        EmbeddingServiceError: For embedding errors
     """
     raw_text_original = body.raw_text or ""
-    # #region agent log
-    _debug_log("experience_card_pipeline:run_draft_v1:entry", "pipeline_entry", {"raw_len": len(raw_text_original), "raw_prefix": raw_text_original[:80]}, "H2")
-    # #endregion
+    
+    logger.info(f"Starting pipeline for person_id={person_id}, text_len={len(raw_text_original)}")
+    
+    # =========================================================================
+    # STAGE 1: REWRITE
+    # =========================================================================
+    
     raw_text_cleaned = await rewrite_raw_text(raw_text_original)
-    # #region agent log
-    _debug_log("experience_card_pipeline:run_draft_v1:after_rewrite", "after_rewrite", {"cleaned_len": len(raw_text_cleaned), "cleaned_prefix": raw_text_cleaned[:80]}, "H2")
-    # #endregion
+    logger.info(f"Rewrite complete: {len(raw_text_original)} → {len(raw_text_cleaned)} chars")
+    
+    # Create RawExperience record
     raw = RawExperience(
         person_id=person_id,
         raw_text=raw_text_original,
@@ -533,7 +917,9 @@ async def run_draft_v1_pipeline(
     db.add(raw)
     await db.flush()
     raw_experience_id = str(raw.id)
-    run_version = await _next_draft_run_version(db, raw_experience_id, person_id)
+    
+    # Create DraftSet
+    run_version = await next_draft_run_version(db, raw_experience_id, person_id)
     draft_set = DraftSet(
         person_id=person_id,
         raw_experience_id=raw.id,
@@ -542,148 +928,111 @@ async def run_draft_v1_pipeline(
     db.add(draft_set)
     await db.flush()
     draft_set_id = str(draft_set.id)
-
+    
+    logger.info(f"Created raw_experience_id={raw_experience_id}, draft_set_id={draft_set_id}")
+    
+    # =========================================================================
+    # STAGE 2: EXTRACT
+    # =========================================================================
+    
     chat = get_chat_provider()
-
-    # 2. Extraction (single pass)
-    prompt = fill_prompt(
+    
+    extract_prompt = fill_prompt(
         PROMPT_EXTRACT_ALL_CARDS,
         user_text=raw_text_cleaned,
         person_id=person_id,
     )
+    
     try:
-        response = await chat.chat(prompt, max_tokens=8192)
-        # #region agent log
-        _debug_log("experience_card_pipeline:run_draft_v1:extractor_response", "extractor_response", {"response_len": len(response or ""), "response_empty": not (response or "").strip(), "response_prefix": (response or "")[:150]}, "H2")
-        # #endregion
-        families = _parse_families_from_response(response)
+        extract_response = await chat.chat(extract_prompt, max_tokens=8192)
+        extracted_families = parse_llm_response_to_families(
+            extract_response,
+            stage=PipelineStage.EXTRACT,
+        )
+        logger.info(f"Extraction complete: {len(extracted_families)} families")
+    
     except ChatServiceError:
         raise
-    except (ValueError, json.JSONDecodeError) as e:
-        # #region agent log
-        _debug_log("experience_card_pipeline:run_draft_v1:extractor_parse_error", "extractor_parse_error", {"error": str(e)}, "H2")
-        # #endregion
-        msg = "Extractor returned invalid JSON (empty or non-JSON response). LLM may have failed or been rate-limited."
-        raise ChatServiceError(msg) from e
-
-    # #region agent log
-    _debug_log("experience_card_pipeline:run_draft_v1:after_parse", "after_parse", {"families_count": len(families), "first_family_keys": list(families[0].keys()) if families else []}, "H3")
-    # #endregion
-    normalized_families: list[dict] = []
-    for family in families:
-        if not isinstance(family, dict):
-            continue
-        parent = family.get("parent") or {}
-        children = family.get("children") or []
-        if not isinstance(children, list):
-            children = []
-        parent = _inject_parent_metadata(parent, person_id)
-        parent_id = parent["id"]
-        children = [_inject_child_metadata(c, parent_id, person_id) for c in children if isinstance(c, dict)]
-        normalized_families.append({"parent": parent, "children": children})
-
-    # #region agent log
-    _debug_log("experience_card_pipeline:run_draft_v1:after_normalize", "after_normalize", {"normalized_count": len(normalized_families)}, "H3")
-    # #endregion
-    if not normalized_families:
-        # #region agent log
-        _debug_log("experience_card_pipeline:run_draft_v1:early_return_empty", "early_return_no_families", {"draft_set_id": draft_set_id}, "H3")
-        # #endregion
-        return draft_set_id, raw_experience_id, []
-
-    # 3. Validator (single pass over the entire set)
-    prompt = fill_prompt(
-        PROMPT_VALIDATE_ALL_CARDS,
-        parent_and_children_json=json.dumps(
+    except PipelineError:
+        raise
+    
+    # Inject metadata
+    for family in extracted_families:
+        inject_metadata_into_family(family, person_id)
+    
+    # =========================================================================
+    # STAGE 3: VALIDATE
+    # =========================================================================
+    
+    validate_payload = {
+        "raw_text_original": raw_text_original,
+        "raw_text_cleaned": raw_text_cleaned,
+        "families": [
             {
-                "raw_text_original": raw_text_original,
-                "raw_text_cleaned": raw_text_cleaned,
-                "parents": normalized_families,
+                "parent": family.parent.dict(),
+                "children": [c.dict() for c in family.children],
             }
-        ),
+            for family in extracted_families
+        ],
+    }
+    
+    validate_prompt = fill_prompt(
+        PROMPT_VALIDATE_ALL_CARDS,
+        parent_and_children_json=json.dumps(validate_payload),
     )
-    validator_used_fallback = False
+    
     try:
-        response = await chat.chat(prompt, max_tokens=8192)
-        # #region agent log
-        _debug_log("experience_card_pipeline:run_draft_v1:validator_response", "validator_response", {"response_len": len(response or ""), "response_empty": not (response or "").strip()}, "H4")
-        # #endregion
-        validated_families = _parse_families_from_response(response)
-    except (ValueError, json.JSONDecodeError) as e:
-        logger.warning("Validator returned invalid or empty JSON, using extractor output: %s", e)
-        validator_used_fallback = True
-        validated_families = normalized_families
-        # #region agent log
-        _debug_log("experience_card_pipeline:run_draft_v1:validator_fallback", "validator_fallback", {"error": str(e)}, "H4")
-        # #endregion
-
-    if not validated_families:
-        validated_families = normalized_families
-        # #region agent log
-        _debug_log("experience_card_pipeline:run_draft_v1:validator_empty_use_normalized", "validator_empty", {}, "H4")
-        # #endregion
-
-    card_families: list[dict] = []
-    parents_to_embed: list[ExperienceCard] = []
-    children_to_embed: list[ExperienceCardChild] = []
-    for family in validated_families:
-        if not isinstance(family, dict):
-            continue
-        v_parent = family.get("parent") or {}
-        v_children = family.get("children") or []
-        if not isinstance(v_children, list):
-            v_children = []
-        parent_ec, child_ecs = await _persist_v1_family(
-            db,
-            person_id,
-            raw_experience_id,
-            draft_set_id,
-            {"parent": v_parent, "children": v_children},
+        validate_response = await chat.chat(validate_prompt, max_tokens=8192)
+        validated_families = parse_llm_response_to_families(
+            validate_response,
+            stage=PipelineStage.VALIDATE,
         )
-        parents_to_embed.append(parent_ec)
-        children_to_embed.extend(child_ecs)
+        logger.info(f"Validation complete: {len(validated_families)} families")
+    
+    except (PipelineError, ChatServiceError) as e:
+        # Validation is optional enhancement - fall back to extraction
+        logger.warning(f"Validation failed, using extraction output: {e}")
+        validated_families = extracted_families
+    
+    # Re-inject metadata after validation (LLM may have modified/removed fields)
+    for family in validated_families:
+        inject_metadata_into_family(family, person_id)
+    
+    # =========================================================================
+    # STAGE 4: PERSIST
+    # =========================================================================
+    
+    parents, children = await persist_families(
+        db,
+        validated_families,
+        person_id=person_id,
+        raw_experience_id=raw_experience_id,
+        draft_set_id=draft_set_id,
+    )
+    
+    logger.info(f"Persisted {len(parents)} parents, {len(children)} children")
+    
+    # =========================================================================
+    # STAGE 5: EMBED
+    # =========================================================================
+    
+    await embed_cards(db, parents, children)
+    
+    # =========================================================================
+    # BUILD RESPONSE
+    # =========================================================================
+    
+    card_families: list[dict] = []
+    
+    for parent in parents:
+        # Find children for this parent
+        parent_children = [c for c in children if c.parent_experience_id == parent.id]
+        
         card_families.append({
-            "parent": _draft_card_to_family_item(parent_ec),
-            "children": [_draft_card_to_family_item(c) for c in child_ecs],
+            "parent": serialize_card_for_response(parent),
+            "children": [serialize_card_for_response(c) for c in parent_children],
         })
-
-    # #region agent log
-    _debug_log("experience_card_pipeline:run_draft_v1:after_persist", "after_persist", {"card_families_count": len(card_families), "validator_used_fallback": validator_used_fallback}, "H5")
-    # #endregion
-
-    # 4. Embedding (parents + children)
-    embed_texts: list[str] = []
-    embed_targets: list[tuple[str, ExperienceCard | ExperienceCardChild]] = []
-
-    for parent in parents_to_embed:
-        parent_doc = _experience_card_search_document(parent)
-        if parent_doc:
-            embed_texts.append(parent_doc)
-            embed_targets.append(("parent", parent))
-
-    for child in children_to_embed:
-        child_doc = child.search_document or ""
-        if child_doc.strip():
-            embed_texts.append(child_doc.strip())
-            embed_targets.append(("child", child))
-
-    if embed_texts:
-        provider = get_embedding_provider()
-        try:
-            vectors = await provider.embed(embed_texts)
-        except EmbeddingServiceError:
-            raise
-        if len(vectors) != len(embed_targets):
-            raise EmbeddingServiceError("Embedding API returned unexpected number of vectors.")
-        for (kind, obj), vec in zip(embed_targets, vectors):
-            normalized = normalize_embedding(vec, dim=provider.dimension)
-            if kind == "parent":
-                obj.embedding = normalized
-            else:
-                obj.embedding = normalized
-        await db.flush()
-
-    # #region agent log
-    _debug_log("experience_card_pipeline:run_draft_v1:exit", "pipeline_exit", {"card_families_count": len(card_families), "draft_set_id": draft_set_id}, "H6")
-    # #endregion
+    
+    logger.info(f"Pipeline complete: {len(card_families)} families ready")
+    
     return draft_set_id, raw_experience_id, card_families

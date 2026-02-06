@@ -10,8 +10,6 @@ const defaultVisibility: VisibilitySettingsResponse = {
   work_preferred_locations: [],
   work_preferred_salary_min: null,
   work_preferred_salary_max: null,
-  contact_preferred_salary_min: null,
-  contact_preferred_salary_max: null,
 };
 
 export function useVisibility() {

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from src.db.session import async_session
-from src.db.models import Person, ExperienceCard
+from src.db.models import Person, ExperienceCard, ExperienceCardChild
 from src.auth import decode_access_token
 from src.services.experience_card import experience_card_service
 
@@ -64,5 +64,26 @@ async def get_experience_card_or_404(
             detail="Card not found",
         )
     return card
+
+
+async def get_experience_card_child_or_404(
+    child_id: str,
+    current_user: Annotated[Person, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ExperienceCardChild:
+    """Load experience card child by id for current user or raise 404. Requires route path param child_id."""
+    result = await db.execute(
+        select(ExperienceCardChild).where(
+            ExperienceCardChild.id == child_id,
+            ExperienceCardChild.person_id == current_user.id,
+        )
+    )
+    child = result.scalar_one_or_none()
+    if not child:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Child card not found",
+        )
+    return child
 
 
