@@ -190,6 +190,7 @@ class ExperienceCard(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    draft_set_id = Column(UUID(as_uuid=False), ForeignKey("draft_sets.id", ondelete="SET NULL"), nullable=True)
     user_id = synonym("person_id")
 
     title = Column(Text, nullable=True)
