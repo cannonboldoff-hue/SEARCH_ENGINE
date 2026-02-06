@@ -30,13 +30,12 @@ function v1CardTopics(card: ExperienceCardV1): string[] {
   return (card.topics ?? []).map((t) => (typeof t === "object" && t && "label" in t ? t.label : String(t)));
 }
 
-/** Renders all filled ExperienceCardV1 fields so nothing is hidden. */
+/** Renders ExperienceCardV1 fields that have values; empty fields are not shown. */
 function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; compact?: boolean }) {
   if (!card) return null;
   const topicLabels = v1CardTopics(card);
-  const timeText = card?.time && typeof card.time === "object" && "text" in card.time
-    ? (card.time as { text?: string }).text
-    : null;
+  const timeObj = card?.time && typeof card.time === "object" ? card.time as { text?: string; start?: string; end?: string; ongoing?: boolean } : null;
+  const timeText = timeObj?.text ?? (timeObj ? [timeObj.start, timeObj.end].filter(Boolean).join(" – ") || (timeObj.ongoing ? "Ongoing" : null) : null);
   const locationText =
     typeof card?.location === "string"
       ? card.location
@@ -66,91 +65,96 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
     const ee = e as { type?: string; url?: string | null; note?: string | null };
     return [ee.type, ee.url ?? ee.note].filter(Boolean).join(": ");
   }).filter(Boolean) as string[];
-  const intent = card.intent && String(card.intent) !== "other" && String(card.intent) !== "mixed" ? String(card.intent).replace(/_/g, " ") : null;
-
+  const intent = card.intent != null && String(card.intent) !== "" ? String(card.intent).replace(/_/g, " ") : null;
   const rawText = (card.raw_text ?? "").trim();
-  const hasAny = intent || timeText || locationText || roles.length > 0 || actions.length > 0
-    || topicLabels.length > 0 || entities.length > 0 || tools.length > 0 || processes.length > 0
-    || outcomes.length > 0 || evidence.length > 0 || (card.tooling?.raw ?? "").trim() || rawText;
-
-  if (!hasAny) return null;
+  const lang = card.language && typeof card.language === "object" ? (card.language as { raw_text?: string; confidence?: string }).raw_text ?? (card.language as { confidence?: string }).confidence : null;
+  const langStr = (lang ?? "").toString().trim() || null;
+  const privacy = card.privacy && typeof card.privacy === "object" ? `${(card.privacy as { visibility?: string }).visibility ?? ""}${(card.privacy as { sensitive?: boolean }).sensitive ? ", sensitive" : ""}`.trim() || null : null;
+  const quality = card.quality && typeof card.quality === "object"
+    ? [`confidence: ${(card.quality as { overall_confidence?: string }).overall_confidence}`, `claim: ${(card.quality as { claim_state?: string }).claim_state}`, (card.quality as { needs_clarification?: boolean }).needs_clarification ? "needs clarification" : "", (card.quality as { clarifying_question?: string | null }).clarifying_question ?? ""].filter(Boolean).join("; ").trim() || null
+    : null;
+  const indexPhrases = (card.index?.search_phrases ?? []).length ? (card.index?.search_phrases ?? []).join(", ") : null;
+  const indexRef = (card.index?.embedding_ref ?? "").trim() || null;
 
   const labelClass = compact ? "text-[10px] uppercase tracking-wide text-muted-foreground" : "text-xs font-medium text-muted-foreground";
   const valueClass = compact ? "text-xs" : "text-sm";
 
+  function Row({ label, value }: { label: string; value: React.ReactNode }) {
+    if (value == null || value === "") return null;
+    return (
+      <div>
+        <span className={labelClass}>{label}</span>
+        <p className={valueClass}>{value}</p>
+      </div>
+    );
+  }
+
+  const headline = (card.headline ?? "").trim() || null;
+  const summary = (card.summary ?? "").trim() || null;
+  const toolingValue =
+    tools.length || processes.length || (card.tooling?.raw ?? "").trim()
+      ? [...tools, ...processes].filter(Boolean).join(", ") + ((card.tooling?.raw ?? "").trim() ? ` — ${card.tooling?.raw?.trim()}` : "")
+      : null;
+  const createdAt = (card.created_at ?? "").toString().trim() || null;
+  const updatedAt = (card.updated_at ?? "").toString().trim() || null;
+  const personId = (card.person_id ?? "").toString().trim() || null;
+  const createdBy = (card.created_by ?? "").toString().trim() || null;
+
+  const cardAny = card as Record<string, unknown>;
+  const constraintsStr = (cardAny.constraints as string)?.trim() || null;
+  const decisionsStr = (cardAny.decisions as string)?.trim() || null;
+  const outcomeStr = (cardAny.outcome as string)?.trim() || null;
+  const teamStr = (cardAny.team as string)?.trim() || null;
+  const timeRangeStr = (cardAny.time_range as string)?.trim() || null;
+  const roleTitleStr = (cardAny.role_title as string)?.trim() || null;
+  const companyStr = (cardAny.company as string)?.trim() || null;
+
+  const rows = [
+    headline && { label: "Headline", value: headline },
+    summary && { label: "Summary", value: summary },
+    card.parent_id != null && card.parent_id !== "" && { label: "Parent ID", value: card.parent_id },
+    card.depth != null && { label: "Depth", value: String(card.depth) },
+    card.relation_type != null && card.relation_type !== "" && { label: "Relation type", value: String(card.relation_type).replace(/_/g, " ") },
+    intent && { label: "Intent", value: intent },
+    (timeText || timeRangeStr) && { label: "Time", value: timeText || timeRangeStr },
+    locationText && { label: "Location", value: locationText },
+    roleTitleStr && { label: "Role", value: roleTitleStr },
+    companyStr && { label: "Company", value: companyStr },
+    teamStr && { label: "Team", value: teamStr },
+    constraintsStr && { label: "Constraints", value: constraintsStr },
+    decisionsStr && { label: "Decisions", value: decisionsStr },
+    outcomeStr && { label: "Outcome", value: outcomeStr },
+    langStr && { label: "Language", value: langStr },
+    roles.length > 0 && { label: "Roles", value: roles.join(", ") },
+    actions.length > 0 && { label: "Actions", value: actions.join(", ") },
+    topicLabels.length > 0 && { label: "Topics", value: topicLabels.join(", ") },
+    entities.length > 0 && { label: "Entities", value: entities.join(", ") },
+    toolingValue && { label: "Tooling", value: toolingValue },
+    outcomes.length > 0 && { label: "Outcomes", value: outcomes.join("; ") },
+    evidence.length > 0 && { label: "Evidence", value: evidence.join("; ") },
+    privacy && { label: "Privacy", value: privacy },
+    quality && { label: "Quality", value: quality },
+    indexPhrases && { label: "Search phrases", value: indexPhrases },
+    indexRef && { label: "Embedding ref", value: indexRef },
+    rawText && { label: "Raw text", value: rawText },
+    createdAt && { label: "Created at", value: createdAt },
+    updatedAt && { label: "Updated at", value: updatedAt },
+    card.edited_at != null && card.edited_at !== "" && { label: "Edited at", value: card.edited_at },
+    personId && { label: "Person ID", value: personId },
+    createdBy && { label: "Created by", value: createdBy },
+    card.version != null && { label: "Version", value: String(card.version) },
+    card.id && { label: "ID", value: card.id },
+  ].filter((r): r is { label: string; value: string } =>
+    typeof r === "object" && r !== null && "value" in r && r.value != null && r.value !== ""
+  );
+
+  if (rows.length === 0) return null;
+
   return (
     <div className={compact ? "space-y-1.5 mt-2" : "space-y-2 mt-3 pt-3 border-t border-border/40"}>
-      {intent && (
-        <div>
-          <span className={labelClass}>Intent</span>
-          <p className={valueClass}>{intent}</p>
-        </div>
-      )}
-      {timeText && (
-        <div>
-          <span className={labelClass}>Time</span>
-          <p className={valueClass}>{timeText}</p>
-        </div>
-      )}
-      {locationText && (
-        <div>
-          <span className={labelClass}>Location</span>
-          <p className={valueClass}>{locationText}</p>
-        </div>
-      )}
-      {roles.length > 0 && (
-        <div>
-          <span className={labelClass}>Roles</span>
-          <p className={valueClass}>{roles.join(", ")}</p>
-        </div>
-      )}
-      {actions.length > 0 && (
-        <div>
-          <span className={labelClass}>Actions</span>
-          <p className={valueClass}>{actions.join(", ")}</p>
-        </div>
-      )}
-      {topicLabels.length > 0 && (
-        <div>
-          <span className={labelClass}>Topics</span>
-          <p className={valueClass}>{topicLabels.join(", ")}</p>
-        </div>
-      )}
-      {entities.length > 0 && (
-        <div>
-          <span className={labelClass}>Entities</span>
-          <p className={valueClass}>{entities.join(", ")}</p>
-        </div>
-      )}
-      {(tools.length > 0 || processes.length > 0 || (card.tooling?.raw ?? "").trim()) && (
-        <div>
-          <span className={labelClass}>Tooling</span>
-          <p className={valueClass}>
-            {[...tools, ...processes].filter(Boolean).join(", ")}
-            {(card.tooling?.raw ?? "").trim() && (
-              <span className="block mt-1 text-muted-foreground">{card.tooling?.raw?.trim()}</span>
-            )}
-          </p>
-        </div>
-      )}
-      {outcomes.length > 0 && (
-        <div>
-          <span className={labelClass}>Outcomes</span>
-          <p className={valueClass}>{outcomes.join("; ")}</p>
-        </div>
-      )}
-      {evidence.length > 0 && (
-        <div>
-          <span className={labelClass}>Evidence</span>
-          <p className={valueClass}>{evidence.join("; ")}</p>
-        </div>
-      )}
-      {rawText && (
-        <div>
-          <span className={labelClass}>Raw text</span>
-          <p className={cn(valueClass, "whitespace-pre-wrap")}>{rawText}</p>
-        </div>
-      )}
+      {rows.map((r, i) => (
+        <Row key={`${r.label}-${i}`} label={r.label} value={r.value} />
+      ))}
     </div>
   );
 }
@@ -227,8 +231,16 @@ export default function BuilderPage() {
     time_range: string;
     role_title: string;
     company: string;
+    team: string;
     location: string;
-  }>({ title: "", context: "", tagsStr: "", time_range: "", role_title: "", company: "", location: "" });
+    constraints: string;
+    decisions: string;
+    outcome: string;
+    locked: boolean;
+  }>({
+    title: "", context: "", tagsStr: "", time_range: "", role_title: "", company: "", team: "", location: "",
+    constraints: "", decisions: "", outcome: "", locked: false,
+  });
 
   const deleteCardMutation = useMutation({
     mutationFn: (cardId: string) =>
@@ -276,6 +288,10 @@ export default function BuilderPage() {
                   time_range: updated.time_range ?? undefined,
                   role_title: updated.role_title ?? undefined,
                   company: updated.company ?? undefined,
+                  team: updated.team ?? undefined,
+                  constraints: updated.constraints ?? undefined,
+                  decisions: updated.decisions ?? undefined,
+                  outcome: updated.outcome ?? undefined,
                   ...(locObj ? { location: locObj } : {}),
                 },
               };
@@ -295,6 +311,10 @@ export default function BuilderPage() {
                       time_range: updated.time_range ?? undefined,
                       role_title: updated.role_title ?? undefined,
                       company: updated.company ?? undefined,
+                      team: updated.team ?? undefined,
+                      constraints: updated.constraints ?? undefined,
+                      decisions: updated.decisions ?? undefined,
+                      outcome: updated.outcome ?? undefined,
                       ...(locObj ? { location: locObj } : {}),
                     }
                   : c
@@ -308,22 +328,28 @@ export default function BuilderPage() {
   });
 
   const startEditingCard = useCallback(
-    (card: ExperienceCardV1 | (Record<string, unknown> & { id?: string; title?: string; headline?: string; context?: string; summary?: string; tags?: string[]; time_range?: string; role_title?: string; company?: string; location?: string | { city?: string; text?: string } })) => {
+    (card: ExperienceCardV1 | (Record<string, unknown> & { id?: string; title?: string; headline?: string; context?: string; summary?: string; tags?: string[]; time_range?: string; role_title?: string; company?: string; team?: string; location?: string | { city?: string; text?: string }; constraints?: string; decisions?: string; outcome?: string; locked?: boolean })) => {
       const id = (card as { id?: string }).id ?? "";
       if (!id) return;
       const tags = (card as { tags?: string[] }).tags ?? v1CardTopics(card as ExperienceCardV1);
       const loc = (card as { location?: string | { city?: string; text?: string } }).location;
       const locationStr =
         typeof loc === "string" ? loc : (loc && typeof loc === "object" && "city" in loc ? loc.city : (loc && typeof loc === "object" && "text" in loc ? loc.text : "")) ?? "";
+      const c = card as Record<string, unknown>;
       setEditingCardId(id);
       setEditForm({
-        title: (card as { title?: string }).title ?? (card as { headline?: string }).headline ?? "",
-        context: (card as { context?: string }).context ?? (card as { summary?: string }).summary ?? "",
+        title: (c.title as string) ?? (c.headline as string) ?? "",
+        context: (c.context as string) ?? (c.summary as string) ?? "",
         tagsStr: tags.join(", "),
-        time_range: (card as { time_range?: string }).time_range ?? "",
-        role_title: (card as { role_title?: string }).role_title ?? "",
-        company: (card as { company?: string }).company ?? "",
+        time_range: (c.time_range as string) ?? "",
+        role_title: (c.role_title as string) ?? "",
+        company: (c.company as string) ?? "",
+        team: (c.team as string) ?? "",
         location: locationStr,
+        constraints: (c.constraints as string) ?? "",
+        decisions: (c.decisions as string) ?? "",
+        outcome: (c.outcome as string) ?? "",
+        locked: (c.locked as boolean) ?? false,
       });
     },
     []
@@ -344,7 +370,12 @@ export default function BuilderPage() {
         time_range: editForm.time_range || null,
         role_title: editForm.role_title || null,
         company: editForm.company || null,
+        team: editForm.team || null,
         location: editForm.location || null,
+        constraints: editForm.constraints || null,
+        decisions: editForm.decisions || null,
+        outcome: editForm.outcome || null,
+        locked: editForm.locked,
       },
     });
   }, [editingCardId, editForm]);
@@ -667,6 +698,55 @@ export default function BuilderPage() {
                                       />
                                     </div>
                                   </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Team (optional)</Label>
+                                    <Input
+                                      value={editForm.team}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, team: e.target.value }))}
+                                      placeholder="Team name"
+                                      className="text-sm"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Constraints (optional)</Label>
+                                    <Textarea
+                                      value={editForm.constraints}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, constraints: e.target.value }))}
+                                      placeholder="Constraints or context"
+                                      rows={2}
+                                      className="text-sm resize-y"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Decisions (optional)</Label>
+                                    <Textarea
+                                      value={editForm.decisions}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, decisions: e.target.value }))}
+                                      placeholder="Key decisions"
+                                      rows={2}
+                                      className="text-sm resize-y"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Outcome (optional)</Label>
+                                    <Textarea
+                                      value={editForm.outcome}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, outcome: e.target.value }))}
+                                      placeholder="Outcome or result"
+                                      rows={2}
+                                      className="text-sm resize-y"
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      id="edit-locked-parent"
+                                      checked={editForm.locked}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, locked: e.target.checked }))}
+                                      className="rounded border-border"
+                                    />
+                                    <Label htmlFor="edit-locked-parent" className="text-xs cursor-pointer">Locked</Label>
+                                  </div>
                                 </div>
                               ) : (
                                 <>
@@ -825,6 +905,55 @@ export default function BuilderPage() {
                                                       className="text-sm"
                                                     />
                                                   </div>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                  <Label className="text-xs">Team (optional)</Label>
+                                                  <Input
+                                                    value={editForm.team}
+                                                    onChange={(e) => setEditForm((f) => ({ ...f, team: e.target.value }))}
+                                                    placeholder="Team name"
+                                                    className="text-sm"
+                                                  />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                  <Label className="text-xs">Constraints (optional)</Label>
+                                                  <Textarea
+                                                    value={editForm.constraints}
+                                                    onChange={(e) => setEditForm((f) => ({ ...f, constraints: e.target.value }))}
+                                                    placeholder="Constraints or context"
+                                                    rows={2}
+                                                    className="text-sm resize-y"
+                                                  />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                  <Label className="text-xs">Decisions (optional)</Label>
+                                                  <Textarea
+                                                    value={editForm.decisions}
+                                                    onChange={(e) => setEditForm((f) => ({ ...f, decisions: e.target.value }))}
+                                                    placeholder="Key decisions"
+                                                    rows={2}
+                                                    className="text-sm resize-y"
+                                                  />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                  <Label className="text-xs">Outcome (optional)</Label>
+                                                  <Textarea
+                                                    value={editForm.outcome}
+                                                    onChange={(e) => setEditForm((f) => ({ ...f, outcome: e.target.value }))}
+                                                    placeholder="Outcome or result"
+                                                    rows={2}
+                                                    className="text-sm resize-y"
+                                                  />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                  <input
+                                                    type="checkbox"
+                                                    id="edit-locked-child"
+                                                    checked={editForm.locked}
+                                                    onChange={(e) => setEditForm((f) => ({ ...f, locked: e.target.checked }))}
+                                                    className="rounded border-border"
+                                                  />
+                                                  <Label htmlFor="edit-locked-child" className="text-xs cursor-pointer">Locked</Label>
                                                 </div>
                                               </div>
                                             ) : (
