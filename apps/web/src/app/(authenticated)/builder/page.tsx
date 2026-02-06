@@ -513,8 +513,17 @@ export default function BuilderPage() {
                   animate={{ scale: [1, 1.05, 1] }}
                   transition={{ duration: 2, repeat: Infinity }}
                 />
-                <p className="font-medium text-foreground">No cards yet</p>
-                <p className="text-sm mt-1">Write something on the left and click Update.</p>
+                {draftSetId != null ? (
+                  <>
+                    <p className="font-medium text-foreground">No experiences extracted</p>
+                    <p className="text-sm mt-1">We couldn’t structure this into cards. Try adding more detail (e.g. role, company, duration) and click Update again.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-medium text-foreground">No cards yet</p>
+                    <p className="text-sm mt-1">Write something on the left and click Update.</p>
+                  </>
+                )}
               </motion.div>
             ) : (
               <>

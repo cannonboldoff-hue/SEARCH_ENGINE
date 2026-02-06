@@ -85,6 +85,25 @@ def _parse_json_object(text: str) -> dict:
     return data
 
 
+def _parse_families_from_response(text: str) -> list[dict]:
+    """Parse LLM response into a list of family dicts (each {parent, children}).
+    Handles: wrapper {"parents": [...]}, single family {parent, children}, or top-level array of families.
+    """
+    raw = _strip_json_block(text)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = _best_effort_json_parse(text)
+    if isinstance(data, list):
+        return [f for f in data if isinstance(f, dict) and "parent" in f]
+    if isinstance(data, dict):
+        if "parents" in data and isinstance(data["parents"], list):
+            return data["parents"]
+        if "parent" in data:
+            return [data]
+    return []
+
+
 def _inject_parent_metadata(parent: dict, person_id: str) -> dict:
     """Ensure parent has id, person_id, created_by, created_at, updated_at."""
     now = datetime.now(timezone.utc).isoformat()
@@ -498,16 +517,12 @@ async def run_draft_v1_pipeline(
     )
     try:
         response = await chat.chat(prompt, max_tokens=8192)
-        extracted = _parse_json_object(response)
+        families = _parse_families_from_response(response)
     except ChatServiceError:
         raise
     except (ValueError, json.JSONDecodeError) as e:
         msg = "Extractor returned invalid JSON (empty or non-JSON response). LLM may have failed or been rate-limited."
         raise ChatServiceError(msg) from e
-
-    families = extracted.get("parents") or []
-    if not isinstance(families, list):
-        families = []
 
     normalized_families: list[dict] = []
     for family in families:
@@ -538,13 +553,9 @@ async def run_draft_v1_pipeline(
     )
     try:
         response = await chat.chat(prompt, max_tokens=8192)
-        validated = _parse_json_object(response)
+        validated_families = _parse_families_from_response(response)
     except (ValueError, json.JSONDecodeError) as e:
         raise ChatServiceError("Validator returned invalid JSON.") from e
-
-    validated_families = validated.get("parents") or []
-    if not isinstance(validated_families, list):
-        validated_families = []
 
     card_families: list[dict] = []
     parents_to_embed: list[ExperienceCard] = []
