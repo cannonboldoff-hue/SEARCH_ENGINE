@@ -172,7 +172,7 @@ class DraftSet(Base):
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     raw_experience_id = Column(UUID(as_uuid=False), ForeignKey("raw_experiences.id", ondelete="CASCADE"), nullable=False)
     run_version = Column(Integer, nullable=False, default=1)
-    metadata = Column(JSONB, nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     person = relationship("Person", back_populates="draft_sets")
