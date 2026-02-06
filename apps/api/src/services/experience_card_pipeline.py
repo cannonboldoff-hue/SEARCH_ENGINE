@@ -2,10 +2,21 @@
 
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone, date
 
 logger = logging.getLogger(__name__)
+
+# #region agent log
+_DEBUG_LOG_PATH = "c:\\Users\\Lenovo\\Desktop\\Search_Engine\\.cursor\\debug.log"
+def _debug_log(location: str, message: str, data: dict, hypothesis_id: str = ""):
+    try:
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"location": location, "message": message, "data": data, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": hypothesis_id}, default=str) + "\n")
+    except Exception:
+        pass
+# #endregion
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,19 +103,29 @@ def _parse_families_from_response(text: str) -> list[dict]:
     """Parse LLM response into a list of family dicts (each {parent, children}).
     Handles: wrapper {"parents": [...]}, single family {parent, children}, or top-level array of families.
     """
+    # #region agent log
+    _debug_log("experience_card_pipeline:_parse_families_from_response:entry", "parse_families_entry", {"text_len": len(text or ""), "text_prefix": (text or "")[:200], "text_empty": not (text or "").strip()}, "H1")
+    # #endregion
     raw = _strip_json_block(text)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
         data = _best_effort_json_parse(text)
     if isinstance(data, list):
-        return [f for f in data if isinstance(f, dict) and "parent" in f]
-    if isinstance(data, dict):
+        out = [f for f in data if isinstance(f, dict) and "parent" in f]
+    elif isinstance(data, dict):
         if "parents" in data and isinstance(data["parents"], list):
-            return data["parents"]
-        if "parent" in data:
-            return [data]
-    return []
+            out = data["parents"]
+        elif "parent" in data:
+            out = [data]
+        else:
+            out = []
+    else:
+        out = []
+    # #region agent log
+    _debug_log("experience_card_pipeline:_parse_families_from_response:exit", "parse_families_exit", {"families_count": len(out), "root_type": type(data).__name__, "has_parents_key": isinstance(data, dict) and "parents" in data}, "H1")
+    # #endregion
+    return out
 
 
 def _inject_parent_metadata(parent: dict, person_id: str) -> dict:
@@ -231,6 +252,19 @@ def _extract_role_seniority(card: dict) -> str | None:
     return (seniority or "")[:255].strip() or None
 
 
+def _normalize_card_title(headline: str | None, raw_text: str | None, summary: str | None) -> str:
+    """Return a user-friendly title; avoid empty or generic 'Unspecified experience'."""
+    h = (headline or "").strip()
+    if h and h.lower() != "unspecified experience":
+        return h[:500]
+    for src in (summary, raw_text):
+        if src and src.strip():
+            first_line = src.strip().split("\n")[0].strip()[:80]
+            if first_line:
+                return first_line
+    return "Experience"
+
+
 def _v1_card_to_experience_card_fields(
     card: dict,
     *,
@@ -246,11 +280,12 @@ def _v1_card_to_experience_card_fields(
     role_seniority = _extract_role_seniority(card)
     raw_text = (card.get("raw_text") or "").strip() or None
     summary = (card.get("summary") or "")[:10000]
+    title = _normalize_card_title(card.get("headline"), raw_text, summary)
 
     return {
         "user_id": person_id,
         "raw_text": raw_text,
-        "title": (card.get("headline") or "")[:500],
+        "title": title[:500],
         "normalized_role": role_title,
         "domain": None,
         "sub_domain": None,
@@ -303,10 +338,8 @@ def _v1_child_card_to_fields(
     if not child_type or child_type not in ALLOWED_CHILD_TYPES or len(child_type) > 50:
         child_type = ALLOWED_CHILD_TYPES[0]  # "skills"
 
-    # Use headline as label, or summary if no headline
-    label = (card.get("headline") or "")[:255].strip() or None
-    if not label and summary:
-        label = summary[:255].strip() or None
+    # Use headline as label, or summary if no headline; avoid "Unspecified experience"
+    label = _normalize_card_title(card.get("headline"), raw_text, summary)[:255]
 
     # Build the dimension container (value JSON) with all rich fields
     dimension_container = {
@@ -490,7 +523,13 @@ async def run_draft_v1_pipeline(
     Raises ChatServiceError on LLM/parse errors.
     """
     raw_text_original = body.raw_text or ""
+    # #region agent log
+    _debug_log("experience_card_pipeline:run_draft_v1:entry", "pipeline_entry", {"raw_len": len(raw_text_original), "raw_prefix": raw_text_original[:80]}, "H2")
+    # #endregion
     raw_text_cleaned = await rewrite_raw_text(raw_text_original)
+    # #region agent log
+    _debug_log("experience_card_pipeline:run_draft_v1:after_rewrite", "after_rewrite", {"cleaned_len": len(raw_text_cleaned), "cleaned_prefix": raw_text_cleaned[:80]}, "H2")
+    # #endregion
     raw = RawExperience(
         person_id=person_id,
         raw_text=raw_text_original,
@@ -520,13 +559,22 @@ async def run_draft_v1_pipeline(
     )
     try:
         response = await chat.chat(prompt, max_tokens=8192)
+        # #region agent log
+        _debug_log("experience_card_pipeline:run_draft_v1:extractor_response", "extractor_response", {"response_len": len(response or ""), "response_empty": not (response or "").strip(), "response_prefix": (response or "")[:150]}, "H2")
+        # #endregion
         families = _parse_families_from_response(response)
     except ChatServiceError:
         raise
     except (ValueError, json.JSONDecodeError) as e:
+        # #region agent log
+        _debug_log("experience_card_pipeline:run_draft_v1:extractor_parse_error", "extractor_parse_error", {"error": str(e)}, "H2")
+        # #endregion
         msg = "Extractor returned invalid JSON (empty or non-JSON response). LLM may have failed or been rate-limited."
         raise ChatServiceError(msg) from e
 
+    # #region agent log
+    _debug_log("experience_card_pipeline:run_draft_v1:after_parse", "after_parse", {"families_count": len(families), "first_family_keys": list(families[0].keys()) if families else []}, "H3")
+    # #endregion
     normalized_families: list[dict] = []
     for family in families:
         if not isinstance(family, dict):
@@ -540,7 +588,13 @@ async def run_draft_v1_pipeline(
         children = [_inject_child_metadata(c, parent_id, person_id) for c in children if isinstance(c, dict)]
         normalized_families.append({"parent": parent, "children": children})
 
+    # #region agent log
+    _debug_log("experience_card_pipeline:run_draft_v1:after_normalize", "after_normalize", {"normalized_count": len(normalized_families)}, "H3")
+    # #endregion
     if not normalized_families:
+        # #region agent log
+        _debug_log("experience_card_pipeline:run_draft_v1:early_return_empty", "early_return_no_families", {"draft_set_id": draft_set_id}, "H3")
+        # #endregion
         return draft_set_id, raw_experience_id, []
 
     # 3. Validator (single pass over the entire set)
@@ -554,15 +608,26 @@ async def run_draft_v1_pipeline(
             }
         ),
     )
+    validator_used_fallback = False
     try:
         response = await chat.chat(prompt, max_tokens=8192)
+        # #region agent log
+        _debug_log("experience_card_pipeline:run_draft_v1:validator_response", "validator_response", {"response_len": len(response or ""), "response_empty": not (response or "").strip()}, "H4")
+        # #endregion
         validated_families = _parse_families_from_response(response)
     except (ValueError, json.JSONDecodeError) as e:
         logger.warning("Validator returned invalid or empty JSON, using extractor output: %s", e)
+        validator_used_fallback = True
         validated_families = normalized_families
+        # #region agent log
+        _debug_log("experience_card_pipeline:run_draft_v1:validator_fallback", "validator_fallback", {"error": str(e)}, "H4")
+        # #endregion
 
     if not validated_families:
         validated_families = normalized_families
+        # #region agent log
+        _debug_log("experience_card_pipeline:run_draft_v1:validator_empty_use_normalized", "validator_empty", {}, "H4")
+        # #endregion
 
     card_families: list[dict] = []
     parents_to_embed: list[ExperienceCard] = []
@@ -587,6 +652,10 @@ async def run_draft_v1_pipeline(
             "parent": _draft_card_to_family_item(parent_ec),
             "children": [_draft_card_to_family_item(c) for c in child_ecs],
         })
+
+    # #region agent log
+    _debug_log("experience_card_pipeline:run_draft_v1:after_persist", "after_persist", {"card_families_count": len(card_families), "validator_used_fallback": validator_used_fallback}, "H5")
+    # #endregion
 
     # 4. Embedding (parents + children)
     embed_texts: list[str] = []
@@ -620,4 +689,7 @@ async def run_draft_v1_pipeline(
                 obj.embedding = normalized
         await db.flush()
 
+    # #region agent log
+    _debug_log("experience_card_pipeline:run_draft_v1:exit", "pipeline_exit", {"card_families_count": len(card_families), "draft_set_id": draft_set_id}, "H6")
+    # #endregion
     return draft_set_id, raw_experience_id, card_families

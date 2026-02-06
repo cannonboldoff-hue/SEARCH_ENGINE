@@ -57,7 +57,7 @@ HARD GATES (CRITICAL)
 * Do NOT infer roles, skills, or responsibilities from industry or company.
 * Do NOT invent facts.
 * Do NOT split one experience into multiple parents unless clearly distinct.
-* If content is vague, create a minimal parent with intent="other" and NO children.
+* If content is vague, create a minimal parent with intent="other" and NO children. For such minimal parents, headline MUST be a short phrase derived from the raw text (e.g. first few words or "General experience"), never "Unspecified experience".
 
 ========================
 PARENT CARD RULES
@@ -65,7 +65,7 @@ PARENT CARD RULES
 * One parent = one dominant experience or intent block.
 * intent MUST be one of:
   {INTENT_ENUM}
-* headline: <=120 chars, outcome- or responsibility-focused.
+* headline: <=120 chars, outcome- or responsibility-focused. Never use "Unspecified experience"; use a brief phrase from the text or "General experience" for vague content.
 * summary: 1–3 factual sentences.
 * raw_text: verbatim supporting text.
 * time/location: extract ONLY what is explicitly stated.
