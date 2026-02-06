@@ -36,16 +36,6 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
   const topicLabels = v1CardTopics(card);
   const timeObj = card?.time && typeof card.time === "object" ? card.time as { text?: string; start?: string; end?: string; ongoing?: boolean } : null;
   const timeText = timeObj?.text ?? (timeObj ? [timeObj.start, timeObj.end].filter(Boolean).join(" – ") || (timeObj.ongoing ? "Ongoing" : null) : null);
-  const locationText =
-    typeof card?.location === "string"
-      ? card.location
-      : card?.location && typeof card.location === "object" && "text" in card.location
-        ? (card.location as { text?: string }).text
-        : (card?.location && typeof card.location === "object" && "name" in card.location
-          ? (card.location as { name?: string }).name
-          : (card?.location && typeof card.location === "object" && "city" in card.location
-            ? (card.location as { city?: string }).city
-            : null));
   const roles = (card.roles ?? []).map((r) => typeof r === "object" && r && "label" in r ? (r as { label: string }).label : String(r));
   const actions = (card.actions ?? []).map((a) => typeof a === "object" && a && "verb" in a ? (a as { verb: string }).verb : String(a));
   const entities = (card.entities ?? []).map((e) => typeof e === "object" && e && "name" in e ? `${(e as { type?: string }).type ?? "entity"}: ${(e as { name: string }).name}` : String(e));
@@ -89,8 +79,6 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
     );
   }
 
-  const headline = (card.headline ?? "").trim() || null;
-  const summary = (card.summary ?? "").trim() || null;
   const toolingValue =
     tools.length || processes.length || (card.tooling?.raw ?? "").trim()
       ? [...tools, ...processes].filter(Boolean).join(", ") + ((card.tooling?.raw ?? "").trim() ? ` — ${card.tooling?.raw?.trim()}` : "")
@@ -110,14 +98,11 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
   const companyStr = (cardAny.company as string)?.trim() || null;
 
   const rows = [
-    headline && { label: "Headline", value: headline },
-    summary && { label: "Summary", value: summary },
     card.parent_id != null && card.parent_id !== "" && { label: "Parent ID", value: card.parent_id },
     card.depth != null && { label: "Depth", value: String(card.depth) },
     card.relation_type != null && card.relation_type !== "" && { label: "Relation type", value: String(card.relation_type).replace(/_/g, " ") },
     intent && { label: "Intent", value: intent },
     (timeText || timeRangeStr) && { label: "Time", value: timeText || timeRangeStr },
-    locationText && { label: "Location", value: locationText },
     roleTitleStr && { label: "Role", value: roleTitleStr },
     companyStr && { label: "Company", value: companyStr },
     teamStr && { label: "Team", value: teamStr },
@@ -143,7 +128,6 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
     personId && { label: "Person ID", value: personId },
     createdBy && { label: "Created by", value: createdBy },
     card.version != null && { label: "Version", value: String(card.version) },
-    card.id && { label: "ID", value: card.id },
   ].filter((r): r is { label: string; value: string } =>
     typeof r === "object" && r !== null && "value" in r && r.value != null && r.value !== ""
   );
@@ -544,20 +528,6 @@ export default function BuilderPage() {
                       const children = (family.children ?? []) as ExperienceCardV1[];
                       const parentId = parent?.id ?? "";
                       const tags = parent ? v1CardTopics(parent) : [];
-                      const timeText = parent?.time && typeof parent.time === "object" && "text" in parent.time
-                        ? (parent.time as { text?: string }).text
-                        : null;
-                      const roleLabel = parent?.roles?.[0] && typeof parent.roles[0] === "object" && "label" in parent.roles[0]
-                        ? (parent.roles[0] as { label: string }).label
-                        : null;
-                      const parentLocation =
-                        typeof parent?.location === "string"
-                          ? parent.location
-                          : (parent?.location && typeof parent.location === "object" && "city" in parent.location
-                            ? (parent.location as { city?: string }).city
-                            : (parent?.location && typeof parent.location === "object" && "text" in parent.location
-                              ? (parent.location as { text?: string }).text
-                              : null));
                       return (
                         <motion.div
                           key={parentId}
@@ -582,10 +552,10 @@ export default function BuilderPage() {
                               <div className="flex items-start justify-between gap-2 w-full">
                                 <span className="flex items-center gap-2 min-w-0 flex-1">
                                   <span className="text-muted-foreground flex-shrink-0">
-                                    <CardTypeIcon tags={tags} title={parent?.headline ?? null} />
+                                    <CardTypeIcon tags={tags} title={(parent as { title?: string })?.title ?? parent?.headline ?? null} />
                                   </span>
                                   <span className="font-semibold text-sm truncate">
-                                    {parent?.headline || "Untitled"}
+                                    {(parent as { title?: string })?.title || parent?.headline || "Untitled"}
                                   </span>
                                   {children.length > 0 && (
                                     <span className="text-xs text-muted-foreground flex-shrink-0">
@@ -762,16 +732,6 @@ export default function BuilderPage() {
                                       ))}
                                     </div>
                                   )}
-                                  {parent?.summary && (
-                                    <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
-                                      {parent.summary}
-                                    </p>
-                                  )}
-                                  <div className="text-xs text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-0">
-                                    {timeText && <span>{timeText}</span>}
-                                    {roleLabel && <span>{roleLabel}</span>}
-                                    {parentLocation && <span>{parentLocation}</span>}
-                                  </div>
                                   <V1CardDetails card={parent} />
                                 </>
                               )}
@@ -782,12 +742,11 @@ export default function BuilderPage() {
                                       {children.map((child) => {
                                         const childId = child?.id ?? "";
                                         const childRelation = child?.relation_type ?? "";
-                                        const childHeadline = child?.headline ?? "Untitled";
-                                        const childSummary = child?.summary ?? "";
+                                        const childTitle = (child as { title?: string })?.title ?? child?.headline ?? "Untitled";
                                         const isEditingChild = editingCardId === childId;
                                         return (
                                           <li
-                                            key={childId || childHeadline}
+                                            key={childId || childTitle}
                                             className="rounded-lg border border-border/40 bg-muted/30 p-3"
                                           >
                                             <div className="flex items-start justify-between gap-2">
@@ -798,14 +757,7 @@ export default function BuilderPage() {
                                                   </span>
                                                 )}
                                                 {isEditingChild ? null : (
-                                                  <>
-                                                    <p className="font-medium text-sm">{childHeadline}</p>
-                                                    {childSummary && (
-                                                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                                                        {childSummary}
-                                                      </p>
-                                                    )}
-                                                  </>
+                                                  <p className="font-medium text-sm">{childTitle}</p>
                                                 )}
                                               </div>
                                               {isEditingChild ? (
@@ -992,10 +944,7 @@ export default function BuilderPage() {
                           )}
                         >
                           <span className="text-sm truncate">
-                            {c.title || c.company || c.location || c.id}
-                            {c.location && (c.title || c.company) && (
-                              <span className="text-muted-foreground"> · {c.location}</span>
-                            )}
+                            {c.title || c.company || "Untitled"}
                           </span>
                           <div className="flex gap-1">
                             <Button
