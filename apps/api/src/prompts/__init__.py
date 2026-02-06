@@ -6,30 +6,26 @@ ExperienceCards. Normalizes terms, infers meaning carefully, and preserves
 the user's original intent.
 
 Pipeline order:
-  1. ATOMIZER            — messy user text → list of atoms
-                           (atom_id, raw_text_span, cleaned_text, suggested_intent, why)
-  2. PARENT_AND_CHILDREN — one atom → one parent + 0–10 children (full schema)
-  3. VALIDATOR           — parent + children → corrected, backend-ready JSON
+  1. REWRITE            -- messy user text -> clear + cleaned text
+  2. EXTRACT_ALL_CARDS  -- cleaned text -> parents + children (single pass)
+  3. VALIDATE_ALL_CARDS -- full set -> corrected, backend-ready JSON
 
 Placeholders (double-brace, replace before sending to LLM):
-  - {{USER_TEXT}}              — raw user message (atomizer)
-  - {{ATOM_TEXT}}              — single atom text, preferably cleaned (parent+children)
-  - {{PERSON_ID}}              — person_id / created_by
-  - {{PARENT_AND_CHILDREN_JSON}} — parent + children JSON (validator)
+  - {{USER_TEXT}}                -- raw user message
+  - {{PERSON_ID}}                -- person_id / created_by
+  - {{PARENT_AND_CHILDREN_JSON}} -- parent + children JSON
 """
 
-from .experience_card_v1 import (
+from .experience_card import (
     PROMPT_REWRITE,
-    PROMPT_ATOMIZER,
-    PROMPT_PARENT_AND_CHILDREN,
-    PROMPT_VALIDATOR,
+    PROMPT_EXTRACT_ALL_CARDS,
+    PROMPT_VALIDATE_ALL_CARDS,
     fill_prompt,
 )
 
 __all__ = [
     "PROMPT_REWRITE",
-    "PROMPT_ATOMIZER",
-    "PROMPT_PARENT_AND_CHILDREN",
-    "PROMPT_VALIDATOR",
+    "PROMPT_EXTRACT_ALL_CARDS",
+    "PROMPT_VALIDATE_ALL_CARDS",
     "fill_prompt",
 ]

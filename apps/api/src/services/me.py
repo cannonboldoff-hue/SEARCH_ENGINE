@@ -7,7 +7,7 @@ from sqlalchemy import select
 from src.credits import add_credits as add_credits_to_wallet
 from src.db.models import Person, VisibilitySettings, CreditWallet, CreditLedger, Bio, ContactDetails
 from src.serializers import person_to_person_schema
-from src.domain_schemas import PersonSchema
+from src.domain import PersonSchema
 from src.schemas import (
     PersonResponse,
     PatchMeRequest,
@@ -81,8 +81,6 @@ async def get_visibility(db: AsyncSession, person_id: str) -> VisibilitySettings
         work_preferred_salary_min=vis.work_preferred_salary_min,
         work_preferred_salary_max=vis.work_preferred_salary_max,
         open_to_contact=vis.open_to_contact,
-        contact_preferred_salary_min=vis.contact_preferred_salary_min,
-        contact_preferred_salary_max=vis.contact_preferred_salary_max,
     )
 
 
@@ -109,18 +107,12 @@ async def patch_visibility(
         vis.work_preferred_salary_max = body.work_preferred_salary_max
     if body.open_to_contact is not None:
         vis.open_to_contact = body.open_to_contact
-    if body.contact_preferred_salary_min is not None:
-        vis.contact_preferred_salary_min = body.contact_preferred_salary_min
-    if body.contact_preferred_salary_max is not None:
-        vis.contact_preferred_salary_max = body.contact_preferred_salary_max
     return VisibilitySettingsResponse(
         open_to_work=vis.open_to_work,
         work_preferred_locations=vis.work_preferred_locations or [],
         work_preferred_salary_min=vis.work_preferred_salary_min,
         work_preferred_salary_max=vis.work_preferred_salary_max,
         open_to_contact=vis.open_to_contact,
-        contact_preferred_salary_min=vis.contact_preferred_salary_min,
-        contact_preferred_salary_max=vis.contact_preferred_salary_max,
     )
 
 
@@ -187,8 +179,15 @@ async def update_bio(
             for p in body.past_companies
         ]
     if body.email is not None and body.email.strip():
-        person.email = body.email.strip()
-        db.add(person)
+        new_email = body.email.strip()
+        if new_email != person.email:
+            existing = await db.execute(
+                select(Person).where(Person.email == new_email, Person.id != person.id)
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Email already registered")
+            person.email = new_email
+            db.add(person)
     if body.first_name is not None or body.last_name is not None:
         parts = [bio.first_name or "", bio.last_name or ""]
         person.display_name = " ".join(parts).strip() or person.display_name

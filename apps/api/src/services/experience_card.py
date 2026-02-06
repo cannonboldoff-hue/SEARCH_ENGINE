@@ -6,28 +6,39 @@ from sqlalchemy import select
 from src.db.models import RawExperience, ExperienceCard
 from src.schemas import (
     RawExperienceCreate,
-    RawExperienceResponse,
     ExperienceCardCreate,
     ExperienceCardPatch,
 )
-from src.providers import get_embedding_provider, EmbeddingServiceError
-from src.utils import normalize_embedding
 
 
-VALID_CARD_STATUSES = {ExperienceCard.DRAFT, ExperienceCard.APPROVED, ExperienceCard.HIDDEN}
+def _format_date_range(card: ExperienceCard) -> str:
+    if card.start_date and card.end_date:
+        return f"{card.start_date} - {card.end_date}"
+    if card.start_date:
+        return str(card.start_date)
+    if card.end_date:
+        return str(card.end_date)
+    return ""
 
 
-def _card_searchable_text(card: ExperienceCard) -> str:
-    """Build searchable text from card for embedding."""
+def _experience_card_search_document(card: ExperienceCard) -> str:
+    """Build searchable text for an experience card."""
     parts = [
         card.title or "",
-        card.context or "",
-        card.company or "",
-        card.team or "",
-        card.role_title or "",
-        card.time_range or "",
+        card.normalized_role or "",
+        card.domain or "",
+        card.sub_domain or "",
+        card.company_name or "",
+        card.company_type or "",
         card.location or "",
-        " ".join(card.tags or []),
+        card.employment_type or "",
+        card.summary or "",
+        card.raw_text or "",
+        card.intent_primary or "",
+        " ".join(card.intent_secondary or []),
+        card.seniority_level or "",
+        _format_date_range(card),
+        "current" if card.is_current else "",
     ]
     return " ".join(filter(None, parts))
 
@@ -38,7 +49,12 @@ async def create_raw_experience(
     body: RawExperienceCreate,
 ) -> RawExperience:
     """Create a raw experience record."""
-    raw = RawExperience(person_id=person_id, raw_text=body.raw_text)
+    raw = RawExperience(
+        person_id=person_id,
+        raw_text=body.raw_text,
+        raw_text_original=body.raw_text,
+        raw_text_cleaned=body.raw_text,
+    )
     db.add(raw)
     await db.flush()
     await db.refresh(raw)
@@ -52,20 +68,25 @@ async def create_experience_card(
 ) -> ExperienceCard:
     """Create an experience card."""
     card = ExperienceCard(
-        person_id=person_id,
-        raw_experience_id=body.raw_experience_id,
-        status=ExperienceCard.DRAFT,
+        user_id=person_id,
         title=body.title,
-        context=body.context,
-        constraints=body.constraints,
-        decisions=body.decisions,
-        outcome=body.outcome,
-        tags=body.tags or [],
-        company=body.company,
-        team=body.team,
-        role_title=body.role_title,
-        time_range=body.time_range,
+        normalized_role=body.normalized_role,
+        domain=body.domain,
+        sub_domain=body.sub_domain,
+        company_name=body.company_name,
+        company_type=body.company_type,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        is_current=body.is_current,
         location=body.location,
+        employment_type=body.employment_type,
+        summary=body.summary,
+        raw_text=body.raw_text,
+        intent_primary=body.intent_primary,
+        intent_secondary=body.intent_secondary or [],
+        seniority_level=body.seniority_level,
+        confidence_score=body.confidence_score,
+        visibility=body.visibility if body.visibility is not None else True,
     )
     db.add(card)
     await db.flush()
@@ -82,7 +103,7 @@ async def get_card_for_user(
     result = await db.execute(
         select(ExperienceCard).where(
             ExperienceCard.id == card_id,
-            ExperienceCard.person_id == person_id,
+            ExperienceCard.user_id == person_id,
         )
     )
     return result.scalar_one_or_none()
@@ -92,100 +113,51 @@ def apply_card_patch(card: ExperienceCard, body: ExperienceCardPatch) -> None:
     """Apply patch fields to card (in place)."""
     if body.title is not None:
         card.title = body.title
-    if body.context is not None:
-        card.context = body.context
-    if body.constraints is not None:
-        card.constraints = body.constraints
-    if body.decisions is not None:
-        card.decisions = body.decisions
-    if body.outcome is not None:
-        card.outcome = body.outcome
-    if body.tags is not None:
-        card.tags = body.tags
-    if body.company is not None:
-        card.company = body.company
-    if body.team is not None:
-        card.team = body.team
-    if body.role_title is not None:
-        card.role_title = body.role_title
-    if body.time_range is not None:
-        card.time_range = body.time_range
+    if body.normalized_role is not None:
+        card.normalized_role = body.normalized_role
+    if body.domain is not None:
+        card.domain = body.domain
+    if body.sub_domain is not None:
+        card.sub_domain = body.sub_domain
+    if body.company_name is not None:
+        card.company_name = body.company_name
+    if body.company_type is not None:
+        card.company_type = body.company_type
+    if body.start_date is not None:
+        card.start_date = body.start_date
+    if body.end_date is not None:
+        card.end_date = body.end_date
+    if body.is_current is not None:
+        card.is_current = body.is_current
     if body.location is not None:
         card.location = body.location
-    if body.locked is not None:
-        card.locked = body.locked
-    content_fields = (
-        body.title, body.context, body.constraints, body.decisions, body.outcome,
-        body.tags, body.company, body.team, body.role_title, body.time_range, body.location,
-    )
-    if any(f is not None for f in content_fields):
-        card.human_edited = True
-
-
-async def approve_experience_card(db: AsyncSession, card: ExperienceCard) -> ExperienceCard:
-    """Set card to APPROVED and compute/store embedding. Raises EmbeddingServiceError on failure."""
-    card.status = ExperienceCard.APPROVED
-    text = _card_searchable_text(card)
-    embed_provider = get_embedding_provider()
-    vectors = await embed_provider.embed([text])
-    if not vectors:
-        raise EmbeddingServiceError("Embedding model returned no vector.")
-    card.embedding = normalize_embedding(vectors[0])
-    return card
+    if body.employment_type is not None:
+        card.employment_type = body.employment_type
+    if body.summary is not None:
+        card.summary = body.summary
+    if body.raw_text is not None:
+        card.raw_text = body.raw_text
+    if body.intent_primary is not None:
+        card.intent_primary = body.intent_primary
+    if body.intent_secondary is not None:
+        card.intent_secondary = body.intent_secondary
+    if body.seniority_level is not None:
+        card.seniority_level = body.seniority_level
+    if body.confidence_score is not None:
+        card.confidence_score = body.confidence_score
+    if body.visibility is not None:
+        card.visibility = body.visibility
 
 
 async def list_my_cards(
     db: AsyncSession,
     person_id: str,
-    status_filter: str | None,
 ) -> list[ExperienceCard]:
-    """List experience cards for the user, optionally filtered by status."""
-    q = select(ExperienceCard).where(ExperienceCard.person_id == person_id)
-    if status_filter:
-        q = q.where(ExperienceCard.status == status_filter)
-    else:
-        q = q.where(ExperienceCard.status != ExperienceCard.HIDDEN)
+    """List experience cards for the user."""
+    q = select(ExperienceCard).where(ExperienceCard.user_id == person_id)
     q = q.order_by(ExperienceCard.created_at.desc())
     result = await db.execute(q)
     return list(result.scalars().all())
-
-
-async def list_draft_cards_by_raw_experience(
-    db: AsyncSession,
-    person_id: str,
-    raw_experience_id: str,
-    card_ids: list[str] | None = None,
-) -> list[ExperienceCard]:
-    """List DRAFT cards for the user for the given raw_experience_id (draft set). Optionally filter by card_ids."""
-    q = (
-        select(ExperienceCard)
-        .where(ExperienceCard.person_id == person_id)
-        .where(ExperienceCard.raw_experience_id == raw_experience_id)
-        .where(ExperienceCard.status == ExperienceCard.DRAFT)
-    )
-    if card_ids:
-        q = q.where(ExperienceCard.id.in_(card_ids))
-    q = q.order_by(ExperienceCard.created_at.asc())
-    result = await db.execute(q)
-    return list(result.scalars().all())
-
-
-async def approve_cards_batch(
-    db: AsyncSession,
-    cards: list[ExperienceCard],
-) -> list[ExperienceCard]:
-    """Transition cards to APPROVED and compute/store embeddings (batch). Raises EmbeddingServiceError on failure."""
-    if not cards:
-        return []
-    texts = [_card_searchable_text(c) for c in cards]
-    embed_provider = get_embedding_provider()
-    vectors = await embed_provider.embed(texts)
-    if len(vectors) != len(cards):
-        raise EmbeddingServiceError("Embedding model returned wrong number of vectors.")
-    for card, vec in zip(cards, vectors):
-        card.status = ExperienceCard.APPROVED
-        card.embedding = normalize_embedding(vec)
-    return cards
 
 
 class ExperienceCardService:
@@ -204,25 +176,8 @@ class ExperienceCardService:
         return await get_card_for_user(db, card_id, person_id)
 
     @staticmethod
-    async def approve(db: AsyncSession, card: ExperienceCard) -> ExperienceCard:
-        return await approve_experience_card(db, card)
-
-    @staticmethod
-    async def list_cards(db: AsyncSession, person_id: str, status_filter: str | None) -> list[ExperienceCard]:
-        return await list_my_cards(db, person_id, status_filter)
-
-    @staticmethod
-    async def list_drafts_by_raw_experience(
-        db: AsyncSession,
-        person_id: str,
-        raw_experience_id: str,
-        card_ids: list[str] | None = None,
-    ) -> list[ExperienceCard]:
-        return await list_draft_cards_by_raw_experience(db, person_id, raw_experience_id, card_ids)
-
-    @staticmethod
-    async def approve_batch(db: AsyncSession, cards: list[ExperienceCard]) -> list[ExperienceCard]:
-        return await approve_cards_batch(db, cards)
+    async def list_cards(db: AsyncSession, person_id: str) -> list[ExperienceCard]:
+        return await list_my_cards(db, person_id)
 
 
 experience_card_service = ExperienceCardService()

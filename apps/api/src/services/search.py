@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text, func
+from sqlalchemy import select, func, or_
 
 from src.constants import SEARCH_RESULT_EXPIRY_HOURS
 from src.db.models import (
@@ -26,9 +26,8 @@ from src.schemas import (
     UnlockContactResponse,
 )
 from src.credits import get_balance, deduct_credits, get_idempotent_response, save_idempotent_response
-from src.providers import get_chat_provider, get_embedding_provider, ChatServiceError, EmbeddingServiceError
+from src.providers import get_chat_provider, ChatServiceError
 from src.serializers import experience_card_to_response
-from src.utils import normalize_embedding
 
 SEARCH_ENDPOINT = "POST /search"
 
@@ -65,28 +64,45 @@ async def run_search(
     except ChatServiceError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-    embed_provider = get_embedding_provider()
-    try:
-        query_embedding = await embed_provider.embed([parsed.semantic_text or body.query])
-    except EmbeddingServiceError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    if not query_embedding:
-        raise HTTPException(
-            status_code=503,
-            detail="Embedding model returned no vector. Ensure the embedding service is running.",
-        )
-    qvec = normalize_embedding(query_embedding[0])
-
     open_to_work_only = body.open_to_work_only if body.open_to_work_only is not None else parsed.open_to_work_only
 
-    card_subq = (
-        select(ExperienceCard.person_id)
-        .where(ExperienceCard.status == ExperienceCard.APPROVED)
-        .where(ExperienceCard.embedding.isnot(None))
-        .distinct()
+    query_text = (parsed.semantic_text or body.query or "").strip()
+    card_query = select(ExperienceCard).where(ExperienceCard.visibility == True)
+    if parsed.company:
+        card_query = card_query.where(func.lower(ExperienceCard.company_name) == parsed.company.strip().lower())
+    if query_text:
+        like_pattern = f"%{query_text}%"
+        card_query = card_query.where(
+            or_(
+                ExperienceCard.title.ilike(like_pattern),
+                ExperienceCard.normalized_role.ilike(like_pattern),
+                ExperienceCard.summary.ilike(like_pattern),
+                ExperienceCard.raw_text.ilike(like_pattern),
+                ExperienceCard.domain.ilike(like_pattern),
+                ExperienceCard.sub_domain.ilike(like_pattern),
+                ExperienceCard.company_name.ilike(like_pattern),
+                ExperienceCard.company_type.ilike(like_pattern),
+                ExperienceCard.location.ilike(like_pattern),
+                ExperienceCard.employment_type.ilike(like_pattern),
+                ExperienceCard.intent_primary.ilike(like_pattern),
+                ExperienceCard.seniority_level.ilike(like_pattern),
+            )
+        )
+    card_query = card_query.order_by(
+        ExperienceCard.confidence_score.desc().nullslast(),
+        ExperienceCard.created_at.desc(),
     )
-    person_ids_result = await db.execute(card_subq)
-    pid_list = [r[0] for r in person_ids_result.fetchall()]
+    cards_result = await db.execute(card_query)
+    cards = list(cards_result.scalars().all())
+    ranked = []
+    seen = set()
+    for card in cards:
+        if card.user_id in seen:
+            continue
+        seen.add(card.user_id)
+        score = float(card.confidence_score) if card.confidence_score is not None else 0.0
+        ranked.append((str(card.user_id), score))
+    pid_list = [pid for pid, _ in ranked]
 
     if not pid_list:
         search_rec = Search(
@@ -103,55 +119,34 @@ async def run_search(
             await save_idempotent_response(db, idempotency_key, searcher_id, SEARCH_ENDPOINT, 200, resp.model_dump())
         return resp
 
-    qvec_str = "[" + ",".join(str(round(x, 6)) for x in qvec) + "]"
-    ranked = []
-    if qvec_str:
-        sql = text("""
-        SELECT ec.person_id, MIN(1 - (ec.embedding <=> CAST(:qvec AS vector))) as score
-        FROM experience_cards ec
-        WHERE ec.status = 'APPROVED' AND ec.embedding IS NOT NULL
-        GROUP BY ec.person_id
-        ORDER BY score DESC NULLS LAST
-        LIMIT 50
-        """)
-        result = await db.execute(sql, {"qvec": qvec_str})
-        rows = result.fetchall()
-        ranked = [(str(r[0]), float(r[1]) if r[1] is not None else 0.0) for r in rows]
-    if not ranked:
-        ranked = [(str(pid), 0.0) for pid in pid_list[:50]]
+    vis_map = {}
+    if pid_list:
+        vis_result = await db.execute(
+            select(VisibilitySettings).where(VisibilitySettings.person_id.in_(pid_list))
+        )
+        vis_map = {str(v.person_id): v for v in vis_result.scalars().all()}
 
     # Exclude "Hide Contact": anyone with both open_to_work=False and open_to_contact=False does not appear in search
-    hidden_result = await db.execute(
-        select(VisibilitySettings.person_id).where(
-            VisibilitySettings.open_to_work == False,
-            VisibilitySettings.open_to_contact == False,
-        )
-    )
-    hidden_ids = {r[0] for r in hidden_result.fetchall()}
-    ranked = [(pid, score) for pid, score in ranked if pid not in hidden_ids]
+    ranked = [
+        (pid, score)
+        for pid, score in ranked
+        if not (pid in vis_map and not vis_map[pid].open_to_work and not vis_map[pid].open_to_contact)
+    ]
 
     if open_to_work_only:
-        vis_result = await db.execute(
-            select(VisibilitySettings.person_id).where(VisibilitySettings.open_to_work == True)
-        )
-        open_ids = {r[0] for r in vis_result.fetchall()}
-        ranked = [(pid, score) for pid, score in ranked if pid in open_ids]
+        ranked = [
+            (pid, score)
+            for pid, score in ranked
+            if pid in vis_map and vis_map[pid].open_to_work
+        ]
 
-    if parsed.company or parsed.team:
-        card_filter = (
-            select(ExperienceCard.person_id)
-            .where(ExperienceCard.status == ExperienceCard.APPROVED)
+    if parsed.company:
+        match_result = await db.execute(
+            select(ExperienceCard.user_id)
+            .where(ExperienceCard.visibility == True)
+            .where(func.lower(ExperienceCard.company_name) == parsed.company.strip().lower())
             .distinct()
         )
-        if parsed.company:
-            card_filter = card_filter.where(
-                func.lower(ExperienceCard.company) == parsed.company.strip().lower()
-            )
-        if parsed.team:
-            card_filter = card_filter.where(
-                func.lower(ExperienceCard.team) == parsed.team.strip().lower()
-            )
-        match_result = await db.execute(card_filter)
         match_ids = {r[0] for r in match_result.fetchall()}
         ranked = [(pid, score) for pid, score in ranked if pid in match_ids]
 
@@ -160,12 +155,8 @@ async def run_search(
         if loc_set:
             filtered = []
             for pid, score in ranked:
-                v = await db.execute(
-                    select(VisibilitySettings.work_preferred_locations).where(
-                        VisibilitySettings.person_id == pid
-                    )
-                )
-                locs = v.scalar_one_or_none()
+                vis = vis_map.get(pid)
+                locs = vis.work_preferred_locations if vis else None
                 if locs and any(loc and loc.strip().lower() in loc_set for loc in locs):
                     filtered.append((pid, score))
             ranked = filtered
@@ -173,17 +164,11 @@ async def run_search(
     if body.salary_min is not None or body.salary_max is not None:
         filtered = []
         for pid, score in ranked:
-            v = await db.execute(
-                select(
-                    VisibilitySettings.work_preferred_salary_min,
-                    VisibilitySettings.work_preferred_salary_max,
-                ).where(VisibilitySettings.person_id == pid)
-            )
-            row = v.fetchone()
-            if not row:
+            vis = vis_map.get(pid)
+            if not vis:
                 filtered.append((pid, score))
                 continue
-            w_min, w_max = row[0], row[1]
+            w_min, w_max = vis.work_preferred_salary_min, vis.work_preferred_salary_max
             if body.salary_min is not None and w_max is not None and float(w_max) < float(body.salary_min):
                 continue
             if body.salary_max is not None and w_min is not None and float(w_min) > float(body.salary_max):
@@ -207,12 +192,15 @@ async def run_search(
         sr = SearchResult(search_id=search_rec.id, person_id=person_id, rank=rank, score=Decimal(str(score)))
         db.add(sr)
 
+    people_map = {}
+    if ranked:
+        people_result = await db.execute(select(Person).where(Person.id.in_([pid for pid, _ in ranked])))
+        people_map = {str(p.id): p for p in people_result.scalars().all()}
+
     people_list = []
     for pid, _ in ranked:
-        p_result = await db.execute(select(Person).where(Person.id == pid))
-        person = p_result.scalar_one_or_none()
-        v_result = await db.execute(select(VisibilitySettings).where(VisibilitySettings.person_id == pid))
-        vis = v_result.scalar_one_or_none()
+        person = people_map.get(pid)
+        vis = vis_map.get(pid)
         people_list.append(
             PersonSearchResult(
                 id=pid,
@@ -266,8 +254,8 @@ async def get_person_profile(
 
     cards_result = await db.execute(
         select(ExperienceCard).where(
-            ExperienceCard.person_id == person_id,
-            ExperienceCard.status == ExperienceCard.APPROVED,
+            ExperienceCard.user_id == person_id,
+            ExperienceCard.visibility == True,
         ).order_by(ExperienceCard.created_at.desc())
     )
     cards = cards_result.scalars().all()
@@ -299,8 +287,6 @@ async def get_person_profile(
         work_preferred_locations=(vis.work_preferred_locations or []) if vis else [],
         work_preferred_salary_min=vis.work_preferred_salary_min if vis else None,
         work_preferred_salary_max=vis.work_preferred_salary_max if vis else None,
-        contact_preferred_salary_min=vis.contact_preferred_salary_min if vis else None,
-        contact_preferred_salary_max=vis.contact_preferred_salary_max if vis else None,
         experience_cards=[experience_card_to_response(c) for c in cards],
         contact=contact,
     )

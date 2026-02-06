@@ -141,7 +141,7 @@ This document focuses on the **V1 pipeline**, which is what the Builder UI uses.
 
 ## Phase 3: V1 pipeline — first storage (DRAFT)
 
-**File:** `apps/api/src/services/experience_card_v1.py` — **`run_draft_v1_pipeline(db, person_id, body)`**
+**File:** `apps/api/src/services/experience_card_pipeline.py` — **`run_draft_v1_pipeline(db, person_id, body)`**
 
 This is where the **first** database writes for experience cards happen.
 
@@ -156,7 +156,7 @@ This is where the **first** database writes for experience cards happen.
 
 ### Step 3.2 — Atomize raw text (LLM)
 
-- **Prompt:** **`PROMPT_ATOMIZER`** from `apps/api/src/prompts/experience_card_v1.py`, filled with `user_text=body.raw_text`.
+- **Prompt:** **`PROMPT_EXTRACT_ALL_CARDS`** from `apps/api/src/prompts/experience_card.py`, filled with cleaned text and `person_id`.
 - **Code:** `response = await chat.chat(prompt, max_tokens=1024)` then **`_parse_json_array(response)`**.
 - **Result:** List of **atoms** (e.g. each with `atom_id`, `raw_text_span`, `suggested_intent`, `why`).
 - **If list is empty:** function returns `(draft_set_id, raw_experience_id, [])` — no cards are created; commit still happens (only `raw_experiences` row).
@@ -181,7 +181,7 @@ This is where the **first** database writes for experience cards happen.
 ### Step 3.5 — For each atom: persist family to DB (first storage)
 
 
-- **Function:** **`_persist_v1_family(db, person_id, raw_experience_id, family)`** in `experience_card_v1.py`.
+- **Function:** **`_persist_v1_family(db, person_id, raw_experience_id, family)`** in `experience_card_pipeline.py`.
 
 **For the parent:**
 
@@ -375,9 +375,9 @@ When the app needs the user’s saved cards (e.g. home, profile, or Builder “s
 |-------|------|------------------|
 | **DB** | `apps/api/src/db/models.py` | `RawExperience`, `ExperienceCard` (status, embedding) |
 | **API routes** | `apps/api/src/routers/builder.py` | `POST /experience-cards/draft-v1`, `POST /draft-sets/{id}/commit` |
-| **Pipeline** | `apps/api/src/services/experience_card_v1.py` | `run_draft_v1_pipeline`, `_persist_v1_family`, `_v1_card_to_experience_card_fields` |
+| **Pipeline** | `apps/api/src/services/experience_card_pipeline.py` | `run_draft_v1_pipeline`, `_persist_v1_family`, `_v1_card_to_experience_card_fields` |
 | **Card service** | `apps/api/src/services/experience_card.py` | `list_draft_cards_by_raw_experience`, `approve_cards_batch`, `list_my_cards` |
-| **Prompts** | `apps/api/src/prompts/experience_card_v1.py` | PROMPT_ATOMIZER, PROMPT_PARENT_AND_CHILDREN, PROMPT_VALIDATOR |
+| **Prompts** | `apps/api/src/prompts/experience_card.py` | PROMPT_REWRITE, PROMPT_CLEANUP, PROMPT_EXTRACT_ALL_CARDS, PROMPT_VALIDATE_ALL_CARDS |
 | **Auth/DB** | `apps/api/src/dependencies.py` | `get_current_user`, `get_db` (commit/rollback) |
 | **Frontend** | `apps/web/src/app/(authenticated)/builder/page.tsx` | `extractDraftV1`, `handleSaveCards`, state (rawText, draftSetId, cardFamilies) |
 | **Frontend** | `apps/web/src/components/builder/save-cards-modal.tsx` | Save confirmation modal |

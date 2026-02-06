@@ -3,6 +3,7 @@
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from src.auth import hash_password, verify_password, create_access_token
 from src.db.models import Person, VisibilitySettings, ContactDetails, CreditWallet, CreditLedger
@@ -22,7 +23,10 @@ async def signup(db: AsyncSession, body: SignupRequest) -> TokenResponse:
         display_name=body.display_name,
     )
     db.add(person)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
     db.add(VisibilitySettings(person_id=person.id))
     db.add(ContactDetails(person_id=person.id))
     wallet = CreditWallet(person_id=person.id, balance=SIGNUP_CREDITS)

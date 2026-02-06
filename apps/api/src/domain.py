@@ -1,5 +1,5 @@
 """
-Domain schemas: enums and core entities (Person, Experience Card v1).
+Domain types and schemas: enums and core entities (Person, Experience Card v1).
 Source of truth for API spec. Use for validation, docs, and future API alignment.
 """
 
@@ -13,51 +13,47 @@ from pydantic import BaseModel, Field
 # -----------------------------------------------------------------------------
 
 Intent = Literal[
-    "education",
     "work",
+    "education",
     "project",
+    "business",
+    "research",
+    "practice",
+    "exposure",
     "achievement",
-    "certification",
-    "responsibility",
-    "skill_application",
-    "method_used",
-    "artifact_created",
-    "challenge",
-    "decision",
+    "transition",
     "learning",
-    "life_event",
-    "relocation",
-    "volunteering",
+    "life_context",
     "community",
     "finance",
     "other",
     "mixed",
 ]
 
+
 ChildRelationType = Literal[
-    "component_of",
-    "skill_applied",
-    "method_used",
-    "tool_used",
-    "artifact_created",
-    "challenge_faced",
-    "decision_made",
-    "outcome_detail",
-    "learning_from",
-    "example_of",
+    "describes",
+    "supports",
+    "demonstrates",
+    "results_in",
+    "learned_from",
+    "involves",
+    "part_of",
 ]
+
 
 # Intents allowed only for child cards (subset of Intent)
 ChildIntent = Literal[
     "responsibility",
+    "capability",
+    "method",
     "outcome",
-    "skill_application",
-    "method_used",
+    "learning",
     "challenge",
     "decision",
-    "learning",
-    "artifact_created",
+    "evidence",
 ]
+
 
 Visibility = Literal["private", "profile_only", "searchable"]
 
@@ -326,6 +322,20 @@ class ExperienceCardV1Schema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
+# Allowed child_type values for ExperienceCardChild (prompts + validation)
+ALLOWED_CHILD_TYPES: tuple[str, ...] = (
+    "skills",
+    "tools",
+    "metrics",
+    "achievements",
+    "responsibilities",
+    "collaborations",
+    "domain_knowledge",
+    "exposure",
+    "education",
+    "certifications",
+)
 
 # Entity taxonomy as list (for validation / docs)
 ENTITY_TAXONOMY: list[str] = [

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional
 
@@ -43,23 +43,23 @@ class PatchMeRequest(BaseModel):
 
 
 class VisibilitySettingsResponse(BaseModel):
+    """Matches db.models.VisibilitySettings."""
+
     open_to_work: bool
     work_preferred_locations: list[str]
     work_preferred_salary_min: Optional[Decimal] = None
     work_preferred_salary_max: Optional[Decimal] = None
     open_to_contact: bool
-    contact_preferred_salary_min: Optional[Decimal] = None
-    contact_preferred_salary_max: Optional[Decimal] = None
 
 
 class PatchVisibilityRequest(BaseModel):
+    """Optional fields for patching VisibilitySettings (matches DB columns)."""
+
     open_to_work: Optional[bool] = None
     work_preferred_locations: Optional[list[str]] = None
     work_preferred_salary_min: Optional[Decimal] = None
     work_preferred_salary_max: Optional[Decimal] = None
     open_to_contact: Optional[bool] = None
-    contact_preferred_salary_min: Optional[Decimal] = None
-    contact_preferred_salary_max: Optional[Decimal] = None
 
 
 # -----------------------------------------------------------------------------
@@ -169,7 +169,7 @@ class CardFamilyV1Response(BaseModel):
 
 
 class DraftSetV1Response(BaseModel):
-    """Result of Experience Card v1 pipeline: atomize → parent → children → validate."""
+    """Result of Experience Card v1 pipeline: cleanup → extract-all → validate-all."""
 
     draft_set_id: str
     raw_experience_id: str
@@ -183,54 +183,68 @@ class CommitDraftSetRequest(BaseModel):
 
 
 class ExperienceCardCreate(BaseModel):
-    draft_card_id: Optional[str] = None
-    raw_experience_id: Optional[str] = None
     title: Optional[str] = None
-    context: Optional[str] = None
-    constraints: Optional[str] = None
-    decisions: Optional[str] = None
-    outcome: Optional[str] = None
-    tags: list[str] = []
-    company: Optional[str] = None
-    team: Optional[str] = None
-    role_title: Optional[str] = None
-    time_range: Optional[str] = None
+    normalized_role: Optional[str] = None
+    domain: Optional[str] = None
+    sub_domain: Optional[str] = None
+    company_name: Optional[str] = None
+    company_type: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    is_current: Optional[bool] = None
     location: Optional[str] = None
+    employment_type: Optional[str] = None
+    summary: Optional[str] = None
+    raw_text: Optional[str] = None
+    intent_primary: Optional[str] = None
+    intent_secondary: Optional[list[str]] = None
+    seniority_level: Optional[str] = None
+    confidence_score: Optional[float] = None
+    visibility: Optional[bool] = None
 
 
 class ExperienceCardPatch(BaseModel):
-    locked: Optional[bool] = None
     title: Optional[str] = None
-    context: Optional[str] = None
-    constraints: Optional[str] = None
-    decisions: Optional[str] = None
-    outcome: Optional[str] = None
-    tags: Optional[list[str]] = None
-    company: Optional[str] = None
-    team: Optional[str] = None
-    role_title: Optional[str] = None
-    time_range: Optional[str] = None
+    normalized_role: Optional[str] = None
+    domain: Optional[str] = None
+    sub_domain: Optional[str] = None
+    company_name: Optional[str] = None
+    company_type: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    is_current: Optional[bool] = None
     location: Optional[str] = None
+    employment_type: Optional[str] = None
+    summary: Optional[str] = None
+    raw_text: Optional[str] = None
+    intent_primary: Optional[str] = None
+    intent_secondary: Optional[list[str]] = None
+    seniority_level: Optional[str] = None
+    confidence_score: Optional[float] = None
+    visibility: Optional[bool] = None
 
 
 class ExperienceCardResponse(BaseModel):
     id: str
-    person_id: str
-    raw_experience_id: Optional[str] = None
-    status: str
-    human_edited: bool = False
-    locked: bool = False
+    user_id: str
     title: Optional[str] = None
-    context: Optional[str] = None
-    constraints: Optional[str] = None
-    decisions: Optional[str] = None
-    outcome: Optional[str] = None
-    tags: list[str]
-    company: Optional[str] = None
-    team: Optional[str] = None
-    role_title: Optional[str] = None
-    time_range: Optional[str] = None
+    normalized_role: Optional[str] = None
+    domain: Optional[str] = None
+    sub_domain: Optional[str] = None
+    company_name: Optional[str] = None
+    company_type: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    is_current: Optional[bool] = None
     location: Optional[str] = None
+    employment_type: Optional[str] = None
+    summary: Optional[str] = None
+    raw_text: Optional[str] = None
+    intent_primary: Optional[str] = None
+    intent_secondary: list[str] = []
+    seniority_level: Optional[str] = None
+    confidence_score: Optional[float] = None
+    visibility: bool = True
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -261,6 +275,8 @@ class SearchResponse(BaseModel):
 
 
 class PersonProfileResponse(BaseModel):
+    """Profile for search results; visibility fields match db.models.VisibilitySettings."""
+
     id: str
     display_name: Optional[str] = None
     open_to_work: bool
@@ -268,8 +284,6 @@ class PersonProfileResponse(BaseModel):
     work_preferred_locations: list[str]
     work_preferred_salary_min: Optional[Decimal] = None
     work_preferred_salary_max: Optional[Decimal] = None
-    contact_preferred_salary_min: Optional[Decimal] = None
-    contact_preferred_salary_max: Optional[Decimal] = None
     experience_cards: list[ExperienceCardResponse]
     contact: Optional[ContactDetailsResponse] = None  # only if unlocked
 

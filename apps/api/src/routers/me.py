@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Person
-from src.dependencies import get_current_user, get_db, get_card_status_filter
+from src.dependencies import get_current_user, get_db
 from src.schemas import (
     PersonResponse,
     PatchMeRequest,
@@ -15,7 +15,7 @@ from src.schemas import (
     BioCreateUpdate,
     ExperienceCardResponse,
 )
-from src.domain_schemas import PersonSchema, ExperienceCardV1Schema
+from src.domain import PersonSchema, ExperienceCardV1Schema
 from src.serializers import experience_card_to_response, experience_card_to_v1_schema
 from src.services.me import me_service
 from src.services.experience_card import experience_card_service
@@ -109,20 +109,18 @@ async def get_credits_ledger(
 
 @router.get("/experience-cards", response_model=list[ExperienceCardResponse])
 async def list_my_experience_cards(
-    status_filter: str | None = Depends(get_card_status_filter),
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    cards = await experience_card_service.list_cards(db, current_user.id, status_filter)
+    cards = await experience_card_service.list_cards(db, current_user.id)
     return [experience_card_to_response(c) for c in cards]
 
 
 @router.get("/experience-cards-v1", response_model=list[ExperienceCardV1Schema])
 async def list_my_experience_cards_v1(
-    status_filter: str | None = Depends(get_card_status_filter),
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List current user's experience cards in domain v1 schema (Experience Card v1)."""
-    cards = await experience_card_service.list_cards(db, current_user.id, status_filter)
+    cards = await experience_card_service.list_cards(db, current_user.id)
     return [experience_card_to_v1_schema(c) for c in cards]

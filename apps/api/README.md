@@ -199,17 +199,18 @@ All used by routers and services for validation and serialization.
 | **`OpenAICompatibleEmbeddingProvider`** | 1) **`__init__(base_url, api_key, model, dimension=384)`**: normalize base_url to `/v1`. 2) **`embed(texts)`**: POST to `{base_url}/embeddings` with model and input=texts; return list of embeddings ordered by index; on error raise `EmbeddingServiceError`. |
 | **`get_embedding_provider()`** | If `embed_api_base_url` set → return `OpenAICompatibleEmbeddingProvider(..., dimension=384)`. Else raise RuntimeError. |
 
-### Experience Card v1 prompts (`prompts/experience_card_v1.py`)
+### Experience Card prompts (`prompts/experience_card.py`)
 
-Copy-paste prompts for a universal Experience Card v1 pipeline (messy text → atoms → parent card → child cards → validated JSON). Align with `domain_schemas.ExperienceCardV1Schema`; do not assume the user is in tech.
+Prompts for the Experience Card pipeline (messy text → rewrite → cleanup → extract-all → validate-all). Align with `domain`: parents use `ExperienceCardParentV1Schema` (intent = `Intent`), children use `ExperienceCardChildV1Schema` (intent = `ChildIntent`, relation_type = `ChildRelationType`), child_type from `ALLOWED_CHILD_TYPES`. Do not assume the user is in tech.
 
 | Prompt | Purpose |
 |--------|---------|
-| **`PROMPT_ATOMIZER`** | Split user message into atomic experiences (atom_id, raw_text_span, suggested_intent, why). Placeholder: `{{USER_TEXT}}`. |
-| **`PROMPT_PARENT_AND_CHILDREN`** | From one atom produce one parent + 0–10 children in one call. Placeholders: `{{ATOM_TEXT}}`, `{{PERSON_ID}}`. |
-| **`PROMPT_VALIDATOR`** | Validate and correct parent + children. Placeholder: `{{PARENT_AND_CHILDREN_JSON}}`. |
+| **`PROMPT_REWRITE`** | Rewrite messy user message into clear English. Placeholder: `{{USER_TEXT}}`. |
+| **`PROMPT_CLEANUP`** | Light cleanup for extraction. Placeholder: `{{USER_TEXT}}`. |
+| **`PROMPT_EXTRACT_ALL_CARDS`** | Extract all parent + child cards in one pass. Placeholders: `{{USER_TEXT}}`, `{{PERSON_ID}}`. |
+| **`PROMPT_VALIDATE_ALL_CARDS`** | Validate and correct parent + children. Placeholder: `{{PARENT_AND_CHILDREN_JSON}}`. |
 
-Use `fill_prompt(template, user_text=..., atom_text=..., person_id=..., parent_and_children_json=...)` to substitute placeholders. Pipeline order: atomizer → parent+children → validator.
+Use `fill_prompt(template, user_text=..., person_id=..., parent_and_children_json=...)` to substitute placeholders. Pipeline implemented in `services/experience_card_pipeline.py`.
 
 ---
 
@@ -306,6 +307,7 @@ All require `get_current_user` and `get_db`. Tags: builder.
 - **POST /experience-cards/{card_id}/approve** — Load card; 404 if not found; approve (compute embedding); on EmbeddingServiceError → 503; return serialized card.
 - **POST /experience-cards/{card_id}/hide** — Load card; 404 if not found; set status=HIDDEN; return serialized card.
 - **GET /me/experience-cards** — Query: status (optional). If status not in DRAFT/APPROVED/HIDDEN → 400. List cards via service; return list of ExperienceCardResponse.
+- **GET /me/experience-cards-v1** — List current user's experience cards in domain v1 shape; returns list of `ExperienceCardV1Schema` (intent from `domain.Intent`).
 
 ### Search (`routers/search.py`)
 

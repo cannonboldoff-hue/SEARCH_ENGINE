@@ -72,9 +72,9 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
   function Row({ label, value }: { label: string; value: React.ReactNode }) {
     if (value == null || value === "") return null;
     return (
-      <div>
+      <div className="min-w-0">
         <span className={labelClass}>{label}</span>
-        <p className={valueClass}>{value}</p>
+        <p className={cn(valueClass, "break-words")}>{value}</p>
       </div>
     );
   }
@@ -134,8 +134,22 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
 
   if (rows.length === 0) return null;
 
+  const totalChars = rows.reduce((sum, row) => sum + `${row.label}${row.value}`.length, 0);
+  const useTwoColumnCompact = compact && rows.length <= 6 && totalChars <= 220;
+  const useTwoColumnFull = !compact && rows.length <= 8 && totalChars <= 320;
+
   return (
-    <div className={compact ? "space-y-1.5 mt-2" : "space-y-2 mt-3 pt-3 border-t border-border/40"}>
+    <div
+      className={cn(
+        compact
+          ? useTwoColumnCompact
+            ? "mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5"
+            : "mt-2 space-y-1.5"
+          : useTwoColumnFull
+            ? "mt-3 pt-3 border-t border-border/40 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2"
+            : "space-y-2 mt-3 pt-3 border-t border-border/40"
+      )}
+    >
       {rows.map((r, i) => (
         <Row key={`${r.label}-${i}`} label={r.label} value={r.value} />
       ))}
@@ -537,19 +551,25 @@ export default function BuilderPage() {
                           exit={{ opacity: 0, rotateX: 8, scale: 0.96 }}
                           transition={{ type: "spring", stiffness: 280, damping: 26 }}
                           style={{ transformStyle: "preserve-3d", perspective: 800 }}
-                          className="max-w-full min-w-0 space-y-2"
+                          className="relative max-w-full min-w-0"
                         >
-                          <TiltCard
-                            disabled
-                            maxTilt={6}
-                            scale={1.01}
-                            className={cn(
-                              "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
-                              "border-l-4 border-l-primary depth-shadow"
+                          <div className="relative pl-6">
+                            {children.length > 0 && (
+                              <span className="absolute left-2 top-10 bottom-4 w-px bg-border/60" aria-hidden />
                             )}
-                          >
-                            <div className="p-4">
-                              <div className="flex items-start justify-between gap-2 w-full">
+                            <div className="relative">
+                              <span className="absolute -left-6 top-6 h-2 w-2 rounded-full bg-primary/60 border border-primary/30" aria-hidden />
+                              <TiltCard
+                                disabled
+                                maxTilt={6}
+                                scale={1.01}
+                                className={cn(
+                                  "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
+                                  "border-l-4 border-l-primary depth-shadow"
+                                )}
+                              >
+                                <div className="p-4 sm:p-5">
+                                  <div className="flex items-start justify-between gap-2 w-full">
                                 <span className="flex items-center gap-2 min-w-0 flex-1">
                                   <span className="text-muted-foreground flex-shrink-0">
                                     <CardTypeIcon tags={tags} title={(parent as { title?: string })?.title ?? parent?.headline ?? null} />
@@ -735,192 +755,201 @@ export default function BuilderPage() {
                                   <V1CardDetails card={parent} />
                                 </>
                               )}
-                              {children.length > 0 && (
-                                  <div className="mt-4 pt-4 border-t border-border/50 space-y-3 min-w-0">
-                                    <p className="text-xs font-medium text-muted-foreground">Child cards</p>
-                                    <ul className="space-y-2">
-                                      {children.map((child) => {
-                                        const childId = child?.id ?? "";
-                                        const childRelation = child?.relation_type ?? "";
-                                        const childTitle = (child as { title?: string })?.title ?? child?.headline ?? "Untitled";
-                                        const isEditingChild = editingCardId === childId;
-                                        return (
-                                          <li
-                                            key={childId || childTitle}
-                                            className="rounded-lg border border-border/40 bg-muted/30 p-3"
-                                          >
-                                            <div className="flex items-start justify-between gap-2">
-                                              <div className="min-w-0 flex-1">
-                                                {childRelation && (
-                                                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
-                                                    {String(childRelation).replace(/_/g, " ")}
-                                                  </span>
-                                                )}
-                                                {isEditingChild ? null : (
-                                                  <p className="font-medium text-sm">{childTitle}</p>
-                                                )}
-                                              </div>
-                                              {isEditingChild ? (
-                                                <div className="flex items-center gap-1 flex-shrink-0">
-                                                  <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                    onClick={handleDeleteCard}
-                                                    disabled={deleteCardMutation.isPending}
-                                                  >
-                                                    Delete
-                                                  </Button>
-                                                  <Button
-                                                    size="sm"
-                                                    variant="default"
-                                                    onClick={submitEditCard}
-                                                    disabled={patchCardMutation.isPending}
-                                                  >
-                                                    <Check className="h-4 w-4 mr-1" />
-                                                    Done
-                                                  </Button>
-                                                </div>
-                                              ) : (
-                                                <Button
-                                                  size="sm"
-                                                  variant="ghost"
-                                                  className="flex-shrink-0 text-muted-foreground hover:text-foreground"
-                                                  onClick={() => startEditingCard(child)}
-                                                >
-                                                  Edit
-                                                </Button>
-                                              )}
-                                            </div>
-                                            {isEditingChild ? (
-                                              <div className="mt-3 space-y-3 pt-3 border-t border-border/40">
-                                                <div className="space-y-1.5">
-                                                  <Label className="text-xs">Title</Label>
-                                                  <Input
-                                                    value={editForm.title}
-                                                    onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
-                                                    placeholder="Card title"
-                                                    className="text-sm"
-                                                  />
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                  <Label className="text-xs">Summary</Label>
-                                                  <Textarea
-                                                    value={editForm.context}
-                                                    onChange={(e) => setEditForm((f) => ({ ...f, context: e.target.value }))}
-                                                    placeholder="Context / summary"
-                                                    rows={2}
-                                                    className="text-sm resize-y"
-                                                  />
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                  <Label className="text-xs">Tags (comma-separated)</Label>
-                                                  <Input
-                                                    value={editForm.tagsStr}
-                                                    onChange={(e) => setEditForm((f) => ({ ...f, tagsStr: e.target.value }))}
-                                                    placeholder="e.g. Python, API"
-                                                    className="text-sm"
-                                                  />
-                                                </div>
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                                  <div className="space-y-1.5">
-                                                    <Label className="text-xs">Time range</Label>
-                                                    <Input
-                                                      value={editForm.time_range}
-                                                      onChange={(e) => setEditForm((f) => ({ ...f, time_range: e.target.value }))}
-                                                      className="text-sm"
-                                                    />
-                                                  </div>
-                                                  <div className="space-y-1.5">
-                                                    <Label className="text-xs">Role</Label>
-                                                    <Input
-                                                      value={editForm.role_title}
-                                                      onChange={(e) => setEditForm((f) => ({ ...f, role_title: e.target.value }))}
-                                                      className="text-sm"
-                                                    />
-                                                  </div>
-                                                </div>
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                                  <div className="space-y-1.5">
-                                                    <Label className="text-xs">Company</Label>
-                                                    <Input
-                                                      value={editForm.company}
-                                                      onChange={(e) => setEditForm((f) => ({ ...f, company: e.target.value }))}
-                                                      className="text-sm"
-                                                    />
-                                                  </div>
-                                                  <div className="space-y-1.5">
-                                                    <Label className="text-xs">Location</Label>
-                                                    <Input
-                                                      value={editForm.location}
-                                                      onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
-                                                      className="text-sm"
-                                                    />
-                                                  </div>
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                  <Label className="text-xs">Team (optional)</Label>
-                                                  <Input
-                                                    value={editForm.team}
-                                                    onChange={(e) => setEditForm((f) => ({ ...f, team: e.target.value }))}
-                                                    placeholder="Team name"
-                                                    className="text-sm"
-                                                  />
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                  <Label className="text-xs">Constraints (optional)</Label>
-                                                  <Textarea
-                                                    value={editForm.constraints}
-                                                    onChange={(e) => setEditForm((f) => ({ ...f, constraints: e.target.value }))}
-                                                    placeholder="Constraints or context"
-                                                    rows={2}
-                                                    className="text-sm resize-y"
-                                                  />
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                  <Label className="text-xs">Decisions (optional)</Label>
-                                                  <Textarea
-                                                    value={editForm.decisions}
-                                                    onChange={(e) => setEditForm((f) => ({ ...f, decisions: e.target.value }))}
-                                                    placeholder="Key decisions"
-                                                    rows={2}
-                                                    className="text-sm resize-y"
-                                                  />
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                  <Label className="text-xs">Outcome (optional)</Label>
-                                                  <Textarea
-                                                    value={editForm.outcome}
-                                                    onChange={(e) => setEditForm((f) => ({ ...f, outcome: e.target.value }))}
-                                                    placeholder="Outcome or result"
-                                                    rows={2}
-                                                    className="text-sm resize-y"
-                                                  />
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                  <input
-                                                    type="checkbox"
-                                                    id="edit-locked-child"
-                                                    checked={editForm.locked}
-                                                    onChange={(e) => setEditForm((f) => ({ ...f, locked: e.target.checked }))}
-                                                    className="rounded border-border"
-                                                  />
-                                                  <Label htmlFor="edit-locked-child" className="text-xs cursor-pointer">Locked</Label>
-                                                </div>
-                                              </div>
-                                            ) : (
-                                              <V1CardDetails card={child} compact />
-                                            )}
-                                          </li>
-                                        );
-                                      })}
-                                    </ul>
-                                  </div>
-                              )}
                             </div>
                           </TiltCard>
-                        </motion.div>
-                      );
+                          {children.length > 0 && (
+                            <span className="absolute -left-5 top-full mt-1 h-4 w-px bg-border/60" aria-hidden />
+                          )}
+                        </div>
+                          {children.length > 0 && (
+                            <div className="mt-4 space-y-2 min-w-0">
+                              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Child cards</p>
+                              <ul className="space-y-2">
+                                {children.map((child) => {
+                                  const childId = child?.id ?? "";
+                                  const childRelation = child?.relation_type ?? "";
+                                  const childTitle = (child as { title?: string })?.title ?? child?.headline ?? "Untitled";
+                                  const isEditingChild = editingCardId === childId;
+                                  return (
+                                    <li
+                                      key={childId || childTitle}
+                                      className="relative"
+                                    >
+                                      <span className="absolute -left-6 top-5 h-px w-6 bg-border/60" aria-hidden />
+                                      <span className="absolute -left-6 top-5 h-2 w-2 rounded-full bg-muted-foreground/40 border border-border/60" aria-hidden />
+                                      <div className="rounded-lg border border-border/40 bg-muted/30 p-3 sm:p-4 min-w-0">
+                                        <div className="flex items-start justify-between gap-2">
+                                          <div className="min-w-0 flex-1">
+                                            {childRelation && (
+                                              <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
+                                                {String(childRelation).replace(/_/g, " ")}
+                                              </span>
+                                            )}
+                                            {isEditingChild ? null : (
+                                              <p className="font-medium text-sm">{childTitle}</p>
+                                            )}
+                                          </div>
+                                          {isEditingChild ? (
+                                            <div className="flex items-center gap-1 flex-shrink-0">
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                onClick={handleDeleteCard}
+                                                disabled={deleteCardMutation.isPending}
+                                              >
+                                                Delete
+                                              </Button>
+                                              <Button
+                                                size="sm"
+                                                variant="default"
+                                                onClick={submitEditCard}
+                                                disabled={patchCardMutation.isPending}
+                                              >
+                                                <Check className="h-4 w-4 mr-1" />
+                                                Done
+                                              </Button>
+                                            </div>
+                                          ) : (
+                                            <Button
+                                              size="sm"
+                                              variant="ghost"
+                                              className="flex-shrink-0 text-muted-foreground hover:text-foreground"
+                                              onClick={() => startEditingCard(child)}
+                                            >
+                                              Edit
+                                            </Button>
+                                          )}
+                                        </div>
+                                        {isEditingChild ? (
+                                          <div className="mt-3 space-y-3 pt-3 border-t border-border/40">
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Title</Label>
+                                              <Input
+                                                value={editForm.title}
+                                                onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                                                placeholder="Card title"
+                                                className="text-sm"
+                                              />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Summary</Label>
+                                              <Textarea
+                                                value={editForm.context}
+                                                onChange={(e) => setEditForm((f) => ({ ...f, context: e.target.value }))}
+                                                placeholder="Context / summary"
+                                                rows={2}
+                                                className="text-sm resize-y"
+                                              />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Tags (comma-separated)</Label>
+                                              <Input
+                                                value={editForm.tagsStr}
+                                                onChange={(e) => setEditForm((f) => ({ ...f, tagsStr: e.target.value }))}
+                                                placeholder="e.g. Python, API"
+                                                className="text-sm"
+                                              />
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                              <div className="space-y-1.5">
+                                                <Label className="text-xs">Time range</Label>
+                                                <Input
+                                                  value={editForm.time_range}
+                                                  onChange={(e) => setEditForm((f) => ({ ...f, time_range: e.target.value }))}
+                                                  className="text-sm"
+                                                />
+                                              </div>
+                                              <div className="space-y-1.5">
+                                                <Label className="text-xs">Role</Label>
+                                                <Input
+                                                  value={editForm.role_title}
+                                                  onChange={(e) => setEditForm((f) => ({ ...f, role_title: e.target.value }))}
+                                                  className="text-sm"
+                                                />
+                                              </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                              <div className="space-y-1.5">
+                                                <Label className="text-xs">Company</Label>
+                                                <Input
+                                                  value={editForm.company}
+                                                  onChange={(e) => setEditForm((f) => ({ ...f, company: e.target.value }))}
+                                                  className="text-sm"
+                                                />
+                                              </div>
+                                              <div className="space-y-1.5">
+                                                <Label className="text-xs">Location</Label>
+                                                <Input
+                                                  value={editForm.location}
+                                                  onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
+                                                  className="text-sm"
+                                                />
+                                              </div>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Team (optional)</Label>
+                                              <Input
+                                                value={editForm.team}
+                                                onChange={(e) => setEditForm((f) => ({ ...f, team: e.target.value }))}
+                                                placeholder="Team name"
+                                                className="text-sm"
+                                              />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Constraints (optional)</Label>
+                                              <Textarea
+                                                value={editForm.constraints}
+                                                onChange={(e) => setEditForm((f) => ({ ...f, constraints: e.target.value }))}
+                                                placeholder="Constraints or context"
+                                                rows={2}
+                                                className="text-sm resize-y"
+                                              />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Decisions (optional)</Label>
+                                              <Textarea
+                                                value={editForm.decisions}
+                                                onChange={(e) => setEditForm((f) => ({ ...f, decisions: e.target.value }))}
+                                                placeholder="Key decisions"
+                                                rows={2}
+                                                className="text-sm resize-y"
+                                              />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Outcome (optional)</Label>
+                                              <Textarea
+                                                value={editForm.outcome}
+                                                onChange={(e) => setEditForm((f) => ({ ...f, outcome: e.target.value }))}
+                                                placeholder="Outcome or result"
+                                                rows={2}
+                                                className="text-sm resize-y"
+                                              />
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              <input
+                                                type="checkbox"
+                                                id="edit-locked-child"
+                                                checked={editForm.locked}
+                                                onChange={(e) => setEditForm((f) => ({ ...f, locked: e.target.checked }))}
+                                                className="rounded border-border"
+                                              />
+                                              <Label htmlFor="edit-locked-child" className="text-xs cursor-pointer">Locked</Label>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <V1CardDetails card={child} compact />
+                                        )}
+                                      </div>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    );
                     }) : null}
                 </AnimatePresence>
                 {savedCards.length > 0 && (

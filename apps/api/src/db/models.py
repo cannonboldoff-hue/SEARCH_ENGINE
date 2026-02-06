@@ -8,14 +8,15 @@ from sqlalchemy import (
     Boolean,
     Integer,
     Numeric,
+    Float,
+    Date,
     DateTime,
     ForeignKey,
     Index,
-    JSON,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
-from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
+from sqlalchemy.orm import relationship, synonym
 
 from .session import Base
 
@@ -41,6 +42,7 @@ class Person(Base):
     credit_wallet = relationship("CreditWallet", back_populates="person", uselist=False)
     bio = relationship("Bio", back_populates="person", uselist=False)
     raw_experiences = relationship("RawExperience", back_populates="person")
+    draft_sets = relationship("DraftSet", back_populates="person")
     experience_cards = relationship("ExperienceCard", back_populates="person")
     experience_card_children = relationship("ExperienceCardChild", back_populates="person")
     searches_made = relationship("Search", back_populates="searcher", foreign_keys="Search.searcher_id")
@@ -62,7 +64,7 @@ class Bio(Base):
     college = Column(String(255), nullable=True)
 
     current_company = Column(String(255), nullable=True)
-    past_companies = Column(JSON, nullable=True)  # list of {company_name, role?, years?}
+    past_companies = Column(JSONB, nullable=True)  # list of {company_name, role?, years?}
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
@@ -82,8 +84,6 @@ class VisibilitySettings(Base):
     work_preferred_salary_max = Column(Numeric(12, 2), nullable=True)
 
     open_to_contact = Column(Boolean, default=False)
-    contact_preferred_salary_min = Column(Numeric(12, 2), nullable=True)
-    contact_preferred_salary_max = Column(Numeric(12, 2), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
@@ -145,7 +145,7 @@ class IdempotencyKey(Base):
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     endpoint = Column(String(100), nullable=False)
     response_status = Column(Integer, nullable=True)
-    response_body = Column(JSON, nullable=True)
+    response_body = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (Index("ix_idempotency_keys_key_person_endpoint", "key", "person_id", "endpoint", unique=True),)
@@ -157,10 +157,29 @@ class RawExperience(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     raw_text = Column(Text, nullable=False)
+    raw_text_original = Column(Text, nullable=True)
+    raw_text_cleaned = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     person = relationship("Person", back_populates="raw_experiences")
+    draft_sets = relationship("DraftSet", back_populates="raw_experience")
 
+
+class DraftSet(Base):
+    __tablename__ = "draft_sets"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
+    person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    raw_experience_id = Column(UUID(as_uuid=False), ForeignKey("raw_experiences.id", ondelete="CASCADE"), nullable=False)
+    run_version = Column(Integer, nullable=False, default=1)
+    metadata = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    person = relationship("Person", back_populates="draft_sets")
+    raw_experience = relationship("RawExperience", back_populates="draft_sets")
+    experience_card_children = relationship("ExperienceCardChild", back_populates="draft_set")
+    experience_cards = relationship("ExperienceCard", back_populates="draft_set")
+    
 
 class ExperienceCard(Base):
     __tablename__ = "experience_cards"
@@ -171,76 +190,78 @@ class ExperienceCard(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
-    raw_experience_id = Column(UUID(as_uuid=False), ForeignKey("raw_experiences.id", ondelete="SET NULL"), nullable=True)
+    user_id = synonym("person_id")
 
-    status = Column(String(20), default=DRAFT, nullable=False, index=True)
-    human_edited = Column(Boolean, default=False, nullable=False)
-    locked = Column(Boolean, default=False, nullable=False)
+    title = Column(Text, nullable=True)
+    normalized_role = Column(Text, nullable=True)
 
-    title = Column(String(500), nullable=True)
-    context = Column(Text, nullable=True)
-    constraints = Column(Text, nullable=True)
-    decisions = Column(Text, nullable=True)
-    outcome = Column(Text, nullable=True)
-    tags = Column(ARRAY(String), default=list)
+    domain = Column(Text, nullable=True)
+    sub_domain = Column(Text, nullable=True)
 
-    company = Column(String(255), nullable=True)
-    team = Column(String(255), nullable=True)
-    role_title = Column(String(255), nullable=True)
-    time_range = Column(String(100), nullable=True)
-    location = Column(String(255), nullable=True)
+    company_name = Column(Text, nullable=True)
+    company_type = Column(Text, nullable=True)
 
-    embedding = Column(Vector(384), nullable=True)  # bge-base typically 384 or 768
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
+    is_current = Column(Boolean, nullable=True)
+
+    location = Column(Text, nullable=True)
+    employment_type = Column(Text, nullable=True)
+
+    summary = Column(Text, nullable=True)
+    raw_text = Column(Text, nullable=True)
+
+    intent_primary = Column(Text, nullable=True)
+    intent_secondary = Column(ARRAY(String), default=list)
+
+    seniority_level = Column(Text, nullable=True)
+
+    confidence_score = Column(Float, nullable=True)
+    visibility = Column(Boolean, default=True, nullable=False)
+    embedding = Column(Vector(384), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
     person = relationship("Person", back_populates="experience_cards")
+    draft_set = relationship("DraftSet", back_populates="experience_cards")
+    children = relationship("ExperienceCardChild", back_populates="experience", cascade="all, delete-orphan")
+
+    __table_args__ = (Index("ix_experience_card_parent", "person_id"),)
 
 
 class ExperienceCardChild(Base):
     __tablename__ = "experience_card_children"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
-    parent_id = Column(UUID(as_uuid=False), ForeignKey("experience_cards.id", ondelete="CASCADE"), nullable=False)
+    parent_experience_id = Column(UUID(as_uuid=False), ForeignKey("experience_cards.id", ondelete="CASCADE"), nullable=False)
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     raw_experience_id = Column(UUID(as_uuid=False), ForeignKey("raw_experiences.id", ondelete="SET NULL"), nullable=True)
+    draft_set_id = Column(UUID(as_uuid=False), ForeignKey("draft_sets.id", ondelete="SET NULL"), nullable=True)
 
-    depth = Column(Integer, default=1, nullable=False)
-    relation_type = Column(String(50), nullable=True)
+    child_type = Column(String(50), nullable=False)  
+    label = Column(String(255), nullable=True)
 
-    status = Column(String(20), default=ExperienceCard.DRAFT, nullable=False, index=True)
-    human_edited = Column(Boolean, default=False, nullable=False)
-    locked = Column(Boolean, default=False, nullable=False)
+    value = Column(JSONB, nullable=False)  # DIMENSION CONTAINER
 
-    title = Column(String(500), nullable=True)
-    context = Column(Text, nullable=True)
-    constraints = Column(Text, nullable=True)
-    decisions = Column(Text, nullable=True)
-    outcome = Column(Text, nullable=True)
-    tags = Column(ARRAY(String), default=list)
+    confidence_score = Column(Float, nullable=True)
 
-    company = Column(String(255), nullable=True)
-    team = Column(String(255), nullable=True)
-    role_title = Column(String(255), nullable=True)
-    time_range = Column(String(100), nullable=True)
-    location = Column(String(255), nullable=True)
-
-    # Child-only rich fields
-    tooling = Column(JSON, nullable=True)
-    entities = Column(JSON, nullable=True)
-    actions = Column(JSON, nullable=True)
-    outcomes = Column(JSON, nullable=True)
-    topics = Column(JSON, nullable=True)
-    evidence = Column(JSON, nullable=True)
-
+    search_phrases = Column(ARRAY(String), default=list)
+    search_document = Column(Text, nullable=True)
     embedding = Column(Vector(384), nullable=True)
+
+    extra = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
     person = relationship("Person", back_populates="experience_card_children")
+    draft_set = relationship("DraftSet", back_populates="experience_card_children")
+    experience = relationship("ExperienceCard", back_populates="children")
 
+    __table_args__ = (
+        Index("uq_experience_card_child_type", "parent_experience_id", "child_type", unique=True),
+    )
 
 class Search(Base):
     __tablename__ = "searches"
@@ -248,7 +269,7 @@ class Search(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
     searcher_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     query_text = Column(Text, nullable=False)
-    filters = Column(JSON, nullable=True)  # company, team, open_to_work_only, etc.
+    filters = Column(JSONB, nullable=True)  # company, team, open_to_work_only, etc.
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     searcher = relationship("Person", back_populates="searches_made", foreign_keys=[searcher_id])

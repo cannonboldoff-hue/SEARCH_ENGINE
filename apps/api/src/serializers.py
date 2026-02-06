@@ -1,23 +1,23 @@
 """Shared model-to-response serializers."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
 from src.db.models import ExperienceCard, Person
 from src.schemas import ExperienceCardResponse
 
 if TYPE_CHECKING:
     from src.db.models import Bio, VisibilitySettings
-from src.domain_schemas import (
+from src.domain import (
     PersonSchema,
     LocationBasic,
     PersonVerification,
     PersonPrivacyDefaults,
     ExperienceCardV1Schema,
+    Intent,
     LanguageField,
     TimeField,
     LocationWithConfidence,
     RoleItem,
-    TopicItem,
     ToolingField,
     PrivacyField,
     QualityField,
@@ -29,22 +29,25 @@ def experience_card_to_response(card: ExperienceCard) -> ExperienceCardResponse:
     """Map ExperienceCard model to ExperienceCardResponse."""
     return ExperienceCardResponse(
         id=card.id,
-        person_id=card.person_id,
-        raw_experience_id=card.raw_experience_id,
-        status=card.status,
-        human_edited=getattr(card, "human_edited", False),
-        locked=getattr(card, "locked", False),
+        user_id=card.user_id,
         title=card.title,
-        context=card.context,
-        constraints=card.constraints,
-        decisions=card.decisions,
-        outcome=card.outcome,
-        tags=card.tags or [],
-        company=card.company,
-        team=card.team,
-        role_title=card.role_title,
-        time_range=card.time_range,
+        normalized_role=card.normalized_role,
+        domain=card.domain,
+        sub_domain=card.sub_domain,
+        company_name=card.company_name,
+        company_type=card.company_type,
+        start_date=card.start_date,
+        end_date=card.end_date,
+        is_current=card.is_current,
         location=card.location,
+        employment_type=card.employment_type,
+        summary=card.summary,
+        raw_text=card.raw_text,
+        intent_primary=card.intent_primary,
+        intent_secondary=card.intent_secondary or [],
+        seniority_level=card.seniority_level,
+        confidence_score=card.confidence_score,
+        visibility=card.visibility,
         created_at=card.created_at,
         updated_at=card.updated_at,
     )
@@ -88,26 +91,26 @@ def person_to_person_schema(
 
 
 def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema:
-    """Map ExperienceCard model to ExperienceCardV1Schema (domain v1). Fills defaults for missing fields."""
+    """Map ExperienceCard (parent) to ExperienceCardV1Schema (domain v1). Uses stored intent if valid Intent else 'other'."""
     language = LanguageField(raw_text=None, confidence="medium")
     time = TimeField(
-        start=None,
-        end=None,
-        ongoing=None,
-        text=card.time_range,
+        start=card.start_date.isoformat() if card.start_date else None,
+        end=card.end_date.isoformat() if card.end_date else None,
+        ongoing=card.is_current,
+        text=None,
         confidence="medium",
     )
     location = LocationWithConfidence(
-        city=card.location,
+        city=None,
         region=None,
         country=None,
         text=card.location,
         confidence="medium",
     )
     roles = []
-    if card.role_title:
-        roles.append(RoleItem(label=card.role_title, seniority=None, confidence="medium"))
-    topics = [TopicItem(label=t, raw=None, confidence="medium") for t in (card.tags or [])]
+    if card.normalized_role:
+        roles.append(RoleItem(label=card.normalized_role, seniority=card.seniority_level, confidence="medium"))
+    topics = []
     privacy = PrivacyField(visibility="profile_only", sensitive=False)
     quality = QualityField(
         overall_confidence="medium",
@@ -116,19 +119,21 @@ def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema
         clarifying_question=None,
     )
     updated = getattr(card, "updated_at", None) or card.created_at
+    valid_intents = get_args(Intent)
+    intent: Intent = card.intent_primary if (card.intent_primary and card.intent_primary in valid_intents) else "other"
     return ExperienceCardV1Schema(
         id=card.id,
-        person_id=card.person_id,
-        created_by=card.person_id,
+        person_id=card.user_id,
+        created_by=card.user_id,
         version=1,
         edited_at=card.updated_at,
         parent_id=None,
         depth=0,
         relation_type=None,
-        intent="other",
+        intent=intent,
         headline=card.title or "",
-        summary=(card.context or "")[:500] or (card.outcome or "")[:500] or "",
-        raw_text=card.context or card.outcome or "",
+        summary=(card.summary or "")[:500],
+        raw_text=card.raw_text or "",
         language=language,
         time=time,
         location=location,

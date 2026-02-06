@@ -61,7 +61,7 @@ On **ChatRateLimitError** → 429; on **ChatServiceError** → 503.
 
 ## 4. V1 Pipeline: Where Cards Are First Stored (DRAFT)
 
-**File:** `apps/api/src/services/experience_card_v1.py`
+**File:** `apps/api/src/services/experience_card_pipeline.py`
 
 `run_draft_v1_pipeline(db, person_id, body)` does the following in order.
 
@@ -79,7 +79,7 @@ On **ChatRateLimitError** → 429; on **ChatServiceError** → 503.
 
 ### 4.2 Atomize
 
-1. Build prompt with **`PROMPT_ATOMIZER`** (from `src/prompts/experience_card_v1.py`), filling in the user’s raw text.
+1. Build prompt with **`PROMPT_EXTRACT_ALL_CARDS`** (from `src/prompts/experience_card.py`), filling in the user’s raw text.
 2. Call **chat provider** (`get_chat_provider()`) with `chat.chat(prompt, max_tokens=1024)`.
 3. Parse the LLM response as JSON array (**`_parse_json_array`**); each element is an **atom** (e.g. one experience segment).
 4. If the result is empty, return `(draft_set_id, raw_experience_id, [])` — no DB writes for cards.
