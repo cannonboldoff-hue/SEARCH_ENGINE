@@ -82,7 +82,12 @@ class OpenAICompatibleChatProvider(ChatProvider):
                         raise ChatServiceError(
                             "Chat API returned missing or non-string content."
                         )
-                    return content.strip()
+                    stripped = content.strip()
+                    if not stripped:
+                        raise ChatServiceError(
+                            "Chat API returned empty content (LLM may have failed or been rate-limited)."
+                        )
+                    return stripped
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:
                     if attempt < retries:

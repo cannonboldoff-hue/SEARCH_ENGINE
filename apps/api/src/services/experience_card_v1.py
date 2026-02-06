@@ -47,6 +47,12 @@ def _best_effort_json_parse(text: str) -> object:
 
 
 def _parse_json_array(text: str) -> list:
+    if not text or not text.strip():
+        raise json.JSONDecodeError(
+            "Empty response (LLM may have failed or been rate-limited).",
+            text or "",
+            0,
+        )
     raw = _strip_json_block(text)
     try:
         data = json.loads(raw)
@@ -319,8 +325,11 @@ async def run_draft_v1_pipeline(
     try:
         response = await chat.chat(prompt, max_tokens=1024)
         atoms = _parse_json_array(response)
+    except ChatServiceError:
+        raise
     except (ValueError, json.JSONDecodeError) as e:
-        raise ChatServiceError("Atomizer returned invalid JSON.") from e
+        msg = "Atomizer returned invalid JSON (empty or non-JSON response). LLM may have failed or been rate-limited."
+        raise ChatServiceError(msg) from e
 
     if not atoms:
         return draft_set_id, raw_experience_id, []
