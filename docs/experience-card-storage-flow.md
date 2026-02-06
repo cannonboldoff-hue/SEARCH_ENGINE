@@ -88,40 +88,31 @@ No DB write in this step; only in-memory atoms.
 
 ---
 
-### 4.3 Per-Atom: Parent Extraction
+### 4.3 Per-Atom: Parent + Children in One Call
 
 For each atom:
 
 1. Get `raw_span` from the atom (`raw_text_span` or `raw_text`).
-2. Build prompt with **`PROMPT_PARENT_EXTRACTOR`** and `atom_text=raw_span`, `person_id=person_id`.
-3. Call `chat.chat(prompt, max_tokens=2048)` and parse response as a single JSON object (**`_parse_json_object`**) → **parent** card (v1 shape: headline, summary, time, location, roles, topics, etc.).
-4. **`_inject_parent_metadata(parent, person_id)`**:
-   - Ensures `id` (UUID if missing), `person_id`, `created_by`, `created_at`, `updated_at`, `parent_id=None`, `depth=0`, `relation_type=None`.
+2. Build prompt with **`PROMPT_PARENT_AND_CHILDREN`** and `atom_text=raw_span`, `person_id=person_id`.
+3. Call `chat.chat(prompt, max_tokens=4096)` and parse response as JSON object (**`_parse_json_object`**) → **combined** with `parent` and `children`.
+4. **`_inject_parent_metadata(parent, person_id)`**: ensures `id` (UUID if missing), `person_id`, `created_by`, `created_at`, `updated_at`, `parent_id=None`, `depth=0`, `relation_type=None`.
+5. **`_inject_child_metadata(child, parent_id)`** for each child: ensures `id`, `parent_id`, `depth=1`, `created_at`, `updated_at`.
 
-Parent now has a stable `id` used later for DB and for approve-by-id.
-
----
-
-### 4.4 Per-Atom: Child Generation
-
-1. Build prompt with **`PROMPT_CHILD_GENERATOR`** and `parent_id`, `parent_card_json=json.dumps(parent)`.
-2. Call `chat.chat(prompt, max_tokens=2048)` and parse response as JSON array → **children** (list of v1 child cards).
-3. **`_inject_child_metadata(child, parent_id)`** for each child:
-   - Ensures `id` (UUID if missing), `parent_id`, `depth=1`, `created_at`, `updated_at`.
+Parent has a stable `id` used for children and for DB.
 
 ---
 
-### 4.5 Per-Atom: Validation
+### 4.4 Per-Atom: Validation
 
 1. Build **`combined = {"parent": parent, "children": children}`**.
 2. Prompt with **`PROMPT_VALIDATOR`** and `parent_and_children_json=json.dumps(combined)`.
 3. Call `chat.chat(prompt, max_tokens=4096)` and parse as JSON object → **validated**.
 4. Use `validated.get("parent")` and `validated.get("children")` (fallback to current parent/children).
-5. Build **`family = {"parent": v_parent, "children": v_children}`** and append to `card_families`.
+5. Build **`family = {"parent": v_parent, "children": v_children}`**; persist via **`_persist_v1_family`** and append to `card_families`.
 
 ---
 
-### 4.6 Per-Atom: Persist Family to DB (First Storage of Cards)
+### 4.5 Per-Atom: Persist Family to DB (First Storage of Cards)
 
 1. **`_persist_v1_family(db, person_id, raw_experience_id, family)`** is called.
 2. For the **parent** and each **child** in the family:
@@ -143,7 +134,7 @@ Parent now has a stable `id` used later for DB and for approve-by-id.
 
 ---
 
-### 4.7 Pipeline Return
+### 4.6 Pipeline Return
 
 1. After all atoms are processed, **`run_draft_v1_pipeline`** returns `(draft_set_id, raw_experience_id, card_families)`.
 2. The router builds **`DraftSetV1Response`** and returns it to the frontend.

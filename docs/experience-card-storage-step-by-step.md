@@ -163,28 +163,23 @@ This is where the **first** database writes for experience cards happen.
 
 **No DB write in this step** — only in-memory atoms.
 
-### Step 3.3 — For each atom: parent extraction (LLM)
+### Step 3.3 — For each atom: parent + children extraction (LLM, one prompt)
 
 - **Input:** `raw_span = atom.get("raw_text_span") or atom.get("raw_text") or ""` (skip if empty).
-- **Prompt:** **`PROMPT_PARENT_EXTRACTOR`** with `atom_text=raw_span`, `person_id=person_id`.
-- **Code:** `response = await chat.chat(prompt, max_tokens=2048)` then **`_parse_json_object(response)`** → one **parent** card (v1 shape: headline, summary, time, location, roles, topics, etc.).
-- **Metadata:** **`_inject_parent_metadata(parent, person_id)`** ensures `id` (UUID if missing), `person_id`, `created_by`, `created_at`, `updated_at`, `parent_id=None`, `depth=0`, `relation_type=None`.  
-  Note: This `id` is used only for in-pipeline linking (e.g. child’s `parent_id`). The **persisted** card gets a **new server-generated id** in the next step.
+- **Prompt:** **`PROMPT_PARENT_AND_CHILDREN`** with `atom_text=raw_span`, `person_id=person_id`.
+- **Code:** `response = await chat.chat(prompt, max_tokens=4096)` then **`_parse_json_object(response)`** → **`{ "parent": {...}, "children": [...] }`**.
+- **Metadata:** **`_inject_parent_metadata(parent, person_id)`** ensures parent has `id` (UUID if missing), `person_id`, `created_by`, timestamps, `parent_id=None`, `depth=0`, `relation_type=None`. Each child is passed through **`_inject_child_metadata(child, parent_id)`** (id, parent_id, depth=1, timestamps).  
+  Note: These ids are used only for in-pipeline linking. The **persisted** cards get **new server-generated ids** in the persist step.
 
-### Step 3.4 — For each atom: child generation (LLM)
-
-- **Prompt:** **`PROMPT_CHILD_GENERATOR`** with `parent_id=parent["id"]`, `parent_card_json=json.dumps(parent)`.
-- **Code:** `response = await chat.chat(prompt, max_tokens=2048)` then **`_parse_json_array(response)`** → list of **children**.
-- **Metadata:** Each child is passed through **`_inject_child_metadata(child, parent_id)`** (id, parent_id, depth=1, timestamps).
-
-### Step 3.5 — For each atom: validation (LLM)
+### Step 3.4 — For each atom: validation (LLM)
 
 - **Input:** `combined = {"parent": parent, "children": children}`.
 - **Prompt:** **`PROMPT_VALIDATOR`** with `parent_and_children_json=json.dumps(combined)`.
 - **Code:** `response = await chat.chat(prompt, max_tokens=4096)` then **`_parse_json_object(response)`** → **validated**.
 - **Use:** `v_parent = validated.get("parent") or parent`, `v_children = validated.get("children") or children`; build **`family = {"parent": v_parent, "children": v_children}`**.
 
-### Step 3.6 — For each atom: persist family to DB (first storage of cards)
+### Step 3.5 — For each atom: persist family to DB (first storage)
+
 
 - **Function:** **`_persist_v1_family(db, person_id, raw_experience_id, family)`** in `experience_card_v1.py`.
 
@@ -209,14 +204,14 @@ This is where the **first** database writes for experience cards happen.
 
 **Result:** One **parent** row and N **children** rows in **`experience_cards`**, all with **status = DRAFT**, **embedding = NULL**, linked to the same **`raw_experience_id`**. All ids are **server-generated** (UUID).
 
-### Step 3.7 — Build response payload for this family
+### Step 3.6 — Build response payload for this family
 
 - **`_draft_card_to_family_item(card)`** converts a persisted **ExperienceCard** (parent or child) to the API response shape: `id`, `title`, `context`, `tags`, `headline`, `summary`, `topics`, `time_range`, `role_title`, `company`, `location`.
 - **`card_families.append({ "parent": _draft_card_to_family_item(parent_ec), "children": [_draft_card_to_family_item(c) for c in child_ecs] })`**
 
 So the frontend receives the **actual DB ids** in the response.
 
-### Step 3.8 — Pipeline return and transaction commit
+### Step 3.7 — Pipeline return and transaction commit
 
 - After all atoms are processed, **`run_draft_v1_pipeline`** returns **`(draft_set_id, raw_experience_id, card_families)`**.
 - The router builds **`DraftSetV1Response`** and returns it.
@@ -345,7 +340,7 @@ When the app needs the user’s saved cards (e.g. home, profile, or Builder “s
 [API] run_draft_v1_pipeline
   → INSERT raw_experiences (raw text)
   → Atomize (LLM) → for each atom:
-      → Parent extract (LLM) → Child gen (LLM) → Validate (LLM)
+      → Parent + children (LLM, one prompt) → Validate (LLM)
       → _persist_v1_family → INSERT experience_cards (DRAFT, no embedding)
   → Return draft_set_id, raw_experience_id, card_families
         ↓
@@ -382,7 +377,7 @@ When the app needs the user’s saved cards (e.g. home, profile, or Builder “s
 | **API routes** | `apps/api/src/routers/builder.py` | `POST /experience-cards/draft-v1`, `POST /draft-sets/{id}/commit` |
 | **Pipeline** | `apps/api/src/services/experience_card_v1.py` | `run_draft_v1_pipeline`, `_persist_v1_family`, `_v1_card_to_experience_card_fields` |
 | **Card service** | `apps/api/src/services/experience_card.py` | `list_draft_cards_by_raw_experience`, `approve_cards_batch`, `list_my_cards` |
-| **Prompts** | `apps/api/src/prompts/experience_card_v1.py` | PROMPT_ATOMIZER, PROMPT_PARENT_EXTRACTOR, PROMPT_CHILD_GENERATOR, PROMPT_VALIDATOR |
+| **Prompts** | `apps/api/src/prompts/experience_card_v1.py` | PROMPT_ATOMIZER, PROMPT_PARENT_AND_CHILDREN, PROMPT_VALIDATOR |
 | **Auth/DB** | `apps/api/src/dependencies.py` | `get_current_user`, `get_db` (commit/rollback) |
 | **Frontend** | `apps/web/src/app/(authenticated)/builder/page.tsx` | `extractDraftV1`, `handleSaveCards`, state (rawText, draftSetId, cardFamilies) |
 | **Frontend** | `apps/web/src/components/builder/save-cards-modal.tsx` | Save confirmation modal |

@@ -206,11 +206,10 @@ Copy-paste prompts for a universal Experience Card v1 pipeline (messy text → a
 | Prompt | Purpose |
 |--------|---------|
 | **`PROMPT_ATOMIZER`** | Split user message into atomic experiences (atom_id, raw_text_span, suggested_intent, why). Placeholder: `{{USER_TEXT}}`. |
-| **`PROMPT_PARENT_EXTRACTOR`** | Convert one atom into a parent Experience Card v1 (depth=0). Placeholders: `{{ATOM_TEXT}}`, `{{PERSON_ID}}`. |
-| **`PROMPT_CHILD_GENERATOR`** | Generate 0–10 child cards from parent. Placeholders: `{{PARENT_ID}}`, `{{PARENT_CARD_JSON}}`. |
+| **`PROMPT_PARENT_AND_CHILDREN`** | From one atom produce one parent + 0–10 children in one call. Placeholders: `{{ATOM_TEXT}}`, `{{PERSON_ID}}`. |
 | **`PROMPT_VALIDATOR`** | Validate and correct parent + children. Placeholder: `{{PARENT_AND_CHILDREN_JSON}}`. |
 
-Use `fill_prompt(template, user_text=..., atom_text=..., ...)` to substitute placeholders. Pipeline order: atomizer → parent extractor → child generator → validator.
+Use `fill_prompt(template, user_text=..., atom_text=..., person_id=..., parent_and_children_json=...)` to substitute placeholders. Pipeline order: atomizer → parent+children → validator.
 
 ---
 

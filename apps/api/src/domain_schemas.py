@@ -47,6 +47,18 @@ ChildRelationType = Literal[
     "example_of",
 ]
 
+# Intents allowed only for child cards (subset of Intent)
+ChildIntent = Literal[
+    "responsibility",
+    "outcome",
+    "skill_application",
+    "method_used",
+    "challenge",
+    "decision",
+    "learning",
+    "artifact_created",
+]
+
 Visibility = Literal["private", "profile_only", "searchable"]
 
 ClaimState = Literal["self_claim", "supported", "verified"]
@@ -228,11 +240,62 @@ class IndexField(BaseModel):
     embedding_ref: Optional[str] = None
 
 
+# Shared fields for both parent and child cards (no parent_id/depth/relation_type/intent)
+class _ExperienceCardV1FieldsBase(BaseModel):
+    id: str
+    person_id: str
+    created_by: str
+    version: Literal[1] = 1
+    edited_at: Optional[datetime] = None
+    headline: str
+    summary: str
+    raw_text: str
+    language: LanguageField
+    time: TimeField
+    location: LocationWithConfidence
+    roles: list[RoleItem] = Field(default_factory=list)
+    actions: list[ActionItem] = Field(default_factory=list)
+    topics: list[TopicItem] = Field(default_factory=list)
+    entities: list[EntityItem] = Field(default_factory=list)
+    tooling: ToolingField = Field(default_factory=ToolingField)
+    outcomes: list[OutcomeItem] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    privacy: PrivacyField
+    quality: QualityField
+    index: IndexField = Field(default_factory=IndexField)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExperienceCardParentV1Schema(_ExperienceCardV1FieldsBase):
+    """
+    Parent Experience Card: root of a card family.
+    depth=0, no parent, relation_type=null. intent is any Intent.
+    """
+
+    parent_id: Optional[str] = None
+    depth: Literal[0] = 0
+    relation_type: Optional[str] = None
+    intent: Intent
+
+
+class ExperienceCardChildV1Schema(_ExperienceCardV1FieldsBase):
+    """
+    Child Experience Card: belongs to a parent card.
+    depth=1, parent_id and relation_type required. intent restricted to ChildIntent.
+    """
+
+    parent_id: str
+    depth: Literal[1] = 1
+    relation_type: ChildRelationType
+    intent: ChildIntent
+
+
 class ExperienceCardV1Schema(BaseModel):
     """
     Experience Card v1 (universal content unit).
-    Parent: parent_id=null, depth=0, relation_type=null.
-    Child: parent_id set, depth>=1, relation_type enum.
+    Use ExperienceCardParentV1Schema for parent cards, ExperienceCardChildV1Schema for children.
+    This union type remains for backward compatibility and generic validation.
     """
 
     id: str

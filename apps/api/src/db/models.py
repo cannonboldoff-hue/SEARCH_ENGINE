@@ -42,6 +42,7 @@ class Person(Base):
     bio = relationship("Bio", back_populates="person", uselist=False)
     raw_experiences = relationship("RawExperience", back_populates="person")
     experience_cards = relationship("ExperienceCard", back_populates="person")
+    experience_card_children = relationship("ExperienceCardChild", back_populates="person")
     searches_made = relationship("Search", back_populates="searcher", foreign_keys="Search.searcher_id")
 
 
@@ -195,6 +196,50 @@ class ExperienceCard(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
     person = relationship("Person", back_populates="experience_cards")
+
+
+class ExperienceCardChild(Base):
+    __tablename__ = "experience_card_children"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
+    parent_id = Column(UUID(as_uuid=False), ForeignKey("experience_cards.id", ondelete="CASCADE"), nullable=False)
+    person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    raw_experience_id = Column(UUID(as_uuid=False), ForeignKey("raw_experiences.id", ondelete="SET NULL"), nullable=True)
+
+    depth = Column(Integer, default=1, nullable=False)
+    relation_type = Column(String(50), nullable=True)
+
+    status = Column(String(20), default=ExperienceCard.DRAFT, nullable=False, index=True)
+    human_edited = Column(Boolean, default=False, nullable=False)
+    locked = Column(Boolean, default=False, nullable=False)
+
+    title = Column(String(500), nullable=True)
+    context = Column(Text, nullable=True)
+    constraints = Column(Text, nullable=True)
+    decisions = Column(Text, nullable=True)
+    outcome = Column(Text, nullable=True)
+    tags = Column(ARRAY(String), default=list)
+
+    company = Column(String(255), nullable=True)
+    team = Column(String(255), nullable=True)
+    role_title = Column(String(255), nullable=True)
+    time_range = Column(String(100), nullable=True)
+    location = Column(String(255), nullable=True)
+
+    # Child-only rich fields
+    tooling = Column(JSON, nullable=True)
+    entities = Column(JSON, nullable=True)
+    actions = Column(JSON, nullable=True)
+    outcomes = Column(JSON, nullable=True)
+    topics = Column(JSON, nullable=True)
+    evidence = Column(JSON, nullable=True)
+
+    embedding = Column(Vector(384), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
+
+    person = relationship("Person", back_populates="experience_card_children")
 
 
 class Search(Base):
