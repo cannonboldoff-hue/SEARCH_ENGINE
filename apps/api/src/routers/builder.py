@@ -7,14 +7,16 @@ from src.schemas import (
     RawExperienceCreate,
     RawExperienceResponse,
     RewriteTextResponse,
+    DraftSetV1Response,
+    CardFamilyV1Response,
     ExperienceCardCreate,
     ExperienceCardPatch,
     ExperienceCardResponse,
 )
-from src.providers import ChatServiceError, ChatRateLimitError
+from src.providers import ChatServiceError, ChatRateLimitError, EmbeddingServiceError
 from src.serializers import experience_card_to_response
 from src.services.experience_card import experience_card_service, apply_card_patch
-from src.services.experience_card_pipeline import rewrite_raw_text
+from src.services.experience_card_pipeline import rewrite_raw_text, run_draft_v1_pipeline
 
 router = APIRouter(tags=["builder"])
 
@@ -41,6 +43,26 @@ async def rewrite_experience_text(
     except ChatRateLimitError as e:
         raise HTTPException(status_code=429, detail=str(e))
     except ChatServiceError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/experience-cards/draft-v1", response_model=DraftSetV1Response)
+async def create_draft_cards_v1(
+    body: RawExperienceCreate,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run draft v1 pipeline: rewrite → extract-all → validate-all; persist cards as DRAFT."""
+    try:
+        draft_set_id, raw_experience_id, card_families = await run_draft_v1_pipeline(
+            db, current_user.id, body
+        )
+        return DraftSetV1Response(
+            draft_set_id=draft_set_id,
+            raw_experience_id=raw_experience_id,
+            card_families=[CardFamilyV1Response(parent=f["parent"], children=f["children"]) for f in card_families],
+        )
+    except (ChatServiceError, EmbeddingServiceError) as e:
         raise HTTPException(status_code=503, detail=str(e))
 
 
