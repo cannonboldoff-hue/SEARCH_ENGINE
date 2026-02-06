@@ -155,6 +155,12 @@ class RawExperienceResponse(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class RewriteTextResponse(BaseModel):
+    """Result of POST /experiences/rewrite: cleaned English text."""
+
+    rewritten_text: str
+
+
 class CardFamilyV1Response(BaseModel):
     """One parent Experience Card v1 + its child cards (validated)."""
 

@@ -148,6 +148,11 @@ export type DraftSetV1Response = {
   card_families: CardFamilyV1Response[];
 };
 
+/** Result of POST /experiences/rewrite. Matches backend RewriteTextResponse. */
+export type RewriteTextResponse = {
+  rewritten_text: string;
+};
+
 export type BioResponse = {
   first_name: string | null;
   last_name: string | null;

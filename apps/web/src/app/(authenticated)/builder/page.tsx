@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Trash2, Check } from "lucide-react";
+import { Trash2, Check, PenLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +22,7 @@ import type {
   ExperienceCardPatch,
   CardFamilyV1Response,
   DraftSetV1Response,
+  RewriteTextResponse,
   ExperienceCardV1,
 } from "@/types";
 
@@ -163,11 +164,28 @@ export default function BuilderPage() {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [deletedId, setDeletedId] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isRewriting, setIsRewriting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
 
   const { data: savedCards = [], isLoading: loadingCards } = useExperienceCards();
+
+  const rewriteText = useCallback(async () => {
+    if (!rawText.trim()) return;
+    setIsRewriting(true);
+    try {
+      const result = await api<RewriteTextResponse>("/experiences/rewrite", {
+        method: "POST",
+        body: { raw_text: rawText },
+      });
+      if (result?.rewritten_text != null) setRawText(result.rewritten_text);
+    } catch (e) {
+      console.error("Rewrite failed", e);
+    } finally {
+      setIsRewriting(false);
+    }
+  }, [rawText]);
 
   const extractDraftV1 = useCallback(async () => {
     if (!rawText.trim()) {
@@ -396,7 +414,19 @@ export default function BuilderPage() {
           transition={{ type: "spring", stiffness: 200, damping: 24 }}
           style={{ transformStyle: "preserve-3d" }}
         >
-          <h2 className="text-lg font-semibold mb-1">Raw experience</h2>
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <h2 className="text-lg font-semibold">Raw experience</h2>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={rewriteText}
+              disabled={!rawText.trim() || isRewriting}
+              className="flex-shrink-0"
+            >
+              <PenLine className="h-4 w-4 mr-1.5" />
+              {isRewriting ? "Rewriting…" : "Rewrite"}
+            </Button>
+          </div>
           <p className="text-sm text-muted-foreground mb-3">
             Write freely. Add one experience at a time or multiple. We&apos;ll structure it into cards.
           </p>

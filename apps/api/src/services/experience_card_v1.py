@@ -10,6 +10,7 @@ from src.db.models import RawExperience, ExperienceCard, ExperienceCardChild
 from src.schemas import RawExperienceCreate
 from src.providers import get_chat_provider, ChatServiceError
 from src.prompts.experience_card_v1 import (
+    PROMPT_REWRITE,
     PROMPT_ATOMIZER,
     PROMPT_PARENT_AND_CHILDREN,
     PROMPT_VALIDATOR,
@@ -269,6 +270,19 @@ async def _persist_v1_family(
     return parent_ec, child_ecs
 
 
+async def rewrite_raw_text(raw_text: str) -> str:
+    """
+    Rewrite messy input into clear English for easier extraction.
+    Raises ChatServiceError on LLM failure.
+    """
+    if not raw_text or not raw_text.strip():
+        return raw_text
+    chat = get_chat_provider()
+    prompt = fill_prompt(PROMPT_REWRITE, user_text=raw_text)
+    rewritten = await chat.chat(prompt, max_tokens=2048)
+    return rewritten.strip() or raw_text
+
+
 async def run_draft_v1_pipeline(
     db: AsyncSession,
     person_id: str,
@@ -288,8 +302,20 @@ async def run_draft_v1_pipeline(
 
     chat = get_chat_provider()
 
+    # 0. Rewrite (global normalization before atomizing)
+    # Keep the raw experience as the original user input for persistence/auditing,
+    # but feed the rewritten version into the atomizer to improve splitting.
+    rewritten_text = body.raw_text
+    try:
+        rewrite_prompt = fill_prompt(PROMPT_REWRITE, user_text=body.raw_text)
+        rewritten = await chat.chat(rewrite_prompt, max_tokens=2048)
+        rewritten_text = rewritten.strip() or body.raw_text
+    except Exception:
+        # Best effort: if rewrite fails for any reason, continue with raw text.
+        rewritten_text = body.raw_text
+
     # 1. Atomize
-    prompt = fill_prompt(PROMPT_ATOMIZER, user_text=body.raw_text)
+    prompt = fill_prompt(PROMPT_ATOMIZER, user_text=rewritten_text)
     try:
         response = await chat.chat(prompt, max_tokens=1024)
         atoms = _parse_json_array(response)

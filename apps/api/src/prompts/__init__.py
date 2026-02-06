@@ -19,6 +19,7 @@ Placeholders (double-brace, replace before sending to LLM):
 """
 
 from .experience_card_v1 import (
+    PROMPT_REWRITE,
     PROMPT_ATOMIZER,
     PROMPT_PARENT_AND_CHILDREN,
     PROMPT_VALIDATOR,
@@ -26,6 +27,7 @@ from .experience_card_v1 import (
 )
 
 __all__ = [
+    "PROMPT_REWRITE",
     "PROMPT_ATOMIZER",
     "PROMPT_PARENT_AND_CHILDREN",
     "PROMPT_VALIDATOR",

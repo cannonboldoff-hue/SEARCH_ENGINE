@@ -28,7 +28,7 @@ class ChatProvider(ABC):
     async def parse_search_query(self, query: str) -> ParsedQuery:
         pass
 
-    async def chat(self, user_message: str, max_tokens: int = 2048) -> str:
+    async def chat(self, user_message: str, max_tokens: int = 20480) -> str:
         """Send a single user message and return the assistant reply. Override if needed."""
         return await self._chat([{"role": "user", "content": user_message}], max_tokens=max_tokens)
 
@@ -48,7 +48,7 @@ class OpenAICompatibleChatProvider(ChatProvider):
         self.api_key = api_key
         self.model = model
 
-    async def _chat(self, messages: list[dict[str, str]], max_tokens: int = 2048) -> str:
+    async def _chat(self, messages: list[dict[str, str]], max_tokens: int = 20480) -> str:
         payload = {
             "model": self.model,
             "messages": messages,

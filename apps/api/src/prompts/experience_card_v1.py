@@ -37,19 +37,31 @@ _ENTITY_TYPES = (
 _TOOL_TYPES = "software, equipment, system, platform, instrument, other"
 
 # -----------------------------------------------------------------------------
+# 2.0  Rewrite (messy blob → clean English)
+# -----------------------------------------------------------------------------
+PROMPT_REWRITE = """You are a careful rewrite engine.
+
+Goal: Rewrite the user's message into clear, grammatically correct English so that another model can extract structured information from it more reliably.
+
+STRICT RULES:
+1) Do NOT add new facts. Do NOT guess missing details. Do NOT change meaning.
+2) Keep all proper nouns, names, company names, product names, and numbers EXACTLY as written.
+3) Preserve ordering and intent. If the user lists items, keep them as a list.
+4) Expand common abbreviations only when unambiguous (e.g., "mgr" → "manager").
+5) Remove filler, repetition, and obvious typos, but keep all substantive content.
+6) Output ONLY the rewritten text. No markdown fences, no commentary, no JSON.
+
+User message:
+{{USER_TEXT}}
+"""
+
+# -----------------------------------------------------------------------------
 # 2.1  Atomizer  (messy text → atomic experiences)
 # -----------------------------------------------------------------------------
-PROMPT_ATOMIZER = """You are an information-extraction system that converts RAW, UNSTRUCTURED text into discrete atomic experiences.
+PROMPT_ATOMIZER = """You are an information-extraction system that splits text into discrete atomic experiences.
 
 ─── CONTEXT ───
-The input is real human text that may be:
-• informal, conversational, or stream-of-consciousness
-• full of typos, abbreviations, slang, or mixed languages
-• poorly punctuated or lacking sentence boundaries
-• exaggerated, metaphorical, or emotionally charged
-• incomplete or missing dates, names, or details
-
-Your job: identify every distinct experience the user describes and emit one atom per experience.
+The input is text (possibly already normalized). Your job: identify every distinct experience described and emit one atom per experience.
 
 ─── RULES ───
 1. Output ONLY a valid JSON array — no markdown fences, no commentary.
@@ -57,30 +69,17 @@ Your job: identify every distinct experience the user describes and emit one ato
      atom_id        – sequential id ("a1", "a2", …)
      raw_text_span  – the EXACT substring(s) from the input that back this atom
                       (quote verbatim; may be non-contiguous — join with " … ")
-     cleaned_text   – a normalized, grammatically correct rewrite of raw_text_span
-                      that fixes typos, expands abbreviations, and converts slang
-                      to standard language WITHOUT adding new facts
      suggested_intent – one of: """ + _INTENT_ENUM + """
      why            – one-sentence justification for why this is a distinct atom
 
-3. Normalization guidance:
-   • Fix obvious typos and expand common abbreviations
-     ("mgr" → "manager", "yr" → "year", "dept" → "department", "dev" → "developer/development" per context).
-   • Convert slang/colloquialisms to neutral professional language
-     ("crushed it" → "achieved strong results", "wore many hats" → "took on multiple roles").
-   • Rewrite metaphorical or exaggerated phrases into factual descriptions
-     ("conquered the city" → "expanded presence across the city").
-   • Preserve numbers, proper nouns, and named entities exactly.
-   • Do NOT translate between natural languages — keep the user's language.
-
-4. Splitting rules:
+3. Splitting rules:
    • One atom = one experience (a role, project, achievement, event, learning, etc.).
    • If a sentence packs two experiences ("I managed QA and launched the mobile app"),
      split into two atoms.
    • Chronological or causal groups sharing the SAME scope (same role + same time)
      may stay as one atom if inseparable.
 
-5. Filtering:
+4. Filtering:
    • Do NOT create atoms for:
      – generic filler ("I worked at X" with no outcome or responsibility)
      – pure opinions or feelings with no concrete experience behind them
@@ -97,7 +96,6 @@ User message:
   {
     "atom_id": "a1",
     "raw_text_span": "...",
-    "cleaned_text": "...",
     "suggested_intent": "work",
     "why": "Describes a specific outcome or responsibility"
   }

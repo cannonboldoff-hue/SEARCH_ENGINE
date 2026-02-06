@@ -6,6 +6,7 @@ from src.dependencies import get_current_user, get_db, get_experience_card_or_40
 from src.schemas import (
     RawExperienceCreate,
     RawExperienceResponse,
+    RewriteTextResponse,
     DraftSetV1Response,
     CardFamilyV1Response,
     CommitDraftSetRequest,
@@ -16,7 +17,7 @@ from src.schemas import (
 from src.providers import ChatServiceError, ChatRateLimitError, EmbeddingServiceError
 from src.serializers import experience_card_to_response
 from src.services.experience_card import experience_card_service, apply_card_patch
-from src.services.experience_card_v1 import run_draft_v1_pipeline
+from src.services.experience_card_v1 import run_draft_v1_pipeline, rewrite_raw_text
 
 router = APIRouter(tags=["builder"])
 
@@ -29,6 +30,21 @@ async def create_raw_experience(
 ):
     raw = await experience_card_service.create_raw(db, current_user.id, body)
     return RawExperienceResponse(id=raw.id, raw_text=raw.raw_text, created_at=raw.created_at)
+
+
+@router.post("/experiences/rewrite", response_model=RewriteTextResponse)
+async def rewrite_experience_text(
+    body: RawExperienceCreate,
+    current_user: Person = Depends(get_current_user),
+):
+    """Rewrite messy input into clear English for easier extraction. No persistence."""
+    try:
+        rewritten = await rewrite_raw_text(body.raw_text)
+        return RewriteTextResponse(rewritten_text=rewritten)
+    except ChatRateLimitError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except ChatServiceError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.post("/experience-cards/draft-v1", response_model=DraftSetV1Response)
