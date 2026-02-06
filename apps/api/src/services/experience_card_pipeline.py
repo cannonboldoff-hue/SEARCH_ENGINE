@@ -2,20 +2,14 @@
 
 import json
 import logging
-import time
 import uuid
 from datetime import datetime, timezone, date
 
 logger = logging.getLogger(__name__)
 
 # #region agent log
-_DEBUG_LOG_PATH = "c:\\Users\\Lenovo\\Desktop\\Search_Engine\\.cursor\\debug.log"
 def _debug_log(location: str, message: str, data: dict, hypothesis_id: str = ""):
-    try:
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"location": location, "message": message, "data": data, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": hypothesis_id}, default=str) + "\n")
-    except Exception:
-        pass
+    logger.info("[%s] %s | %s", hypothesis_id, message, json.dumps(data, default=str))
 # #endregion
 
 from fastapi import HTTPException, status
