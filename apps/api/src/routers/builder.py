@@ -1,5 +1,9 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from src.db.models import Person, ExperienceCard
 from src.dependencies import get_current_user, get_db, get_experience_card_or_404
@@ -66,6 +70,11 @@ async def create_draft_cards_v1(
     except ChatRateLimitError as e:
         raise HTTPException(status_code=429, detail=str(e))
     except ChatServiceError as e:
+        logger.exception(
+            "draft-v1 pipeline: chat/LLM error (503). "
+            "Cloud may show success for one call; this can be a later step or invalid JSON from the model: %s",
+            e,
+        )
         raise HTTPException(status_code=503, detail=str(e))
 
 
