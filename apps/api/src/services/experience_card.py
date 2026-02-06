@@ -3,11 +3,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from src.db.models import RawExperience, ExperienceCard
+from src.db.models import RawExperience, ExperienceCard, ExperienceCardChild
 from src.schemas import (
     RawExperienceCreate,
     ExperienceCardCreate,
     ExperienceCardPatch,
+    ExperienceCardChildPatch,
 )
 
 
@@ -147,6 +148,75 @@ def apply_card_patch(card: ExperienceCard, body: ExperienceCardPatch) -> None:
         card.confidence_score = body.confidence_score
     if body.visibility is not None:
         card.visibility = body.visibility
+
+
+def _child_search_document_from_value(label: str | None, value: dict) -> str | None:
+    """Best-effort search_document update for child cards after edits."""
+    if not isinstance(value, dict):
+        return None
+    time_text = None
+    if isinstance(value.get("time"), dict):
+        time_text = value["time"].get("text")
+    location_text = None
+    if isinstance(value.get("location"), dict):
+        location_text = value["location"].get("text")
+    tags = value.get("tags") if isinstance(value.get("tags"), list) else []
+    tags_str = " ".join(str(t).strip() for t in tags[:10] if str(t).strip())
+    parts = [
+        label or "",
+        str(value.get("headline") or ""),
+        str(value.get("summary") or ""),
+        str(value.get("company") or ""),
+        str(location_text or ""),
+        str(time_text or ""),
+        tags_str,
+    ]
+    doc = " ".join(p.strip() for p in parts if p and str(p).strip()).strip()
+    return doc or None
+
+
+def apply_child_patch(child: ExperienceCardChild, body: ExperienceCardChildPatch) -> None:
+    """
+    Apply patch fields to ExperienceCardChild (in place).
+
+    Edits are applied into both:
+    - child.label (for title/headline)
+    - child.value (dimension container used by the draft-v1 child DTO)
+    """
+    value = child.value if isinstance(child.value, dict) else {}
+
+    if body.title is not None:
+        child.label = body.title
+        value["headline"] = body.title
+
+    if body.summary is not None:
+        value["summary"] = body.summary
+
+    if body.tags is not None:
+        tags = [str(t).strip() for t in body.tags if str(t).strip()][:50]
+        value["tags"] = tags
+        # Keep topics in sync for UI rendering convenience
+        value["topics"] = [{"label": t} for t in tags]
+
+    if body.time_range is not None:
+        time_obj = value.get("time")
+        if not isinstance(time_obj, dict):
+            time_obj = {}
+        time_obj["text"] = body.time_range
+        value["time"] = time_obj
+
+    if body.location is not None:
+        loc_obj = value.get("location")
+        if not isinstance(loc_obj, dict):
+            loc_obj = {}
+        loc_obj["text"] = body.location
+        value["location"] = loc_obj
+
+    if body.company is not None:
+        value["company"] = body.company
+
+    child.value = value
+    child.search_document = _child_search_document_from_value(child.label, value)
 
 
 async def list_my_cards(

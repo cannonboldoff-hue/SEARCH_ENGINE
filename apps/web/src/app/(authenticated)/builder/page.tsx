@@ -19,6 +19,8 @@ import { useExperienceCards, EXPERIENCE_CARDS_QUERY_KEY } from "@/hooks";
 import type {
   ExperienceCard,
   ExperienceCardPatch,
+  ExperienceCardChild,
+  ExperienceCardChildPatch,
   CardFamilyV1Response,
   DraftSetV1Response,
   RewriteTextResponse,
@@ -55,7 +57,7 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
     return [ee.type, ee.url ?? ee.note].filter(Boolean).join(": ");
   }).filter(Boolean) as string[];
   const intent = card.intent != null && String(card.intent) !== "" ? String(card.intent).replace(/_/g, " ") : null;
-  const rawText = (card.raw_text ?? "").trim();
+  const summaryText = (card.summary ?? "").toString().trim() || null;
   const lang = card.language && typeof card.language === "object" ? (card.language as { raw_text?: string; confidence?: string }).raw_text ?? (card.language as { confidence?: string }).confidence : null;
   const langStr = (lang ?? "").toString().trim() || null;
   const privacy = card.privacy && typeof card.privacy === "object" ? `${(card.privacy as { visibility?: string }).visibility ?? ""}${(card.privacy as { sensitive?: boolean }).sensitive ? ", sensitive" : ""}`.trim() || null : null;
@@ -95,19 +97,43 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
   const timeRangeStr = (cardAny.time_range as string)?.trim() || null;
   const roleTitleStr = (cardAny.role_title as string)?.trim() || null;
   const companyStr = (cardAny.company as string)?.trim() || null;
+  const domainStr = (cardAny.domain as string)?.trim() || null;
+  const subDomainStr = (cardAny.sub_domain as string)?.trim() || null;
+  const companyTypeStr = (cardAny.company_type as string)?.trim() || null;
+  const employmentTypeStr = (cardAny.employment_type as string)?.trim() || null;
+  const intentPrimaryStr = (cardAny.intent_primary as string)?.trim() || null;
+  const intentSecondaryStr =
+    Array.isArray(cardAny.intent_secondary) && (cardAny.intent_secondary as unknown[]).length
+      ? (cardAny.intent_secondary as unknown[]).map(String).map((s) => s.trim()).filter(Boolean).join(", ")
+      : null;
+  const seniorityStr = (cardAny.seniority_level as string)?.trim() || null;
+  const confidenceScore =
+    typeof cardAny.confidence_score === "number" ? String(cardAny.confidence_score) : null;
+  const visibilityStr =
+    typeof cardAny.visibility === "boolean" ? (cardAny.visibility ? "Visible" : "Hidden") : null;
 
   const rows = [
     card.parent_id != null && card.parent_id !== "" && { label: "Parent ID", value: card.parent_id },
     card.depth != null && { label: "Depth", value: String(card.depth) },
     card.relation_type != null && card.relation_type !== "" && { label: "Relation type", value: String(card.relation_type).replace(/_/g, " ") },
     intent && { label: "Intent", value: intent },
+    summaryText && { label: "Summary", value: summaryText },
     (timeText || timeRangeStr) && { label: "Time", value: timeText || timeRangeStr },
     roleTitleStr && { label: "Role", value: roleTitleStr },
     companyStr && { label: "Company", value: companyStr },
+    companyTypeStr && { label: "Company type", value: companyTypeStr },
     teamStr && { label: "Team", value: teamStr },
+    domainStr && { label: "Domain", value: domainStr },
+    subDomainStr && { label: "Sub-domain", value: subDomainStr },
+    employmentTypeStr && { label: "Employment", value: employmentTypeStr },
     constraintsStr && { label: "Constraints", value: constraintsStr },
     decisionsStr && { label: "Decisions", value: decisionsStr },
     outcomeStr && { label: "Outcome", value: outcomeStr },
+    intentPrimaryStr && { label: "Intent (primary)", value: intentPrimaryStr },
+    intentSecondaryStr && { label: "Intent (secondary)", value: intentSecondaryStr },
+    seniorityStr && { label: "Seniority", value: seniorityStr },
+    confidenceScore && { label: "Confidence score", value: confidenceScore },
+    visibilityStr && { label: "Visibility", value: visibilityStr },
     langStr && { label: "Language", value: langStr },
     roles.length > 0 && { label: "Roles", value: roles.join(", ") },
     actions.length > 0 && { label: "Actions", value: actions.join(", ") },
@@ -120,7 +146,6 @@ function V1CardDetails({ card, compact = false }: { card: ExperienceCardV1; comp
     quality && { label: "Quality", value: quality },
     indexPhrases && { label: "Search phrases", value: indexPhrases },
     indexRef && { label: "Embedding ref", value: indexRef },
-    rawText && { label: "Raw text", value: rawText },
     createdAt && { label: "Created at", value: createdAt },
     updatedAt && { label: "Updated at", value: updatedAt },
     card.edited_at != null && card.edited_at !== "" && { label: "Edited at", value: card.edited_at },
@@ -169,6 +194,7 @@ export default function BuilderPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [editingKind, setEditingKind] = useState<"parent" | "child" | null>(null);
 
   const { data: savedCards = [], isLoading: loadingCards } = useExperienceCards();
 
@@ -215,26 +241,94 @@ export default function BuilderPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY }),
   });
 
+  const patchChildMutation = useMutation({
+    mutationFn: ({ childId, body }: { childId: string; body: ExperienceCardChildPatch }) =>
+      api<ExperienceCardChild>(`/experience-card-children/${childId}`, { method: "PATCH", body }),
+    onSuccess: (updated) => {
+      setCardFamilies((prev) => {
+        const next =
+          prev?.map((fam) => ({
+            ...fam,
+            children:
+              fam.children?.map((c) => (c.id === updated.id ? ({ ...(c as any), ...(updated as any) } as any) : c)) ??
+              [],
+          })) ?? prev;
+        return next as CardFamilyV1Response[] | null;
+      });
+      setEditingCardId(null);
+      setEditingKind(null);
+    },
+  });
+
+  const hideChildMutation = useMutation({
+    mutationFn: (childId: string) =>
+      api<ExperienceCardChild>(`/experience-card-children/${childId}/hide`, { method: "POST" }),
+    onSuccess: (_, childId) => {
+      setCardFamilies((prev) => {
+        const next =
+          prev?.map((fam) => ({
+            ...fam,
+            children: fam.children?.filter((c) => c.id !== childId) ?? [],
+          })) ?? prev;
+        return next as CardFamilyV1Response[] | null;
+      });
+      setEditingCardId(null);
+      setEditingKind(null);
+    },
+  });
+
   const [editForm, setEditForm] = useState<{
     title: string;
     summary: string;
     normalized_role: string;
+    domain: string;
+    sub_domain: string;
     company_name: string;
+    company_type: string;
     location: string;
+    employment_type: string;
     start_date: string;
     end_date: string;
     is_current: boolean;
+    intent_primary: string;
+    intent_secondary_str: string;
+    seniority_level: string;
+    confidence_score: string;
     visibility: boolean;
   }>({
     title: "",
     summary: "",
     normalized_role: "",
+    domain: "",
+    sub_domain: "",
     company_name: "",
+    company_type: "",
     location: "",
+    employment_type: "",
     start_date: "",
     end_date: "",
     is_current: false,
+    intent_primary: "",
+    intent_secondary_str: "",
+    seniority_level: "",
+    confidence_score: "",
     visibility: true,
+  });
+
+  const [childEditForm, setChildEditForm] = useState<{
+    title: string;
+    summary: string;
+    tagsStr: string;
+    time_range: string;
+    company: string;
+    location: string;
+  }>({
+    title: "",
+    summary: "",
+    tagsStr: "",
+    time_range: "",
+    company: "",
+    location: "",
   });
 
   const patchCardMutation = useMutation({
@@ -262,6 +356,15 @@ export default function BuilderPage() {
                   role_title: updated.normalized_role ?? undefined,
                   company: updated.company_name ?? undefined,
                   location: updated.location ?? undefined,
+                  domain: updated.domain ?? undefined,
+                  sub_domain: updated.sub_domain ?? undefined,
+                  company_type: updated.company_type ?? undefined,
+                  employment_type: updated.employment_type ?? undefined,
+                  intent_primary: updated.intent_primary ?? undefined,
+                  intent_secondary: updated.intent_secondary ?? [],
+                  seniority_level: updated.seniority_level ?? undefined,
+                  confidence_score: updated.confidence_score ?? undefined,
+                  visibility: updated.visibility,
                   ...(timeRange ? { time_range: timeRange } : {}),
                 },
               };
@@ -289,15 +392,24 @@ export default function BuilderPage() {
           ? loc
           : (loc && typeof loc === "object" && "text" in (loc as Record<string, unknown>) ? String((loc as Record<string, unknown>).text ?? "") : "");
       setEditingCardId(id);
+      setEditingKind("parent");
       setEditForm({
         title: (c.title as string) ?? (c.headline as string) ?? "",
         summary: (c.context as string) ?? (c.summary as string) ?? "",
         normalized_role: (c.normalized_role as string) ?? (c.role_title as string) ?? "",
+        domain: (c.domain as string) ?? "",
+        sub_domain: (c.sub_domain as string) ?? "",
         company_name: (c.company_name as string) ?? (c.company as string) ?? "",
+        company_type: (c.company_type as string) ?? "",
         location: locationStr,
+        employment_type: (c.employment_type as string) ?? "",
         start_date: (c.start_date as string) ?? "",
         end_date: (c.end_date as string) ?? "",
         is_current: (c.is_current as boolean) ?? false,
+        intent_primary: (c.intent_primary as string) ?? "",
+        intent_secondary_str: Array.isArray(c.intent_secondary) ? (c.intent_secondary as unknown[]).map(String).join(", ") : "",
+        seniority_level: (c.seniority_level as string) ?? "",
+        confidence_score: c.confidence_score != null ? String(c.confidence_score) : "",
         visibility: (c.visibility as boolean) ?? true,
       });
     },
@@ -305,28 +417,81 @@ export default function BuilderPage() {
   );
 
   const submitEditCard = useCallback(() => {
-    if (!editingCardId) return;
+    if (!editingCardId || editingKind !== "parent") return;
     const toNull = (s: string) => (s.trim() ? s.trim() : null);
+    const intentSecondary = editForm.intent_secondary_str
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const confNum = editForm.confidence_score.trim() ? Number(editForm.confidence_score) : null;
     patchCardMutation.mutate({
       cardId: editingCardId,
       body: {
         title: toNull(editForm.title),
         summary: toNull(editForm.summary),
         normalized_role: toNull(editForm.normalized_role),
+        domain: toNull(editForm.domain),
+        sub_domain: toNull(editForm.sub_domain),
         company_name: toNull(editForm.company_name),
+        company_type: toNull(editForm.company_type),
         location: toNull(editForm.location),
+        employment_type: toNull(editForm.employment_type),
         start_date: toNull(editForm.start_date),
         end_date: toNull(editForm.end_date),
         is_current: editForm.is_current,
+        intent_primary: toNull(editForm.intent_primary),
+        intent_secondary: intentSecondary.length ? intentSecondary : null,
+        seniority_level: toNull(editForm.seniority_level),
+        confidence_score: confNum != null && !Number.isNaN(confNum) ? confNum : null,
         visibility: editForm.visibility,
       },
     });
-  }, [editingCardId, editForm, patchCardMutation]);
+  }, [editingCardId, editingKind, editForm, patchCardMutation]);
+
+  const startEditingChild = useCallback((child: ExperienceCardChild | (Record<string, unknown> & { id?: string })) => {
+    const id = (child as { id?: string }).id ?? "";
+    if (!id) return;
+    const c = child as Record<string, unknown>;
+    const tags = (c.tags as string[] | undefined) ?? [];
+    setEditingCardId(id);
+    setEditingKind("child");
+    setChildEditForm({
+      title: (c.title as string) ?? (c.headline as string) ?? "",
+      summary: (c.summary as string) ?? (c.context as string) ?? "",
+      tagsStr: tags.join(", "),
+      time_range: (c.time_range as string) ?? "",
+      company: (c.company as string) ?? "",
+      location: (c.location as string) ?? "",
+    });
+  }, []);
+
+  const submitEditChild = useCallback(() => {
+    if (!editingCardId || editingKind !== "child") return;
+    const tags = childEditForm.tagsStr
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    patchChildMutation.mutate({
+      childId: editingCardId,
+      body: {
+        title: childEditForm.title.trim(),
+        summary: childEditForm.summary.trim(),
+        tags,
+        time_range: childEditForm.time_range.trim(),
+        company: childEditForm.company.trim(),
+        location: childEditForm.location.trim(),
+      },
+    });
+  }, [childEditForm, editingCardId, editingKind, patchChildMutation]);
 
   const handleDeleteCard = useCallback(() => {
     if (!editingCardId) return;
+    if (editingKind === "child") {
+      hideChildMutation.mutate(editingCardId);
+      return;
+    }
     hideCardMutation.mutate(editingCardId);
-  }, [editingCardId, hideCardMutation]);
+  }, [editingCardId, editingKind, hideCardMutation, hideChildMutation]);
 
   const handleSaveCards = useCallback(async () => {
     setSaveError(null);
@@ -485,7 +650,7 @@ export default function BuilderPage() {
                   </motion.div>
                 )}
                 <AnimatePresence mode="popLayout">
-                  {hasV1Families && cardFamilies ? cardFamilies.map((family) => {
+                  {cardFamilies?.map((family) => {
                       const parent = family.parent as ExperienceCardV1;
                       const children = (family.children ?? []) as ExperienceCardV1[];
                       const parentId = parent?.id ?? "";
@@ -501,12 +666,8 @@ export default function BuilderPage() {
                           style={{ transformStyle: "preserve-3d", perspective: 800 }}
                           className="relative max-w-full min-w-0"
                         >
-                          <div className="relative pl-6">
-                            {children.length > 0 && (
-                              <span className="absolute left-2 top-10 bottom-4 w-px bg-border/60" aria-hidden />
-                            )}
+                          <div className="relative">
                             <div className="relative">
-                              <span className="absolute -left-6 top-6 h-2 w-2 rounded-full bg-primary/60 border border-primary/30" aria-hidden />
                               <TiltCard
                                 disabled
                                 maxTilt={6}
@@ -531,7 +692,7 @@ export default function BuilderPage() {
                                     </span>
                                   )}
                                 </span>
-                                {editingCardId === parentId ? (
+                                {editingKind === "parent" && editingCardId === parentId ? (
                                   <div className="flex items-center gap-1 flex-shrink-0">
                                     <Button
                                       size="sm"
@@ -566,7 +727,7 @@ export default function BuilderPage() {
                                   </Button>
                                 )}
                               </div>
-                              {editingCardId === parentId ? (
+                              {editingKind === "parent" && editingCardId === parentId ? (
                                 <div className="mt-3 space-y-3 pt-3 border-t border-border/50">
                                   <div className="space-y-1.5">
                                     <Label className="text-xs">Title</Label>
@@ -586,6 +747,26 @@ export default function BuilderPage() {
                                       rows={3}
                                       className="text-sm resize-y"
                                     />
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Domain</Label>
+                                      <Input
+                                        value={editForm.domain}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, domain: e.target.value }))}
+                                        placeholder="e.g. Payments"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Sub-domain</Label>
+                                      <Input
+                                        value={editForm.sub_domain}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, sub_domain: e.target.value }))}
+                                        placeholder="e.g. Risk"
+                                        className="text-sm"
+                                      />
+                                    </div>
                                   </div>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div className="space-y-1.5">
@@ -637,12 +818,72 @@ export default function BuilderPage() {
                                       />
                                     </div>
                                   </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Company type</Label>
+                                      <Input
+                                        value={editForm.company_type}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, company_type: e.target.value }))}
+                                        placeholder="e.g. Startup"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Employment type</Label>
+                                      <Input
+                                        value={editForm.employment_type}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, employment_type: e.target.value }))}
+                                        placeholder="e.g. Full-time"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                  </div>
                                   <div className="space-y-1.5">
                                     <Label className="text-xs">Role (normalized)</Label>
                                     <Input
                                       value={editForm.normalized_role}
                                       onChange={(e) => setEditForm((f) => ({ ...f, normalized_role: e.target.value }))}
                                       placeholder="e.g. Backend Engineer"
+                                      className="text-sm"
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Seniority</Label>
+                                      <Input
+                                        value={editForm.seniority_level}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, seniority_level: e.target.value }))}
+                                        placeholder="e.g. Senior"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs">Confidence score</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        value={editForm.confidence_score}
+                                        onChange={(e) => setEditForm((f) => ({ ...f, confidence_score: e.target.value }))}
+                                        placeholder="e.g. 0.75"
+                                        className="text-sm"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Intent (primary)</Label>
+                                    <Input
+                                      value={editForm.intent_primary}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, intent_primary: e.target.value }))}
+                                      placeholder="e.g. work"
+                                      className="text-sm"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs">Intent (secondary, comma-separated)</Label>
+                                    <Input
+                                      value={editForm.intent_secondary_str}
+                                      onChange={(e) => setEditForm((f) => ({ ...f, intent_secondary_str: e.target.value }))}
+                                      placeholder="e.g. learning, project"
                                       className="text-sm"
                                     />
                                   </div>
@@ -676,25 +917,52 @@ export default function BuilderPage() {
                               )}
                             </div>
                           </TiltCard>
-                          {children.length > 0 && (
-                            <span className="absolute -left-5 top-full mt-1 h-4 w-px bg-border/60" aria-hidden />
-                          )}
                         </div>
+                            {children.length > 0 && (
+                              <>
+                                {/* Connector thread from parent bottom-center to child stack head */}
+                                <span
+                                  className="pointer-events-none absolute left-1/2 -translate-x-1/2 -bottom-6 h-6 w-px bg-border/60"
+                                  aria-hidden
+                                />
+                                <span
+                                  className="pointer-events-none absolute left-1/2 -translate-x-1/2 -bottom-1 h-2 w-2 rounded-full bg-primary/50 border border-primary/30"
+                                  aria-hidden
+                                />
+                              </>
+                            )}
+                          </div>
                           {children.length > 0 && (
-                            <div className="mt-4 space-y-2 min-w-0">
-                              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Child cards</p>
-                              <ul className="space-y-2">
+                            <div className="relative mt-8 min-w-0">
+                              {/* Child stack spine */}
+                              <span
+                                className="pointer-events-none absolute left-1/2 -translate-x-1/2 -top-8 h-8 w-px bg-border/60"
+                                aria-hidden
+                              />
+                              <span
+                                className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-2 bottom-3 w-px bg-border/60"
+                                aria-hidden
+                              />
+
+                              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide text-center">
+                                Child cards
+                              </p>
+                              <ul className="space-y-3 mt-2">
                                 {children.map((child) => {
                                   const childId = child?.id ?? "";
                                   const childRelation = child?.relation_type ?? "";
                                   const childTitle = (child as { title?: string })?.title ?? child?.headline ?? "Untitled";
+                                  const isEditingThisChild = editingKind === "child" && editingCardId === childId;
                                   return (
                                     <li
                                       key={childId || childTitle}
                                       className="relative"
                                     >
-                                      <span className="absolute -left-6 top-5 h-px w-6 bg-border/60" aria-hidden />
-                                      <span className="absolute -left-6 top-5 h-2 w-2 rounded-full bg-muted-foreground/40 border border-border/60" aria-hidden />
+                                      {/* Node on the child stack spine */}
+                                      <span
+                                        className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-4 h-2 w-2 rounded-full bg-muted-foreground/40 border border-border/60"
+                                        aria-hidden
+                                      />
                                       <div className="rounded-lg border border-border/40 bg-muted/30 p-3 sm:p-4 min-w-0">
                                         <div className="flex items-start justify-between gap-2">
                                           <div className="min-w-0 flex-1">
@@ -705,9 +973,95 @@ export default function BuilderPage() {
                                             )}
                                             <p className="font-medium text-sm">{childTitle}</p>
                                           </div>
-                                          {/* Child cards are persisted as ExperienceCardChild and are not patchable via `/experience-cards/:id`. */}
+                                          {isEditingThisChild ? (
+                                            <div className="flex items-center gap-1 flex-shrink-0">
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                onClick={handleDeleteCard}
+                                                disabled={hideChildMutation.isPending}
+                                              >
+                                                Delete
+                                              </Button>
+                                              <Button
+                                                size="sm"
+                                                variant="default"
+                                                onClick={submitEditChild}
+                                                disabled={patchChildMutation.isPending}
+                                              >
+                                                <Check className="h-4 w-4 mr-1" />
+                                                Done
+                                              </Button>
+                                            </div>
+                                          ) : (
+                                            <Button
+                                              size="sm"
+                                              variant="ghost"
+                                              className="flex-shrink-0 text-muted-foreground hover:text-foreground"
+                                              onClick={() => startEditingChild(child as any)}
+                                            >
+                                              Edit
+                                            </Button>
+                                          )}
                                         </div>
-                                        <V1CardDetails card={child} compact />
+                                        {isEditingThisChild ? (
+                                          <div className="mt-3 space-y-3 pt-3 border-t border-border/40">
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Title</Label>
+                                              <Input
+                                                value={childEditForm.title}
+                                                onChange={(e) => setChildEditForm((f) => ({ ...f, title: e.target.value }))}
+                                                className="text-sm"
+                                              />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Summary</Label>
+                                              <Textarea
+                                                value={childEditForm.summary}
+                                                onChange={(e) => setChildEditForm((f) => ({ ...f, summary: e.target.value }))}
+                                                rows={2}
+                                                className="text-sm resize-y"
+                                              />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Tags (comma-separated)</Label>
+                                              <Input
+                                                value={childEditForm.tagsStr}
+                                                onChange={(e) => setChildEditForm((f) => ({ ...f, tagsStr: e.target.value }))}
+                                                className="text-sm"
+                                              />
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                              <div className="space-y-1.5">
+                                                <Label className="text-xs">Time range</Label>
+                                                <Input
+                                                  value={childEditForm.time_range}
+                                                  onChange={(e) => setChildEditForm((f) => ({ ...f, time_range: e.target.value }))}
+                                                  className="text-sm"
+                                                />
+                                              </div>
+                                              <div className="space-y-1.5">
+                                                <Label className="text-xs">Company</Label>
+                                                <Input
+                                                  value={childEditForm.company}
+                                                  onChange={(e) => setChildEditForm((f) => ({ ...f, company: e.target.value }))}
+                                                  className="text-sm"
+                                                />
+                                              </div>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <Label className="text-xs">Location</Label>
+                                              <Input
+                                                value={childEditForm.location}
+                                                onChange={(e) => setChildEditForm((f) => ({ ...f, location: e.target.value }))}
+                                                className="text-sm"
+                                              />
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <V1CardDetails card={child as any} />
+                                        )}
                                       </div>
                                     </li>
                                   );
@@ -715,10 +1069,9 @@ export default function BuilderPage() {
                               </ul>
                             </div>
                           )}
-                        </div>
                       </motion.div>
                     );
-                    }) : null}
+                    })}
                 </AnimatePresence>
                 {draftSetId == null && savedCards.length > 0 && (
                   <motion.div

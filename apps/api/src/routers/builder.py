@@ -5,8 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-from src.db.models import Person, ExperienceCard
-from src.dependencies import get_current_user, get_db, get_experience_card_or_404
+from src.db.models import Person, ExperienceCard, ExperienceCardChild
+from src.dependencies import (
+    get_current_user,
+    get_db,
+    get_experience_card_or_404,
+    get_experience_card_child_or_404,
+)
 from src.schemas import (
     RawExperienceCreate,
     RawExperienceResponse,
@@ -16,10 +21,12 @@ from src.schemas import (
     ExperienceCardCreate,
     ExperienceCardPatch,
     ExperienceCardResponse,
+    ExperienceCardChildPatch,
+    ExperienceCardChildResponse,
 )
 from src.providers import ChatServiceError, ChatRateLimitError, EmbeddingServiceError
-from src.serializers import experience_card_to_response
-from src.services.experience_card import experience_card_service, apply_card_patch
+from src.serializers import experience_card_to_response, experience_card_child_to_response
+from src.services.experience_card import experience_card_service, apply_card_patch, apply_child_patch
 from src.services.experience_card_pipeline import rewrite_raw_text, run_draft_v1_pipeline
 
 router = APIRouter(tags=["builder"])
@@ -101,4 +108,30 @@ async def hide_experience_card(
 ):
     response = experience_card_to_response(card)
     await db.delete(card)
+    return response
+
+
+@router.patch(
+    "/experience-card-children/{child_id}",
+    response_model=ExperienceCardChildResponse,
+)
+async def patch_experience_card_child(
+    body: ExperienceCardChildPatch,
+    child: ExperienceCardChild = Depends(get_experience_card_child_or_404),
+    db: AsyncSession = Depends(get_db),
+):
+    apply_child_patch(child, body)
+    return experience_card_child_to_response(child)
+
+
+@router.post(
+    "/experience-card-children/{child_id}/hide",
+    response_model=ExperienceCardChildResponse,
+)
+async def hide_experience_card_child(
+    child: ExperienceCardChild = Depends(get_experience_card_child_or_404),
+    db: AsyncSession = Depends(get_db),
+):
+    response = experience_card_child_to_response(child)
+    await db.delete(child)
     return response

@@ -165,6 +165,31 @@ export type RewriteTextResponse = {
   rewritten_text: string;
 };
 
+/** Patch body for PATCH `/experience-card-children/:child_id`. Matches backend `ExperienceCardChildPatch`. */
+export type ExperienceCardChildPatch = {
+  title?: string | null;
+  summary?: string | null;
+  tags?: string[] | null;
+  time_range?: string | null;
+  company?: string | null;
+  location?: string | null;
+};
+
+/** Response DTO for child cards (draft-v1 compatible). Matches backend `ExperienceCardChildResponse`. */
+export type ExperienceCardChild = {
+  id: string;
+  title: string;
+  context: string;
+  tags: string[];
+  headline: string;
+  summary: string;
+  topics: { label: string }[];
+  time_range: string | null;
+  role_title: string | null;
+  company: string | null;
+  location: string | null;
+};
+
 export type BioResponse = {
   first_name: string | null;
   last_name: string | null;

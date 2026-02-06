@@ -2,8 +2,8 @@
 
 from typing import TYPE_CHECKING, get_args
 
-from src.db.models import ExperienceCard, Person
-from src.schemas import ExperienceCardResponse
+from src.db.models import ExperienceCard, ExperienceCardChild, Person
+from src.schemas import ExperienceCardResponse, ExperienceCardChildResponse
 
 if TYPE_CHECKING:
     from src.db.models import Bio, VisibilitySettings
@@ -50,6 +50,32 @@ def experience_card_to_response(card: ExperienceCard) -> ExperienceCardResponse:
         visibility=card.visibility,
         created_at=card.created_at,
         updated_at=card.updated_at,
+    )
+
+
+def experience_card_child_to_response(child: ExperienceCardChild) -> ExperienceCardChildResponse:
+    """Map ExperienceCardChild model to ExperienceCardChildResponse (draft-v1 compatible DTO)."""
+    value = child.value if isinstance(child.value, dict) else {}
+    time_obj = value.get("time") if isinstance(value.get("time"), dict) else {}
+    location_obj = value.get("location") if isinstance(value.get("location"), dict) else {}
+    tags = value.get("tags") if isinstance(value.get("tags"), list) else []
+    topics = value.get("topics") if isinstance(value.get("topics"), list) else [{"label": t} for t in tags]
+
+    title = child.label or (value.get("headline") if isinstance(value.get("headline"), str) else "") or ""
+    summary = (value.get("summary") if isinstance(value.get("summary"), str) else "") or ""
+
+    return ExperienceCardChildResponse(
+        id=child.id,
+        title=title,
+        context=summary,
+        tags=[str(t) for t in tags if str(t).strip()],
+        headline=title,
+        summary=summary,
+        topics=topics if isinstance(topics, list) else [],
+        time_range=time_obj.get("text"),
+        role_title=None,
+        company=value.get("company"),
+        location=location_obj.get("text"),
     )
 
 
