@@ -1,5 +1,9 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from src.db.models import Person, ExperienceCard
 from src.dependencies import get_current_user, get_db, get_experience_card_or_404
@@ -63,6 +67,10 @@ async def create_draft_cards_v1(
             card_families=[CardFamilyV1Response(parent=f["parent"], children=f["children"]) for f in card_families],
         )
     except (ChatServiceError, EmbeddingServiceError) as e:
+        logger.exception("draft-v1 pipeline failed: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+    except RuntimeError as e:
+        logger.warning("draft-v1 pipeline config error: %s", e)
         raise HTTPException(status_code=503, detail=str(e))
 
 
