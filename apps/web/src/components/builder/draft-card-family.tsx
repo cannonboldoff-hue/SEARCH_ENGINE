@@ -62,124 +62,120 @@ export function DraftCardFamily({
       style={{ transformStyle: "preserve-3d", perspective: 800 }}
       className="relative max-w-full min-w-0"
     >
-      <div className="relative">
-        <div className="relative">
-          <TiltCard
-            disabled
-            maxTilt={6}
-            scale={1.01}
-            className={cn(
-              "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
-              "border-l-4 border-l-primary depth-shadow"
-            )}
-          >
-            <div className="p-4 sm:p-5">
-              <div className="flex items-start justify-between gap-2 w-full">
-                <span className="flex items-center gap-2 min-w-0 flex-1">
-                  <span className="text-muted-foreground flex-shrink-0">
-                    <CardTypeIcon tags={tags} title={(parent as { title?: string })?.title ?? parent?.headline ?? null} />
-                  </span>
-                  <span className="font-semibold text-sm truncate">
-                    {(parent as { title?: string })?.title || parent?.headline || "Untitled"}
-                  </span>
-                  {children.length > 0 && (
-                    <span className="text-xs text-muted-foreground flex-shrink-0">
-                      +{children.length} child{children.length !== 1 ? "ren" : ""}
-                    </span>
-                  )}
-                </span>
-                {isEditingParent ? (
-                  <ParentCardEditForm
-                    form={editForm}
-                    onChange={onEditFormChange}
-                    onSubmit={onSubmitEditCard}
-                    onDelete={onDeleteCard}
-                    isSubmitting={isCardSubmitting}
-                    isDeleting={isCardDeleting}
-                    checkboxIdPrefix="edit-parent"
-                  />
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="flex-shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStartEditingCard(parent);
-                    }}
-                  >
-                    Edit
-                  </Button>
-                )}
-              </div>
-              {!isEditingParent && (
-                <>
-                  {tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {tags.map((t, i) => (
-                        <span
-                          key={`${parentId}-tag-${i}-${t}`}
-                          className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
-                        >
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <V1CardDetails card={parent} summaryFullWidth />
-                </>
-              )}
-            </div>
-          </TiltCard>
-        </div>
-        {children.length > 0 && (
-          <>
-            <span
-              className="pointer-events-none absolute left-1/2 -translate-x-1/2 -bottom-6 h-6 w-px bg-border/60"
-              aria-hidden
-            />
-            <span
-              className="pointer-events-none absolute left-1/2 -translate-x-1/2 -bottom-1 h-2 w-2 rounded-full bg-primary/50 border border-primary/30"
-              aria-hidden
-            />
-          </>
+      {/* ── Parent card ── */}
+      <TiltCard
+        disabled
+        maxTilt={6}
+        scale={1.01}
+        className={cn(
+          "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
+          "border-l-4 border-l-primary depth-shadow"
         )}
-      </div>
+      >
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-2 w-full">
+            <span className="flex items-center gap-2 min-w-0 flex-1">
+              <span className="text-muted-foreground flex-shrink-0">
+                <CardTypeIcon tags={tags} title={(parent as { title?: string })?.title ?? parent?.headline ?? null} />
+              </span>
+              <span className="font-semibold text-sm truncate text-foreground">
+                {(parent as { title?: string })?.title || parent?.headline || "Untitled"}
+              </span>
+              {children.length > 0 && (
+                <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
+                  {children.length} thread{children.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </span>
+            {isEditingParent ? (
+              <ParentCardEditForm
+                form={editForm}
+                onChange={onEditFormChange}
+                onSubmit={onSubmitEditCard}
+                onDelete={onDeleteCard}
+                isSubmitting={isCardSubmitting}
+                isDeleting={isCardDeleting}
+                checkboxIdPrefix="edit-parent"
+              />
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="flex-shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStartEditingCard(parent);
+                }}
+              >
+                Edit
+              </Button>
+            )}
+          </div>
+          {!isEditingParent && (
+            <>
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {tags.map((t, i) => (
+                    <span
+                      key={`${parentId}-tag-${i}-${t}`}
+                      className="rounded-md bg-muted/80 px-2 py-0.5 text-xs text-muted-foreground"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <V1CardDetails card={parent} summaryFullWidth />
+            </>
+          )}
+        </div>
+      </TiltCard>
+
+      {/* ── Thread children ── */}
       {children.length > 0 && (
-        <div className="relative mt-8 min-w-0">
+        <div className="relative pl-7 pt-0 mt-0">
+          {/* Vertical thread line */}
           <span
-            className="pointer-events-none absolute left-1/2 -translate-x-1/2 -top-8 h-8 w-px bg-border/60"
-            aria-hidden
-          />
-          <span
-            className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-2 bottom-3 w-px bg-border/60"
+            className="thread-line thread-line-animated top-0 bottom-3"
             aria-hidden
           />
 
-          <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide text-center">
-            Child cards
-          </p>
-          <ul className="space-y-3 mt-2">
-            {children.map((child) => {
+          <ul className="relative space-y-0">
+            {children.map((child, childIdx) => {
               const childId = child?.id ?? "";
               const childRelation = child?.relation_type ?? "";
               const childTitle = (child as { title?: string })?.title ?? child?.headline ?? "Untitled";
               const isEditingThisChild = editingKind === "child" && editingCardId === childId;
+
               return (
-                <li key={childId || childTitle} className="relative">
+                <motion.li
+                  key={childId || childTitle}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: childIdx * 0.06, duration: 0.2 }}
+                  className="relative py-2 first:pt-3"
+                >
+                  {/* Thread node */}
                   <span
-                    className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-4 h-2 w-2 rounded-full bg-muted-foreground/40 border border-border/60"
+                    className={cn(
+                      "thread-node thread-node-sm thread-node-animated",
+                      "top-1/2 -translate-y-1/2",
+                      isEditingThisChild && "thread-node-active"
+                    )}
+                    style={{ animationDelay: `${childIdx * 60 + 100}ms` }}
                     aria-hidden
                   />
-                  <div className="rounded-lg border border-border/40 bg-muted/30 p-3 sm:p-4 min-w-0">
+
+                  {/* Child block */}
+                  <div className="ml-5 rounded-lg border border-border/40 bg-accent/30 px-3 py-2.5 transition-colors hover:bg-accent/50">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         {childRelation && (
-                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mr-2">
                             {String(childRelation).replace(/_/g, " ")}
                           </span>
                         )}
-                        <p className="font-medium text-sm">{childTitle}</p>
+                        <p className="font-medium text-sm text-foreground">{childTitle}</p>
                       </div>
                       {isEditingThisChild ? (
                         <ChildCardEditForm
@@ -194,16 +190,16 @@ export function DraftCardFamily({
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="flex-shrink-0 text-muted-foreground hover:text-foreground"
+                          className="flex-shrink-0 text-muted-foreground hover:text-foreground h-7 px-2"
                           onClick={() => onStartEditingChild(child as any)}
                         >
                           Edit
                         </Button>
                       )}
                     </div>
-                    {!isEditingThisChild && <V1CardDetails card={child as any} />}
+                    {!isEditingThisChild && <V1CardDetails card={child as any} compact />}
                   </div>
-                </li>
+                </motion.li>
               );
             })}
           </ul>

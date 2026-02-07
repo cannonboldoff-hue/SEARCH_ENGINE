@@ -94,3 +94,106 @@ html {
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
+
+/* Glass / frosted effect */
+.glass {
+  background: hsl(var(--card) / 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Subtle ring glow for elevated cards */
+.glow-ring {
+  box-shadow: 0 0 0 1px hsl(var(--border) / 0.5),
+    0 0 24px -4px hsl(var(--ring) / 0.06);
+}
+
+/* Depth shadows for 3D card effect */
+.depth-shadow {
+  box-shadow: 0 2px 8px -2px hsl(var(--foreground) / 0.08),
+    0 4px 16px -4px hsl(var(--foreground) / 0.06);
+}
+.depth-shadow-lg {
+  box-shadow: 0 4px 12px -2px hsl(var(--foreground) / 0.1),
+    0 8px 32px -8px hsl(var(--foreground) / 0.08);
+}
+
+/* 3D perspective utilities */
+.perspective-1000 {
+  perspective: 1000px;
+}
+.transform-3d {
+  transform-style: preserve-3d;
+}
+.card-3d-inner {
+  transform-style: preserve-3d;
+}
+
+/* Pulse glow for modals */
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px hsl(var(--border) / 0.5),
+      0 0 24px -4px hsl(var(--ring) / 0.06);
+  }
+  50% {
+    box-shadow: 0 0 0 1px hsl(var(--border) / 0.7),
+      0 0 32px -4px hsl(var(--ring) / 0.1);
+  }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2.5s ease-in-out infinite;
+}
+
+/* ── Thread / timeline connector system ── */
+.thread-line {
+  position: absolute;
+  left: 20px;
+  width: 2px;
+  background: hsl(var(--border));
+  pointer-events: none;
+}
+
+.thread-node {
+  position: absolute;
+  left: 15px;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  border: 2px solid hsl(var(--border));
+  background: hsl(var(--background));
+  pointer-events: none;
+  z-index: 1;
+}
+
+.thread-node-active {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}
+
+.thread-node-sm {
+  left: 16px;
+  width: 10px;
+  height: 10px;
+}
+
+@keyframes thread-draw {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+.thread-line-animated {
+  transform-origin: top;
+  animation: thread-draw 0.3s ease-out forwards;
+}
+
+@keyframes thread-node-pop {
+  0% { transform: scale(0); }
+  60% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+.thread-node-animated {
+  animation: thread-node-pop 0.25s ease-out forwards;
+}

@@ -2,20 +2,22 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
+import { ArrowLeft, Coins } from "lucide-react";
 import Link from "next/link";
-import { Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ErrorMessage } from "@/components/error-message";
 import { api } from "@/lib/api";
 import { useCredits } from "@/hooks";
+import { cn } from "@/lib/utils";
 
-const PRICE_PER_CREDIT = 1; // ₹1 per credit
+const PRICE_PER_CREDIT = 1; // Rs.1 per credit
 
 const PACKS = [
-  { credits: 100, label: "100 credits" },
-  { credits: 500, label: "500 credits" },
-  { credits: 1000, label: "1,000 credits" },
-  { credits: 5000, label: "5,000 credits" },
+  { credits: 100, label: "100 credits", popular: false },
+  { credits: 500, label: "500 credits", popular: true },
+  { credits: 1000, label: "1,000 credits", popular: false },
+  { credits: 5000, label: "5,000 credits", popular: false },
 ];
 
 export default function CreditsPage() {
@@ -43,33 +45,33 @@ export default function CreditsPage() {
       <div>
         <Link
           href="/settings"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1 group mb-4"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5 group mb-4"
         >
-          <span className="transition-transform group-hover:-translate-x-0.5">{"<-"}</span> Back to settings
+          <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
+          Back to settings
         </Link>
-        <h1 className="text-lg font-semibold">Buy credits</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Buy credits</h1>
         <p className="text-sm text-muted-foreground mt-1">
           {"Use credits for search and unlocking contacts."}
         </p>
       </div>
 
+      {/* Current balance */}
       <Card>
-        <CardHeader className="border-b border-border pb-4">
+        <CardHeader className="pb-3">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center">
               <Coins className="h-4 w-4 text-muted-foreground" />
             </div>
             <div>
               <CardTitle className="text-base">Current balance</CardTitle>
-              <CardDescription>
-                Your available credits.
-              </CardDescription>
+              <CardDescription>Your available credits.</CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-4">
+        <CardContent>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tabular-nums text-foreground">
+            <span className="text-3xl font-semibold tabular-nums text-foreground">
               {credits?.balance ?? "--"}
             </span>
             <span className="text-sm text-muted-foreground">credits</span>
@@ -77,15 +79,16 @@ export default function CreditsPage() {
         </CardContent>
       </Card>
 
+      {/* Packs */}
       <Card>
-        <CardHeader className="border-b border-border pb-4">
+        <CardHeader className="pb-3">
           <CardTitle className="text-base">Choose a pack</CardTitle>
           <CardDescription>
             {"Select a pack and click Buy to add credits to your account."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-4">
-          <div className="grid gap-2 sm:grid-cols-2">
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-2">
             {PACKS.map((pack) => {
               const priceRupees = pack.credits * PRICE_PER_CREDIT;
               const isPending =
@@ -94,12 +97,22 @@ export default function CreditsPage() {
               return (
                 <div
                   key={pack.credits}
-                  className="flex items-center justify-between rounded-lg border border-border p-3 hover:bg-accent transition-colors"
+                  className={cn(
+                    "relative flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-accent",
+                    pack.popular
+                      ? "border-primary/50 ring-1 ring-primary/20"
+                      : "border-border"
+                  )}
                 >
+                  {pack.popular && (
+                    <span className="absolute -top-2.5 left-3 rounded-md bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground">
+                      Popular
+                    </span>
+                  )}
                   <div>
                     <p className="text-sm font-medium text-foreground">{pack.label}</p>
                     <p className="text-xs text-muted-foreground">
-                      {"Rs."}{priceRupees.toLocaleString()}
+                      {"Rs. "}{priceRupees.toLocaleString()}
                     </p>
                   </div>
                   <Button
@@ -114,11 +127,15 @@ export default function CreditsPage() {
             })}
           </div>
           {purchaseMutation.isError && (
-            <p className="text-xs text-destructive mt-3">
-              {purchaseMutation.error instanceof Error
-                ? purchaseMutation.error.message
-                : "Failed to add credits."}
-            </p>
+            <div className="mt-3">
+              <ErrorMessage
+                message={
+                  purchaseMutation.error instanceof Error
+                    ? purchaseMutation.error.message
+                    : "Failed to add credits."
+                }
+              />
+            </div>
           )}
         </CardContent>
       </Card>

@@ -1,13 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { motion } from "framer-motion";
-import { LogOut, User } from "lucide-react";
+import { LogOut, User, Coins, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/auth-context";
+import { useCredits } from "@/hooks";
 
 export default function SettingsPage() {
   const { user, logout } = useAuth();
+  const { data: credits } = useCredits();
 
   return (
     <motion.div
@@ -17,14 +20,15 @@ export default function SettingsPage() {
       className="max-w-xl mx-auto space-y-6"
     >
       <div>
-        <h1 className="text-lg font-semibold">Settings</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Manage your account.
+          Manage your account and preferences.
         </p>
       </div>
 
+      {/* Account */}
       <Card>
-        <CardHeader className="border-b border-border pb-4">
+        <CardHeader className="pb-3">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center">
               <User className="h-4 w-4 text-muted-foreground" />
@@ -37,28 +41,68 @@ export default function SettingsPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-4 space-y-2">
-          <div className="text-sm">
-            <span className="text-muted-foreground">Email:</span>{" "}
-            <span className="text-foreground font-medium">{user?.email ?? "--"}</span>
-          </div>
-          {user?.display_name && (
-            <div className="text-sm">
-              <span className="text-muted-foreground">Display name:</span>{" "}
-              <span className="text-foreground font-medium">{user.display_name}</span>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex flex-col">
+              <span className="text-xs text-muted-foreground">Email</span>
+              <span className="text-sm text-foreground font-medium">{user?.email ?? "--"}</span>
             </div>
-          )}
+            {user?.display_name && (
+              <div className="flex flex-col">
+                <span className="text-xs text-muted-foreground">Display name</span>
+                <span className="text-sm text-foreground font-medium">{user.display_name}</span>
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 
+      {/* Credits quick view */}
       <Card>
-        <CardHeader className="border-b border-border pb-4">
-          <CardTitle className="text-base">Sign out</CardTitle>
-          <CardDescription>
-            Sign out of this device. You can sign back in with the same email.
-          </CardDescription>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center">
+              <Coins className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div>
+              <CardTitle className="text-base">Credits</CardTitle>
+              <CardDescription>Your current balance and purchase options.</CardDescription>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent className="pt-4">
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tabular-nums text-foreground">
+                {credits?.balance ?? "--"}
+              </span>
+              <span className="text-sm text-muted-foreground">credits remaining</span>
+            </div>
+            <Link href="/credits">
+              <Button variant="outline" size="sm">
+                Buy credits
+              </Button>
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Sign out */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center">
+              <Shield className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div>
+              <CardTitle className="text-base">Session</CardTitle>
+              <CardDescription>
+                Sign out of this device. You can sign back in with the same email.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
           <Button
             variant="outline"
             size="sm"

@@ -60,141 +60,142 @@ export function SavedCardFamily({
       style={{ transformStyle: "preserve-3d", perspective: 800 }}
       className={cn("relative max-w-full min-w-0", deletedId === parent.id && "opacity-50")}
     >
-      <div className="relative">
-        <TiltCard
-          disabled
-          maxTilt={6}
-          scale={1.01}
-          className={cn(
-            "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
-            "border-l-4 border-l-primary depth-shadow"
-          )}
-        >
-          <div className="p-4 sm:p-5">
-            <div className="flex items-start justify-between gap-2 w-full">
-              <span className="flex items-center gap-2 min-w-0 flex-1">
-                <span className="font-semibold text-sm truncate">
-                  {parent.title || parent.company_name || "Untitled"}
-                </span>
-                {children.length > 0 && (
-                  <span className="text-xs text-muted-foreground flex-shrink-0">
-                    +{children.length} child{children.length !== 1 ? "ren" : ""}
-                  </span>
-                )}
+      {/* ── Parent card ── */}
+      <TiltCard
+        disabled
+        maxTilt={6}
+        scale={1.01}
+        className={cn(
+          "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
+          "border-l-4 border-l-primary depth-shadow"
+        )}
+      >
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-2 w-full">
+            <span className="flex items-center gap-2 min-w-0 flex-1">
+              <span className="font-semibold text-sm truncate text-foreground">
+                {parent.title || parent.company_name || "Untitled"}
               </span>
-              {isEditingParent ? (
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-muted-foreground"
-                    onClick={onCancelEditing}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="default"
-                    onClick={onSubmitEdit}
-                    disabled={isSubmitting}
-                  >
-                    <Check className="h-4 w-4 mr-1" />
-                    Done
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex gap-1 flex-shrink-0">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-muted-foreground hover:text-foreground"
-                    onClick={() => onStartEditing(parent)}
-                  >
-                    <PenLine className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() => onDelete(parent.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
+              {children.length > 0 && (
+                <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
+                  {children.length} thread{children.length !== 1 ? "s" : ""}
+                </span>
               )}
-            </div>
+            </span>
             {isEditingParent ? (
-              <ParentCardEditForm
-                form={editForm}
-                onChange={onEditFormChange}
-                onSubmit={onSubmitEdit}
-                onDelete={() => onDelete(parent.id)}
-                isSubmitting={isSubmitting}
-                checkboxIdPrefix={`edit-saved-${parent.id}`}
-              />
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground h-7 px-2"
+                  onClick={onCancelEditing}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="h-7"
+                  onClick={onSubmitEdit}
+                  disabled={isSubmitting}
+                >
+                  <Check className="h-3.5 w-3.5 mr-1" />
+                  Done
+                </Button>
+              </div>
             ) : (
-              <div className="mt-3 pt-3 border-t border-border/40 space-y-1.5">
-                {parent.summary && (
-                  <p className="text-sm text-muted-foreground line-clamp-3">{parent.summary}</p>
-                )}
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-                  {parent.company_name && <span>{parent.company_name}</span>}
-                  {parent.domain && <span>{parent.domain}</span>}
-                  {parent.normalized_role && <span>{parent.normalized_role}</span>}
-                </div>
+              <div className="flex gap-0.5 flex-shrink-0">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground hover:text-foreground h-7 w-7 p-0"
+                  onClick={() => onStartEditing(parent)}
+                >
+                  <PenLine className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
+                  onClick={() => onDelete(parent.id)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
               </div>
             )}
           </div>
-        </TiltCard>
-        {children.length > 0 && (
-          <>
-            <span
-              className="pointer-events-none absolute left-1/2 -translate-x-1/2 -bottom-6 h-6 w-px bg-border/60"
-              aria-hidden
+          {isEditingParent ? (
+            <ParentCardEditForm
+              form={editForm}
+              onChange={onEditFormChange}
+              onSubmit={onSubmitEdit}
+              onDelete={() => onDelete(parent.id)}
+              isSubmitting={isSubmitting}
+              checkboxIdPrefix={`edit-saved-${parent.id}`}
             />
-            <span
-              className="pointer-events-none absolute left-1/2 -translate-x-1/2 -bottom-1 h-2 w-2 rounded-full bg-primary/50 border border-primary/30"
-              aria-hidden
-            />
-          </>
-        )}
-      </div>
+          ) : (
+            <div className="mt-3 pt-3 border-t border-border/40 space-y-1.5">
+              {parent.summary && (
+                <p className="text-sm text-muted-foreground line-clamp-3">{parent.summary}</p>
+              )}
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                {parent.company_name && <span>{parent.company_name}</span>}
+                {parent.domain && <span>{parent.domain}</span>}
+                {parent.normalized_role && <span>{parent.normalized_role}</span>}
+              </div>
+            </div>
+          )}
+        </div>
+      </TiltCard>
+
+      {/* ── Thread children ── */}
       {children.length > 0 && (
-        <div className="relative mt-8 min-w-0">
+        <div className="relative pl-7 pt-0 mt-0">
+          {/* Vertical thread line */}
           <span
-            className="pointer-events-none absolute left-1/2 -translate-x-1/2 -top-8 h-8 w-px bg-border/60"
+            className="thread-line top-0 bottom-3"
             aria-hidden
           />
-          <span
-            className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-2 bottom-3 w-px bg-border/60"
-            aria-hidden
-          />
-          <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide text-center">
-            Child cards
-          </p>
-          <ul className="space-y-3 mt-2">
-            {children.map((child) => {
+
+          <ul className="relative space-y-0">
+            {children.map((child, childIdx) => {
               const isEditingThisChild = editingSavedChildId === child.id;
+
               return (
-                <li
+                <motion.li
                   key={child.id}
-                  className={cn("relative", deletedId === child.id && "opacity-50")}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: childIdx * 0.06, duration: 0.2 }}
+                  className={cn(
+                    "relative py-2 first:pt-3",
+                    deletedId === child.id && "opacity-50"
+                  )}
                 >
+                  {/* Thread node */}
                   <span
-                    className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-4 h-2 w-2 rounded-full bg-muted-foreground/40 border border-border/60"
+                    className={cn(
+                      "thread-node thread-node-sm",
+                      "top-1/2 -translate-y-1/2",
+                      isEditingThisChild && "thread-node-active"
+                    )}
                     aria-hidden
                   />
-                  <div className="rounded-lg border border-border/40 bg-muted/30 p-3 sm:p-4 min-w-0">
+
+                  {/* Child block */}
+                  <div className="ml-5 rounded-lg border border-border/40 bg-accent/30 px-3 py-2.5 transition-colors hover:bg-accent/50">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium text-sm">{child.title || child.summary || "Child card"}</p>
+                        <p className="font-medium text-sm text-foreground">
+                          {child.title || child.summary || "Detail"}
+                        </p>
                       </div>
                       {isEditingThisChild ? (
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="text-muted-foreground"
+                            className="text-muted-foreground h-7 px-2"
                             onClick={onCancelEditingChild}
                           >
                             Cancel
@@ -202,30 +203,31 @@ export function SavedCardFamily({
                           <Button
                             size="sm"
                             variant="default"
+                            className="h-7"
                             onClick={onSubmitEditChild}
                             disabled={isSubmitting}
                           >
-                            <Check className="h-4 w-4 mr-1" />
+                            <Check className="h-3.5 w-3.5 mr-1" />
                             Done
                           </Button>
                         </div>
                       ) : (
-                        <div className="flex gap-1 flex-shrink-0">
+                        <div className="flex gap-0.5 flex-shrink-0">
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="text-muted-foreground hover:text-foreground"
+                            className="text-muted-foreground hover:text-foreground h-7 w-7 p-0"
                             onClick={() => onStartEditingChild(child)}
                           >
-                            <PenLine className="h-4 w-4" />
+                            <PenLine className="h-3.5 w-3.5" />
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="text-muted-foreground hover:text-destructive"
+                            className="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
                             onClick={() => onDeleteChild(child.id)}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       )}
@@ -240,7 +242,7 @@ export function SavedCardFamily({
                       />
                     ) : (
                       (child.summary || child.company || child.time_range) && (
-                        <div className="mt-2 pt-2 border-t border-border/40 text-xs text-muted-foreground space-y-0.5">
+                        <div className="mt-1.5 pt-1.5 border-t border-border/30 text-xs text-muted-foreground space-y-0.5">
                           {child.summary && <p className="line-clamp-2">{child.summary}</p>}
                           <div className="flex flex-wrap gap-x-3">
                             {child.company && <span>{child.company}</span>}
@@ -250,7 +252,7 @@ export function SavedCardFamily({
                       )
                     )}
                   </div>
-                </li>
+                </motion.li>
               );
             })}
           </ul>

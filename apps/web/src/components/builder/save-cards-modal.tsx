@@ -31,7 +31,7 @@ export function SaveCardsModal({
           onClick={onClose}
         >
           <motion.div
-            className="rounded-xl glass border border-border p-6 max-w-md w-full mx-4 shadow-xl glow-ring depth-shadow-lg animate-pulse-glow"
+            className="rounded-xl glass border border-border p-6 max-w-md w-full mx-4 shadow-xl glow-ring depth-shadow-lg"
             style={{ transformStyle: "preserve-3d", perspective: 1200 }}
             initial={{ opacity: 0, scale: 0.92, y: 24, rotateX: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0, rotateX: 0 }}
@@ -39,9 +39,9 @@ export function SaveCardsModal({
             transition={{ type: "spring", stiffness: 280, damping: 26 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold">Save experience cards?</h3>
+            <h3 className="text-lg font-semibold text-foreground">Save experience cards?</h3>
             <p className="text-sm text-muted-foreground mt-2">
-              This will update your searchable profile.
+              This will update your searchable profile. Saved cards become visible to searchers.
             </p>
             {error && (
               <div className="mt-3">

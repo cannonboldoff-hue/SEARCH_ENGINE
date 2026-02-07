@@ -1,7 +1,8 @@
+"use client";
+
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { SavedCardFamily } from "@/types";
 
@@ -16,51 +17,70 @@ export function ExpandableExperienceCard({ family, index }: ExpandableExperience
   const hasChildren = children.length > 0;
 
   return (
-    <motion.div
+    <motion.li
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.25 }}
-      className="relative"
+      className="relative list-none"
     >
-      <Card
+      {/* ── Parent card ── */}
+      <div
         className={cn(
-          "transition-colors",
-          hasChildren && "cursor-pointer hover:bg-accent"
+          "relative rounded-xl border border-border bg-card p-4 transition-colors",
+          hasChildren && "cursor-pointer hover:bg-accent/50"
         )}
-        onClick={hasChildren ? () => setIsExpanded(!isExpanded) : undefined}
+        onClick={hasChildren ? () => setIsExpanded((v) => !v) : undefined}
+        role={hasChildren ? "button" : undefined}
+        tabIndex={hasChildren ? 0 : undefined}
+        onKeyDown={
+          hasChildren
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setIsExpanded((v) => !v);
+                }
+              }
+            : undefined
+        }
+        aria-expanded={hasChildren ? isExpanded : undefined}
       >
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground truncate">
               {parent.title || parent.company_name || "Untitled"}
-              {hasChildren && (
-                <span className="text-xs text-muted-foreground font-normal">
-                  ({children.length} detail{children.length !== 1 ? "s" : ""})
-                </span>
-              )}
-            </CardTitle>
-            {hasChildren && (
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {[parent.company_name, parent.normalized_role, parent.location]
+                .filter(Boolean)
+                .join(" / ")}
+            </p>
+            {parent.summary && (
+              <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{parent.summary}</p>
+            )}
+            {[parent.start_date, parent.end_date].filter(Boolean).length > 0 && (
+              <p className="text-xs text-muted-foreground/70 mt-1.5">
+                {[parent.start_date, parent.end_date].filter(Boolean).join(" - ")}
+              </p>
+            )}
+          </div>
+          {hasChildren && (
+            <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {children.length}
+              </span>
               <motion.div
                 animate={{ rotate: isExpanded ? 180 : 0 }}
                 transition={{ duration: 0.2 }}
-                className="text-muted-foreground flex-shrink-0"
+                className="text-muted-foreground"
               >
                 <ChevronDown className="h-4 w-4" />
               </motion.div>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {[parent.company_name, parent.normalized_role, parent.location, parent.start_date, parent.end_date]
-              .filter(Boolean)
-              .join(" / ")}
-          </p>
-        </CardHeader>
-        <CardContent className="text-sm">
-          {parent.summary && <p className="text-muted-foreground">{parent.summary}</p>}
-        </CardContent>
-      </Card>
+            </div>
+          )}
+        </div>
+      </div>
 
-      {/* Children cards */}
+      {/* ── Thread children ── */}
       <AnimatePresence>
         {isExpanded && hasChildren && (
           <motion.div
@@ -68,48 +88,73 @@ export function ExpandableExperienceCard({ family, index }: ExpandableExperience
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.25 }}
-            className="mt-2 ml-4 border-l border-border pl-4 overflow-hidden"
+            className="overflow-hidden"
           >
-            <ul className="space-y-2">
-              {children.map((child, childIdx) => (
-                <motion.li
-                  key={child.id}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ delay: childIdx * 0.04, duration: 0.2 }}
-                >
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="text-sm font-medium text-foreground mb-1">
-                      {child.title || child.headline || child.summary || "Detail"}
-                    </p>
-                    {child.summary && child.title && (
-                      <p className="text-xs text-muted-foreground mb-1.5">{child.summary}</p>
-                    )}
-                    <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-                      {child.company && <span>{child.company}</span>}
-                      {child.time_range && <span>{child.time_range}</span>}
-                      {child.location && <span>{child.location}</span>}
-                    </div>
-                    {child.tags && child.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {child.tags.map((tag, tagIdx) => (
-                          <span
-                            key={tagIdx}
-                            className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-                          >
-                            {tag}
-                          </span>
-                        ))}
+            <div className="relative pl-7 pt-0">
+              {/* Vertical thread line */}
+              <span
+                className="thread-line thread-line-animated top-0 bottom-4"
+                aria-hidden
+              />
+
+              <ul className="relative space-y-0">
+                {children.map((child, childIdx) => (
+                  <motion.li
+                    key={child.id}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{
+                      delay: childIdx * 0.06,
+                      duration: 0.2,
+                    }}
+                    className="relative py-2.5 first:pt-3"
+                  >
+                    {/* Thread node */}
+                    <span
+                      className={cn(
+                        "thread-node thread-node-sm thread-node-animated",
+                        "top-1/2 -translate-y-1/2"
+                      )}
+                      style={{ animationDelay: `${childIdx * 60 + 100}ms` }}
+                      aria-hidden
+                    />
+
+                    {/* Child block */}
+                    <div className="ml-5 rounded-lg border border-border/60 bg-accent/30 px-3 py-2.5 transition-colors hover:bg-accent/60">
+                      <p className="text-sm font-medium text-foreground">
+                        {child.title || child.headline || child.summary || "Detail"}
+                      </p>
+                      {child.summary && child.title && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {child.summary}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-xs text-muted-foreground">
+                        {child.company && <span>{child.company}</span>}
+                        {child.time_range && <span>{child.time_range}</span>}
+                        {child.location && <span>{child.location}</span>}
                       </div>
-                    )}
-                  </div>
-                </motion.li>
-              ))}
-            </ul>
+                      {child.tags && child.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {child.tags.map((tag, tagIdx) => (
+                            <span
+                              key={tagIdx}
+                              className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </motion.li>
+                ))}
+              </ul>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </motion.li>
   );
 }

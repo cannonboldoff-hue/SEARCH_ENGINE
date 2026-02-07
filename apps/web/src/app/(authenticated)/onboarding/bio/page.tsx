@@ -197,8 +197,8 @@ export default function OnboardingBioPage() {
         <BackLink href="/profile" className="text-sm text-muted-foreground hover:text-foreground transition-colors" />
       </div>
       <Card className="glass border-border/50 shadow-xl glow-ring overflow-hidden">
-        <CardHeader className="space-y-1 border-b border-border/50">
-          <CardTitle className="text-xl">Create your bio</CardTitle>
+        <CardHeader className="space-y-1.5 border-b border-border/50">
+          <CardTitle className="text-xl tracking-tight">Create your bio</CardTitle>
           <CardDescription>
             This helps us contextualize your experience. You can edit everything later from your profile.
           </CardDescription>
@@ -208,7 +208,7 @@ export default function OnboardingBioPage() {
             {serverError && <ErrorMessage message={serverError} />}
 
             <section className="space-y-4">
-              <h3 className="text-sm font-semibold text-foreground">Profile basics</h3>
+              <h3 className="text-sm font-semibold text-foreground tracking-tight">Profile basics</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   id="first_name"
@@ -342,16 +342,16 @@ export default function OnboardingBioPage() {
               onWorkSalaryMinChange={setWorkSalaryMin}
             />
 
-            <div className="pt-4 flex flex-col sm:flex-row gap-3">
+            <div className="pt-6 border-t border-border/50 flex flex-col sm:flex-row gap-3">
               <Button
                 type="submit"
                 className="w-full sm:w-auto"
                 size="lg"
                 disabled={putBio.isPending || patchVisibility.isPending}
               >
-                {putBio.isPending || patchVisibility.isPending ? "Saving…" : "Save & continue to Discover"}
+                {putBio.isPending || patchVisibility.isPending ? "Saving..." : "Save & continue to Discover"}
               </Button>
-              <p className="text-sm text-muted-foreground self-center sm:self-center">
+              <p className="text-xs text-muted-foreground self-center leading-relaxed">
                 Next: add experience in the builder, or start searching.
               </p>
             </div>

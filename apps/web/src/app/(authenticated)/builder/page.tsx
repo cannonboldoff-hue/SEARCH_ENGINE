@@ -243,14 +243,16 @@ export default function BuilderPage() {
       animate={{ opacity: 1 }}
       transition={{ duration: 0.35 }}
     >
-      <div className="mb-4">
+      <div className="flex items-center justify-between mb-4">
         <BackLink href="/profile" />
+        <h1 className="text-lg font-semibold tracking-tight text-foreground">Experience Builder</h1>
+        <div className="w-24" />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">
         {/* Left: Raw input */}
         <div className="flex flex-col min-h-0 border border-border rounded-xl p-4 bg-card">
           <div className="flex items-start justify-between gap-2 mb-1">
-            <h2 className="text-base font-medium">Raw experience</h2>
+            <h2 className="text-base font-medium text-foreground">Raw experience</h2>
             <Button
               variant="outline"
               size="sm"
@@ -286,7 +288,7 @@ export default function BuilderPage() {
 
         {/* Right: Experience cards */}
         <div className="flex flex-col min-h-0 border border-border rounded-xl p-4 bg-card flex-1">
-          <h2 className="text-lg font-semibold mb-3 flex-shrink-0">Experience cards</h2>
+          <h2 className="text-base font-medium text-foreground mb-3 flex-shrink-0">Experience cards</h2>
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0">
             {(loadingCards || loadingFamilies) && savedFamilies.length === 0 && !hasV1Families ? (
               <motion.div
@@ -426,7 +428,7 @@ export default function BuilderPage() {
           </div>
         </div>
       </div>
-      
+
       <SaveCardsModal
         open={saveModalOpen}
         onClose={() => setSaveModalOpen(false)}
