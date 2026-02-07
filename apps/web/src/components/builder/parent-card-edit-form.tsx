@@ -26,10 +26,13 @@ interface ParentCardEditFormProps {
   };
   onChange: (updates: Partial<ParentCardEditFormProps["form"]>) => void;
   onSubmit: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
+  onCancel?: () => void;
   isSubmitting?: boolean;
   isDeleting?: boolean;
   checkboxIdPrefix?: string;
+  /** When false, the Delete button is hidden (e.g. when editing – use dustbin on card instead). */
+  showDeleteButton?: boolean;
 }
 
 export function ParentCardEditForm({
@@ -37,22 +40,36 @@ export function ParentCardEditForm({
   onChange,
   onSubmit,
   onDelete,
+  onCancel,
   isSubmitting = false,
   isDeleting = false,
   checkboxIdPrefix = "edit",
+  showDeleteButton = false,
 }: ParentCardEditFormProps) {
   return (
     <>
       <div className="flex items-center gap-1 flex-shrink-0">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-          onClick={onDelete}
-          disabled={isDeleting}
-        >
-          Delete
-        </Button>
+        {onCancel && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-muted-foreground h-7 px-2"
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+        )}
+        {showDeleteButton && onDelete && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+            onClick={onDelete}
+            disabled={isDeleting}
+          >
+            Delete
+          </Button>
+        )}
         <Button
           size="sm"
           variant="default"

@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -101,11 +102,13 @@ async def patch_experience_card(
     return experience_card_to_response(card)
 
 
-@router.post("/experience-cards/{card_id}/hide", response_model=ExperienceCardResponse)
-async def hide_experience_card(
+@router.delete("/experience-cards/{card_id}", response_model=ExperienceCardResponse)
+async def delete_experience_card(
     card: ExperienceCard = Depends(get_experience_card_or_404),
     db: AsyncSession = Depends(get_db),
 ):
+    # Delete all children first so they are removed when parent is deleted (explicit cascade)
+    await db.execute(delete(ExperienceCardChild).where(ExperienceCardChild.parent_experience_id == card.id))
     response = experience_card_to_response(card)
     await db.delete(card)
     return response
@@ -124,11 +127,11 @@ async def patch_experience_card_child(
     return experience_card_child_to_response(child)
 
 
-@router.post(
-    "/experience-card-children/{child_id}/hide",
+@router.delete(
+    "/experience-card-children/{child_id}",
     response_model=ExperienceCardChildResponse,
 )
-async def hide_experience_card_child(
+async def delete_experience_card_child(
     child: ExperienceCardChild = Depends(get_experience_card_child_or_404),
     db: AsyncSession = Depends(get_db),
 ):

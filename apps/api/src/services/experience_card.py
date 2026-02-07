@@ -1,5 +1,6 @@
 """Experience card and raw experience business logic."""
 
+import asyncio
 from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -247,8 +248,10 @@ async def list_my_card_families(
     person_id: str,
 ) -> list[tuple[ExperienceCard, list[ExperienceCardChild]]]:
     """List experience cards with their children grouped by parent."""
-    parents = await list_my_cards(db, person_id)
-    children = await list_my_children(db, person_id)
+    parents, children = await asyncio.gather(
+        list_my_cards(db, person_id),
+        list_my_children(db, person_id),
+    )
     by_parent: dict[str, list[ExperienceCardChild]] = defaultdict(list)
     for c in children:
         by_parent[c.parent_experience_id].append(c)

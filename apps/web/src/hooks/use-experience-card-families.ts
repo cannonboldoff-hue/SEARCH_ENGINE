@@ -8,5 +8,6 @@ export function useExperienceCardFamilies() {
   return useQuery({
     queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY,
     queryFn: () => api<SavedCardFamily[]>("/me/experience-card-families"),
+    staleTime: 2 * 60 * 1000,
   });
 }

@@ -5,8 +5,7 @@ import { motion } from "framer-motion";
 import { Pencil, Layers, User, Briefcase, GraduationCap, Mail, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PageLoading } from "@/components/page-loading";
-import { PageError } from "@/components/page-error";
+import { PageLoading, PageError } from "@/components/feedback";
 import { ExpandableExperienceCard } from "@/components/profile/expandable-experience-card";
 import { useBio, useExperienceCardFamilies } from "@/hooks";
 
@@ -23,13 +22,11 @@ export default function ProfilePage() {
   const { data: bio, isLoading: loadingBio, isError: bioError } = useBio();
   const { data: cardFamilies = [], isLoading: loadingCards, isError: cardsError } = useExperienceCardFamilies();
 
-  const isLoading = loadingBio || loadingCards;
-
-  if (isLoading) {
+  if (loadingBio) {
     return <PageLoading message="Loading profile..." className="py-8 flex flex-col items-center justify-center gap-3" />;
   }
 
-  if (bioError || cardsError) {
+  if (bioError) {
     return (
       <PageError
         message="Failed to load profile. Please try again."
@@ -165,10 +162,21 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* Experience cards */}
+      {/* Experience cards — loaded progressively so profile appears fast */}
       <section>
         <h2 className="text-sm font-medium text-muted-foreground mb-3">Experience cards</h2>
-        {cardFamilies.length === 0 ? (
+        {loadingCards ? (
+          <div className="text-center py-12 rounded-lg border border-dashed border-border">
+            <p className="text-sm text-muted-foreground">Loading experience cards...</p>
+          </div>
+        ) : cardsError ? (
+          <div className="text-center py-8 rounded-lg border border-border bg-muted/30">
+            <p className="text-sm text-muted-foreground">Could not load experience cards. You can try again or go to the builder.</p>
+            <Link href="/builder" className="text-foreground font-medium hover:underline text-sm mt-2 inline-block">
+              Open builder
+            </Link>
+          </div>
+        ) : cardFamilies.length === 0 ? (
           <div className="text-center py-12 rounded-lg border border-dashed border-border">
             <Layers className="h-8 w-8 text-muted-foreground/40 mx-auto mb-3" />
             <p className="text-sm text-muted-foreground">

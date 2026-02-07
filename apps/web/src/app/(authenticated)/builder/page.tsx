@@ -29,6 +29,31 @@ import type {
   ExperienceCardChild,
 } from "@/types";
 
+/** Get stable id from draft parent (API may send id or card_id). */
+function getDraftParentId(parent: unknown): string {
+  if (!parent || typeof parent !== "object") return "";
+  const p = parent as Record<string, unknown>;
+  const raw = p.id ?? p.card_id;
+  if (raw == null) return "";
+  return String(raw).trim();
+}
+
+/** Get stable id from saved parent (ExperienceCard; may have id or card_id). */
+function getSavedParentId(parent: unknown): string {
+  return getDraftParentId(parent);
+}
+
+/** Ensure each draft family parent has an `id` for edit/delete (API may send id or card_id). */
+function normalizeDraftFamilies(families: CardFamilyV1Response[]): CardFamilyV1Response[] {
+  return families.map((fam) => {
+    const parent = fam.parent as Record<string, unknown> | undefined;
+    if (!parent) return fam;
+    const id = getDraftParentId(parent);
+    if (!id) return fam;
+    return { ...fam, parent: { ...parent, id } as ExperienceCardV1 };
+  });
+}
+
 export default function BuilderPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -59,10 +84,10 @@ export default function BuilderPage() {
   } = useCardForms();
 
   const {
-    hideCardMutation,
+    deleteCardMutation,
     patchCardMutation,
     patchChildMutation,
-    hideChildMutation,
+    deleteChildMutation,
   } = useCardMutations(
     setCardFamilies,
     setEditingCardId,
@@ -100,7 +125,7 @@ export default function BuilderPage() {
         body: { raw_text: rawText },
       });
       setDraftSetId(result.draft_set_id ?? null);
-      setCardFamilies(result.card_families ?? []);
+      setCardFamilies(normalizeDraftFamilies(result.card_families ?? []));
     } catch (e) {
       console.error("Draft V1 failed", e);
     } finally {
@@ -109,23 +134,25 @@ export default function BuilderPage() {
   }, [rawText]);
 
   const startEditingCard = useCallback(
-    (card: ExperienceCardV1) => {
-      const id = card.id ?? "";
+    (card: ExperienceCardV1 | Record<string, unknown>) => {
+      const id = getDraftParentId(card);
       if (!id) return;
       setEditingCardId(id);
       setEditingKind("parent");
       setEditingSavedCardId(null);
-      populateParentForm(card);
+      populateParentForm(card as ExperienceCardV1);
     },
     [populateParentForm]
   );
 
   const startEditingSavedCard = useCallback(
-    (card: ExperienceCard) => {
-      setEditingSavedCardId(card.id);
+    (card: ExperienceCard | Record<string, unknown>) => {
+      const id = getSavedParentId(card);
+      if (!id) return;
+      setEditingSavedCardId(id);
       setEditingCardId(null);
       setEditingKind(null);
-      populateParentForm(card);
+      populateParentForm(card as ExperienceCard);
     },
     [populateParentForm]
   );
@@ -205,14 +232,23 @@ export default function BuilderPage() {
     });
   }, [childEditForm, editingCardId, editingKind, editingSavedChildId, patchChildMutation]);
 
-  const handleDeleteCard = useCallback(() => {
-    if (!editingCardId) return;
-    if (editingKind === "child") {
-      hideChildMutation.mutate(editingCardId);
-      return;
-    }
-    hideCardMutation.mutate(editingCardId);
-  }, [editingCardId, editingKind, hideCardMutation, hideChildMutation]);
+  const handleDeleteParentCard = useCallback(
+    (cardId: string) => {
+      setEditingCardId(null);
+      setEditingKind(null);
+      deleteCardMutation.mutate(cardId);
+    },
+    [deleteCardMutation]
+  );
+
+  const handleDeleteChildCard = useCallback(
+    (childId: string) => {
+      setEditingCardId(null);
+      setEditingKind(null);
+      deleteChildMutation.mutate(childId);
+    },
+    [deleteChildMutation]
+  );
 
   const handleSaveCards = useCallback(async () => {
     setSaveError(null);
@@ -241,7 +277,7 @@ export default function BuilderPage() {
       className="flex flex-col h-[calc(100vh-6.5rem)] overflow-hidden"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.35 }}
+      transition={{ duration: 0.2 }}
     >
       <div className="flex items-center justify-between mb-4">
         <BackLink href="/profile" />
@@ -289,6 +325,11 @@ export default function BuilderPage() {
         {/* Right: Experience cards */}
         <div className="flex flex-col min-h-0 border border-border rounded-xl p-4 bg-card flex-1">
           <h2 className="text-base font-medium text-foreground mb-3 flex-shrink-0">Experience cards</h2>
+          {(deleteCardMutation.isError || deleteChildMutation.isError) && (
+            <p className="text-sm text-destructive mb-2">
+              {deleteCardMutation.error?.message ?? deleteChildMutation.error?.message ?? "Delete failed"}
+            </p>
+          )}
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0">
             {(loadingCards || loadingFamilies) && savedFamilies.length === 0 && !hasV1Families ? (
               <motion.div
@@ -349,9 +390,9 @@ export default function BuilderPage() {
                   </motion.div>
                 )}
                 <AnimatePresence mode="popLayout">
-                  {cardFamilies?.map((family) => (
+                  {cardFamilies?.map((family, i) => (
                     <DraftCardFamily
-                      key={family.parent?.id ?? ""}
+                      key={getDraftParentId(family.parent) || `draft-family-${i}`}
                       family={family}
                       editingCardId={editingCardId}
                       editingKind={editingKind}
@@ -363,11 +404,12 @@ export default function BuilderPage() {
                       onStartEditingChild={startEditingChild}
                       onSubmitEditCard={submitEditCard}
                       onSubmitEditChild={submitEditChild}
-                      onDeleteCard={handleDeleteCard}
+                      onDeleteParentCard={handleDeleteParentCard}
+                      onDeleteChildCard={handleDeleteChildCard}
                       isCardSubmitting={patchCardMutation.isPending}
-                      isCardDeleting={hideCardMutation.isPending}
+                      isCardDeleting={deleteCardMutation.isPending}
                       isChildSubmitting={patchChildMutation.isPending}
-                      isChildDeleting={hideChildMutation.isPending}
+                      isChildDeleting={deleteChildMutation.isPending}
                     />
                   ))}
                 </AnimatePresence>
@@ -379,9 +421,9 @@ export default function BuilderPage() {
                     transition={{ delay: 0.2 }}
                   >
                     <p className="text-xs font-medium text-muted-foreground mb-2">Saved cards</p>
-                    {savedFamilies.map((family) => (
+                    {savedFamilies.map((family, i) => (
                       <SavedCardFamily
-                        key={family.parent.id}
+                        key={getSavedParentId(family.parent) || `saved-family-${i}`}
                         parent={family.parent}
                         children={family.children}
                         deletedId={deletedId}
@@ -399,12 +441,14 @@ export default function BuilderPage() {
                         onSubmitEditChild={submitEditChild}
                         onDelete={(id) => {
                           setDeletedId(id);
-                          hideCardMutation.mutate(id);
+                          setEditingSavedCardId(null);
+                          deleteCardMutation.mutate(id);
                           setTimeout(() => setDeletedId(null), 5000);
                         }}
                         onDeleteChild={(id) => {
                           setDeletedId(id);
-                          hideChildMutation.mutate(id);
+                          setEditingSavedChildId(null);
+                          deleteChildMutation.mutate(id);
                           setTimeout(() => setDeletedId(null), 5000);
                         }}
                         isSubmitting={patchCardMutation.isPending || patchChildMutation.isPending}

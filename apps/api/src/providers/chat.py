@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import httpx
 from pydantic import BaseModel
 
-from src.config import get_settings
+from src.core import get_settings
 
 
 class ChatServiceError(Exception):
@@ -28,9 +28,13 @@ class ChatProvider(ABC):
     async def parse_search_query(self, query: str) -> ParsedQuery:
         pass
 
-    async def chat(self, user_message: str, max_tokens: int = 20480) -> str:
+    async def chat(self, user_message: str, max_tokens: int = 20480, temperature: float | None = None) -> str:
         """Send a single user message and return the assistant reply. Override if needed."""
-        return await self._chat([{"role": "user", "content": user_message}], max_tokens=max_tokens)
+        return await self._chat(
+            [{"role": "user", "content": user_message}],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
 
 
 class OpenAICompatibleChatProvider(ChatProvider):
@@ -48,12 +52,17 @@ class OpenAICompatibleChatProvider(ChatProvider):
         self.api_key = api_key
         self.model = model
 
-    async def _chat(self, messages: list[dict[str, str]], max_tokens: int = 20480) -> str:
+    async def _chat(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int = 20480,
+        temperature: float | None = None,
+    ) -> str:
         payload = {
             "model": self.model,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": 0.2,
+            "temperature": temperature if temperature is not None else 0.2,
         }
         headers = {"Content-Type": "application/json"}
         if self.api_key:

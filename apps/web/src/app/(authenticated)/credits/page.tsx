@@ -6,7 +6,7 @@ import { ArrowLeft, Coins } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ErrorMessage } from "@/components/error-message";
+import { ErrorMessage } from "@/components/feedback";
 import { api } from "@/lib/api";
 import { useCredits } from "@/hooks";
 import { cn } from "@/lib/utils";

@@ -1,4 +1,4 @@
-import { API_BASE } from "./utils";
+import { API_BASE } from "./constants";
 
 function normalizeErrorDetail(detail: unknown): string | null {
   if (typeof detail === "string") return detail;

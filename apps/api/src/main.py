@@ -5,8 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from src.config import get_settings
-from src.limiter import limiter
+from src.core import get_settings, limiter
 from src.routers import ROUTERS
 
 

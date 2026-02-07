@@ -5,6 +5,7 @@ import { CardTypeIcon } from "@/components/builder/card-type-icon";
 import { V1CardDetails, v1CardTopics } from "@/components/builder/v1-card-details";
 import { ParentCardEditForm } from "@/components/builder/parent-card-edit-form";
 import { ChildCardEditForm } from "@/components/builder/child-card-edit-form";
+import { PenLine, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CardFamilyV1Response, ExperienceCardV1 } from "@/types";
 import type { ParentCardForm, ChildCardForm } from "@/hooks/use-card-forms";
@@ -21,7 +22,8 @@ interface DraftCardFamilyProps {
   onStartEditingChild: (child: ExperienceCardV1) => void;
   onSubmitEditCard: () => void;
   onSubmitEditChild: () => void;
-  onDeleteCard: () => void;
+  onDeleteParentCard: (id: string) => void;
+  onDeleteChildCard: (id: string) => void;
   isCardSubmitting: boolean;
   isCardDeleting: boolean;
   isChildSubmitting: boolean;
@@ -40,7 +42,8 @@ export function DraftCardFamily({
   onStartEditingChild,
   onSubmitEditCard,
   onSubmitEditChild,
-  onDeleteCard,
+  onDeleteParentCard,
+  onDeleteChildCard,
   isCardSubmitting,
   isCardDeleting,
   isChildSubmitting,
@@ -48,7 +51,7 @@ export function DraftCardFamily({
 }: DraftCardFamilyProps) {
   const parent = family.parent as ExperienceCardV1;
   const children = (family.children ?? []) as ExperienceCardV1[];
-  const parentId = parent?.id ?? "";
+  const parentId = String(parent?.id ?? (parent as Record<string, unknown>)?.card_id ?? "").trim();
   const tags = parent ? v1CardTopics(parent) : [];
   const isEditingParent = editingKind === "parent" && editingCardId === parentId;
 
@@ -72,9 +75,9 @@ export function DraftCardFamily({
           "border-l-4 border-l-primary depth-shadow"
         )}
       >
-        <div className="p-4 sm:p-5">
-          <div className="flex items-start justify-between gap-2 w-full">
-            <span className="flex items-center gap-2 min-w-0 flex-1">
+        <div className="p-4 sm:p-5 min-w-0">
+          <div className="flex items-start justify-between gap-2 w-full min-w-0">
+            <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
               <span className="text-muted-foreground flex-shrink-0">
                 <CardTypeIcon tags={tags} title={(parent as { title?: string })?.title ?? parent?.headline ?? null} />
               </span>
@@ -92,23 +95,41 @@ export function DraftCardFamily({
                 form={editForm}
                 onChange={onEditFormChange}
                 onSubmit={onSubmitEditCard}
-                onDelete={onDeleteCard}
                 isSubmitting={isCardSubmitting}
                 isDeleting={isCardDeleting}
                 checkboxIdPrefix="edit-parent"
+                showDeleteButton={false}
               />
             ) : (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="flex-shrink-0 text-muted-foreground hover:text-foreground"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onStartEditingCard(parent);
-                }}
-              >
-                Edit
-              </Button>
+              <div className="relative z-10 flex gap-0.5 flex-shrink-0" style={{ pointerEvents: "auto" }}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground hover:text-foreground h-7 w-7 p-0"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onStartEditingCard(parent);
+                  }}
+                >
+                  <PenLine className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (parentId) onDeleteParentCard(parentId);
+                  }}
+                  disabled={isCardDeleting || !parentId}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             )}
           </div>
           {!isEditingParent && (
@@ -182,19 +203,30 @@ export function DraftCardFamily({
                           form={childEditForm}
                           onChange={onChildEditFormChange}
                           onSubmit={onSubmitEditChild}
-                          onDelete={onDeleteCard}
                           isSubmitting={isChildSubmitting}
                           isDeleting={isChildDeleting}
+                          showDeleteButton={false}
                         />
                       ) : (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="flex-shrink-0 text-muted-foreground hover:text-foreground h-7 px-2"
-                          onClick={() => onStartEditingChild(child as any)}
-                        >
-                          Edit
-                        </Button>
+                        <div className="flex gap-0.5 flex-shrink-0">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-muted-foreground hover:text-foreground h-7 w-7 p-0"
+                            onClick={() => onStartEditingChild(child as any)}
+                          >
+                            <PenLine className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
+                            onClick={() => onDeleteChildCard(childId)}
+                            disabled={isChildDeleting}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       )}
                     </div>
                     {!isEditingThisChild && <V1CardDetails card={child as any} compact />}

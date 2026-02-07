@@ -520,11 +520,23 @@ def card_to_experience_card_fields(
     location_text, city, country = extract_location_fields(card)
     company = extract_company(card)
     role_title, role_seniority = extract_role_info(card)
-    
+    search_phrases = extract_search_phrases(card)
+
     raw_text = (card.raw_text or "").strip() or None
     summary = (card.summary or "")[:10000]
     title = normalize_card_title(card)
-    
+
+    tags = [t.label for t in card.topics]
+    search_doc_parts = [
+        card.headline or title or "",
+        summary or "",
+        role_title or "",
+        company or "",
+        location_text or "",
+        " ".join(tags[:10]) if tags else "",
+    ]
+    search_document = " ".join(p for p in search_doc_parts if p).strip() or None
+
     return {
         "user_id": person_id,
         "raw_text": raw_text,
@@ -545,6 +557,8 @@ def card_to_experience_card_fields(
         "seniority_level": role_seniority,
         "confidence_score": None,
         "visibility": False,
+        "search_phrases": search_phrases,
+        "search_document": search_document,
     }
 
 
@@ -722,9 +736,9 @@ async def embed_cards(
     embed_texts: list[str] = []
     embed_targets: list[tuple[str, ExperienceCard | ExperienceCardChild]] = []
     
-    # Collect parent documents
+    # Collect parent documents (use stored search_document when present)
     for parent in parents:
-        doc = _experience_card_search_document(parent)
+        doc = parent.search_document or _experience_card_search_document(parent)
         if doc:
             embed_texts.append(doc)
             embed_targets.append(("parent", parent))

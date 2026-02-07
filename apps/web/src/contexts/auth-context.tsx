@@ -61,13 +61,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: { email, password },
       });
       setToken(access_token);
-      await refetchUser(access_token);
-      try {
-        const bio = await api<{ complete: boolean }>("/me/bio");
-        router.replace(bio.complete ? "/home" : "/onboarding/bio");
-      } catch {
-        router.replace("/onboarding/bio");
-      }
+      // Run /me and /me/bio in parallel to reduce wait before redirect
+      const [_, bioResult] = await Promise.all([
+        refetchUser(access_token),
+        api<{ complete: boolean }>("/me/bio").catch(() => ({ complete: false })),
+      ]);
+      router.replace(bioResult.complete ? "/home" : "/onboarding/bio");
     },
     [router, setToken, refetchUser]
   );
@@ -79,13 +78,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: { email, password, display_name: displayName ?? null },
       });
       setToken(access_token);
-      await refetchUser(access_token);
-      try {
-        const bio = await api<{ complete: boolean }>("/me/bio");
-        router.replace(bio.complete ? "/home" : "/onboarding/bio");
-      } catch {
-        router.replace("/onboarding/bio");
-      }
+      const [_, bioResult] = await Promise.all([
+        refetchUser(access_token),
+        api<{ complete: boolean }>("/me/bio").catch(() => ({ complete: false })),
+      ]);
+      router.replace(bioResult.complete ? "/home" : "/onboarding/bio");
     },
     [router, setToken, refetchUser]
   );

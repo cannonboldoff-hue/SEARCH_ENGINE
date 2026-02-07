@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import httpx
 
-from src.config import get_settings
+from src.core import get_settings
 
 
 class EmbeddingServiceError(Exception):

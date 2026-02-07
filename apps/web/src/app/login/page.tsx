@@ -12,9 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/auth-context";
-import { AuthLayout } from "@/components/auth-layout";
-import { LoadingScreen } from "@/components/loading-screen";
-import { ErrorMessage } from "@/components/error-message";
+import { AuthLayout } from "@/components/auth";
+import { LoadingScreen, ErrorMessage } from "@/components/feedback";
 
 const schema = z.object({
   email: z.string().email("Invalid email"),
@@ -54,13 +53,13 @@ export default function LoginPage() {
 
   return (
     <AuthLayout
-      title="Discover"
+      title="Cipher"
       subtitle="Find people by what they've actually done. Trust-weighted, credit-governed search."
     >
       <motion.div
-        initial={{ opacity: 0, y: 16 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, delay: 0.1 }}
+        transition={{ duration: 0.2 }}
       >
         <Card>
           <CardHeader className="pb-4">

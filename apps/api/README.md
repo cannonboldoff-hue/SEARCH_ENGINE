@@ -305,7 +305,7 @@ All require `get_current_user` and `get_db`. Tags: builder.
 - **POST /experience-cards** — Body: ExperienceCardCreate. Creates card; returns ExperienceCardResponse (via serializer).
 - **PATCH /experience-cards/{card_id}** — Body: ExperienceCardPatch. Load card for user; 404 if not found; apply_card_patch(card, body); return serialized card.
 - **POST /experience-cards/{card_id}/approve** — Load card; 404 if not found; approve (compute embedding); on EmbeddingServiceError → 503; return serialized card.
-- **POST /experience-cards/{card_id}/hide** — Load card; 404 if not found; set status=HIDDEN; return serialized card.
+- **DELETE /experience-cards/{card_id}** — Load card; 404 if not found; delete card; return serialized card.
 - **GET /me/experience-cards** — Query: status (optional). If status not in DRAFT/APPROVED/HIDDEN → 400. List cards via service; return list of ExperienceCardResponse.
 - **GET /me/experience-cards-v1** — List current user's experience cards in domain v1 shape; returns list of `ExperienceCardV1Schema` (intent from `domain.Intent`).
 

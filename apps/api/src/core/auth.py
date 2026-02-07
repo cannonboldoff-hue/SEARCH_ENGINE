@@ -2,7 +2,8 @@ import bcrypt
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
-from src.config import get_settings
+
+from src.core.config import get_settings
 
 
 _MAX_BCRYPT_BYTES = 72  # bcrypt limit

@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from src.db.session import async_session
 from src.db.models import Person, ExperienceCard, ExperienceCardChild
-from src.auth import decode_access_token
+from src.core import decode_access_token
 from src.services.experience_card import experience_card_service
 
 security = HTTPBearer(auto_error=False)

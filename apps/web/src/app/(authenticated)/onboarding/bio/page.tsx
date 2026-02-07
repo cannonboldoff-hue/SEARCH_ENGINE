@@ -12,9 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FormField } from "@/components/ui/form-field";
 import { BackLink } from "@/components/back-link";
-import { PageLoading } from "@/components/page-loading";
-import { PageError } from "@/components/page-error";
-import { ErrorMessage } from "@/components/error-message";
+import { PageLoading, PageError, ErrorMessage } from "@/components/feedback";
 import { VisibilitySection, type VisibilityMode } from "@/components/onboarding/visibility-section";
 import { api, type ApiOptions } from "@/lib/api";
 import { bioSchema, bioFormDefaultValues, type BioForm } from "@/lib/bio-schema";
@@ -349,7 +347,7 @@ export default function OnboardingBioPage() {
                 size="lg"
                 disabled={putBio.isPending || patchVisibility.isPending}
               >
-                {putBio.isPending || patchVisibility.isPending ? "Saving..." : "Save & continue to Discover"}
+                {putBio.isPending || patchVisibility.isPending ? "Saving..." : "Save & continue to Cipher"}
               </Button>
               <p className="text-xs text-muted-foreground self-center leading-relaxed">
                 Next: add experience in the builder, or start searching.

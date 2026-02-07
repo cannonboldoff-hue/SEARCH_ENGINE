@@ -16,13 +16,11 @@ export default function AuthenticatedLayout({
   const [hasToken, setHasToken] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const storedToken = localStorage.getItem("token");
-    setHasToken(Boolean(token || storedToken));
-  }, [token]);
-
-  useEffect(() => {
-    if (hasToken === false) router.replace("/login");
-  }, [hasToken, router]);
+    const stored = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const resolved = Boolean(token || stored);
+    setHasToken(resolved);
+    if (!resolved) router.replace("/login");
+  }, [token, router]);
 
   if (hasToken !== true) {
     return (

@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { ErrorMessage } from "@/components/error-message";
+import { ErrorMessage } from "@/components/feedback";
 
 type SaveCardsModalProps = {
   open: boolean;

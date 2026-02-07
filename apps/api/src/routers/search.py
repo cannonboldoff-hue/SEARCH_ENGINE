@@ -1,15 +1,40 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import get_settings
+from src.core import get_settings, limiter
 from src.db.models import Person
 from src.dependencies import get_current_user, get_db
-from src.schemas import SearchRequest, SearchResponse, PersonProfileResponse, UnlockContactResponse
-from src.limiter import limiter
+from src.schemas import (
+    SearchRequest,
+    SearchResponse,
+    PersonProfileResponse,
+    PersonListResponse,
+    PersonPublicProfileResponse,
+    UnlockContactResponse,
+)
 from src.services.search import search_service
 
 router = APIRouter(tags=["search"])
 _settings = get_settings()
+
+
+@router.get("/people", response_model=PersonListResponse)
+async def list_people(
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List people for discover grid: name, location, top 5 experience titles."""
+    return await search_service.list_people(db)
+
+
+@router.get("/people/{person_id}/profile", response_model=PersonPublicProfileResponse)
+async def get_person_public_profile(
+    person_id: str,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Public profile for person detail page: full bio + all experience card families (parent → children)."""
+    return await search_service.get_public_profile(db, person_id)
 
 
 @router.post("/search", response_model=SearchResponse)

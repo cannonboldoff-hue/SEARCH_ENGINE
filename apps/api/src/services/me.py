@@ -1,10 +1,12 @@
 """Me (profile, visibility, bio, credits, contact) business logic."""
 
+import asyncio
+
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from src.credits import add_credits as add_credits_to_wallet
+from src.services.credits import add_credits as add_credits_to_wallet
 from src.db.models import Person, VisibilitySettings, CreditWallet, CreditLedger, Bio, ContactDetails
 from src.serializers import person_to_person_schema
 from src.domain import PersonSchema
@@ -53,11 +55,11 @@ async def get_profile(person: Person) -> PersonResponse:
 
 async def _get_profile_v1_response(db: AsyncSession, person: Person) -> PersonSchema:
     """Return current user as PersonSchema (domain v1)."""
-    result_bio = await db.execute(select(Bio).where(Bio.person_id == person.id))
-    bio = result_bio.scalar_one_or_none()
-    result_vis = await db.execute(
-        select(VisibilitySettings).where(VisibilitySettings.person_id == person.id)
+    result_bio, result_vis = await asyncio.gather(
+        db.execute(select(Bio).where(Bio.person_id == person.id)),
+        db.execute(select(VisibilitySettings).where(VisibilitySettings.person_id == person.id)),
     )
+    bio = result_bio.scalar_one_or_none()
     vis = result_vis.scalar_one_or_none()
     return person_to_person_schema(person, bio=bio, visibility_settings=vis)
 
@@ -117,11 +119,11 @@ async def patch_visibility(
 
 
 async def get_bio_response(db: AsyncSession, person: Person) -> BioResponse:
-    result = await db.execute(select(Bio).where(Bio.person_id == person.id))
-    bio = result.scalar_one_or_none()
-    contact_result = await db.execute(
-        select(ContactDetails).where(ContactDetails.person_id == person.id)
+    result, contact_result = await asyncio.gather(
+        db.execute(select(Bio).where(Bio.person_id == person.id)),
+        db.execute(select(ContactDetails).where(ContactDetails.person_id == person.id)),
     )
+    bio = result.scalar_one_or_none()
     contact = contact_result.scalar_one_or_none()
     past = _past_companies_to_items(bio.past_companies if bio else None)
     complete = bool(
@@ -151,8 +153,12 @@ async def update_bio(
     person: Person,
     body: BioCreateUpdate,
 ) -> BioResponse:
-    result = await db.execute(select(Bio).where(Bio.person_id == person.id))
+    result, contact_result = await asyncio.gather(
+        db.execute(select(Bio).where(Bio.person_id == person.id)),
+        db.execute(select(ContactDetails).where(ContactDetails.person_id == person.id)),
+    )
     bio = result.scalar_one_or_none()
+    contact = contact_result.scalar_one_or_none()
     if not bio:
         bio = Bio(person_id=person.id)
         db.add(bio)
@@ -192,10 +198,6 @@ async def update_bio(
         parts = [bio.first_name or "", bio.last_name or ""]
         person.display_name = " ".join(parts).strip() or person.display_name
         db.add(person)
-    contact_result = await db.execute(
-        select(ContactDetails).where(ContactDetails.person_id == person.id)
-    )
-    contact = contact_result.scalar_one_or_none()
     if body.linkedin_url is not None or body.phone is not None:
         if not contact:
             contact = ContactDetails(person_id=person.id)

@@ -1,5 +1,8 @@
+"""Credit wallet, ledger, and idempotency key operations."""
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+
 from src.db.models import CreditWallet, CreditLedger, IdempotencyKey
 
 

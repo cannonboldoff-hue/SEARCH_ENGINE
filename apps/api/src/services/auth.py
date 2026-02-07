@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from src.auth import hash_password, verify_password, create_access_token
+from src.core import hash_password, verify_password, create_access_token
 from src.db.models import Person, VisibilitySettings, ContactDetails, CreditWallet, CreditLedger
 from src.schemas import SignupRequest, LoginRequest, TokenResponse
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { HeroBg, DepthGrid } from "@/components/hero-bg";
+import { HeroBg, DepthGrid } from "@/components/hero";
 
 type AuthLayoutProps = {
   title: string;
@@ -15,9 +15,9 @@ export function AuthLayout({ title, subtitle, children }: AuthLayoutProps) {
       <HeroBg />
       <DepthGrid />
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: "easeOut" }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
         className="w-full max-w-sm relative z-10"
       >
         <div className="text-center mb-8">

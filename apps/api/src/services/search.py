@@ -1,5 +1,6 @@
 """Search, profile view, and contact unlock business logic."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -7,12 +8,14 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 
-from src.constants import SEARCH_RESULT_EXPIRY_HOURS
+from src.core import SEARCH_RESULT_EXPIRY_HOURS
 from src.db.models import (
     Person,
+    Bio,
     VisibilitySettings,
     ContactDetails,
     ExperienceCard,
+    ExperienceCardChild,
     Search,
     SearchResult,
     UnlockContact,
@@ -22,12 +25,17 @@ from src.schemas import (
     SearchResponse,
     PersonSearchResult,
     PersonProfileResponse,
+    PersonListItem,
+    PersonListResponse,
+    PersonPublicProfileResponse,
+    CardFamilyResponse,
+    BioResponse,
     ContactDetailsResponse,
     UnlockContactResponse,
 )
-from src.credits import get_balance, deduct_credits, get_idempotent_response, save_idempotent_response
+from src.services.credits import get_balance, deduct_credits, get_idempotent_response, save_idempotent_response
 from src.providers import get_chat_provider, ChatServiceError
-from src.serializers import experience_card_to_response
+from src.serializers import experience_card_to_response, experience_card_child_to_response
 
 SEARCH_ENDPOINT = "POST /search"
 
@@ -120,11 +128,26 @@ async def run_search(
         return resp
 
     vis_map = {}
+    match_ids = None
     if pid_list:
-        vis_result = await db.execute(
-            select(VisibilitySettings).where(VisibilitySettings.person_id.in_(pid_list))
-        )
-        vis_map = {str(v.person_id): v for v in vis_result.scalars().all()}
+        async def get_vis():
+            r = await db.execute(
+                select(VisibilitySettings).where(VisibilitySettings.person_id.in_(pid_list))
+            )
+            return {str(v.person_id): v for v in r.scalars().all()}
+
+        async def get_company_match():
+            if not parsed.company:
+                return None
+            r = await db.execute(
+                select(ExperienceCard.user_id)
+                .where(ExperienceCard.visibility == True)
+                .where(func.lower(ExperienceCard.company_name) == parsed.company.strip().lower())
+                .distinct()
+            )
+            return {r[0] for r in r.fetchall()}
+
+        vis_map, match_ids = await asyncio.gather(get_vis(), get_company_match())
 
     # Exclude "Hide Contact": anyone with both open_to_work=False and open_to_contact=False does not appear in search
     ranked = [
@@ -140,14 +163,7 @@ async def run_search(
             if pid in vis_map and vis_map[pid].open_to_work
         ]
 
-    if parsed.company:
-        match_result = await db.execute(
-            select(ExperienceCard.user_id)
-            .where(ExperienceCard.visibility == True)
-            .where(func.lower(ExperienceCard.company_name) == parsed.company.strip().lower())
-            .distinct()
-        )
-        match_ids = {r[0] for r in match_result.fetchall()}
+    if match_ids is not None:
         ranked = [(pid, score) for pid, score in ranked if pid in match_ids]
 
     if body.preferred_locations:
@@ -244,30 +260,30 @@ async def get_person_profile(
     if not r_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Person not in this search result")
 
-    p_result = await db.execute(select(Person).where(Person.id == person_id))
+    p_result, v_result, cards_result, unlock_result = await asyncio.gather(
+        db.execute(select(Person).where(Person.id == person_id)),
+        db.execute(select(VisibilitySettings).where(VisibilitySettings.person_id == person_id)),
+        db.execute(
+            select(ExperienceCard).where(
+                ExperienceCard.user_id == person_id,
+                ExperienceCard.visibility == True,
+            ).order_by(ExperienceCard.created_at.desc())
+        ),
+        db.execute(
+            select(UnlockContact).where(
+                UnlockContact.searcher_id == searcher_id,
+                UnlockContact.target_person_id == person_id,
+                UnlockContact.search_id == search_id,
+            )
+        ),
+    )
     person = p_result.scalar_one_or_none()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-
-    v_result = await db.execute(select(VisibilitySettings).where(VisibilitySettings.person_id == person_id))
     vis = v_result.scalar_one_or_none()
-
-    cards_result = await db.execute(
-        select(ExperienceCard).where(
-            ExperienceCard.user_id == person_id,
-            ExperienceCard.visibility == True,
-        ).order_by(ExperienceCard.created_at.desc())
-    )
     cards = cards_result.scalars().all()
 
     contact = None
-    unlock_result = await db.execute(
-        select(UnlockContact).where(
-            UnlockContact.searcher_id == searcher_id,
-            UnlockContact.target_person_id == person_id,
-            UnlockContact.search_id == search_id,
-        )
-    )
     if unlock_result.scalar_one_or_none():
         c_result = await db.execute(select(ContactDetails).where(ContactDetails.person_id == person_id))
         c = c_result.scalar_one_or_none()
@@ -336,18 +352,20 @@ async def unlock_contact(
     if not r_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Person not in this search result")
 
-    v_result = await db.execute(select(VisibilitySettings).where(VisibilitySettings.person_id == person_id))
+    v_result, u_result = await asyncio.gather(
+        db.execute(select(VisibilitySettings).where(VisibilitySettings.person_id == person_id)),
+        db.execute(
+            select(UnlockContact).where(
+                UnlockContact.searcher_id == searcher_id,
+                UnlockContact.target_person_id == person_id,
+                UnlockContact.search_id == search_id,
+            )
+        ),
+    )
     vis = v_result.scalar_one_or_none()
     if not vis or not vis.open_to_contact:
         raise HTTPException(status_code=400, detail="Person is not open to contact")
 
-    u_result = await db.execute(
-        select(UnlockContact).where(
-            UnlockContact.searcher_id == searcher_id,
-            UnlockContact.target_person_id == person_id,
-            UnlockContact.search_id == search_id,
-        )
-    )
     if u_result.scalar_one_or_none():
         c_result = await db.execute(select(ContactDetails).where(ContactDetails.person_id == person_id))
         c = c_result.scalar_one_or_none()
@@ -375,6 +393,145 @@ async def unlock_contact(
     return resp
 
 
+async def list_people_for_discover(db: AsyncSession) -> PersonListResponse:
+    """List people who have at least one visible experience card, with display_name, current_location, top 5 titles."""
+    subq = (
+        select(ExperienceCard.person_id)
+        .where(ExperienceCard.visibility == True)
+        .distinct()
+    )
+    people_ids_result = await db.execute(select(Person.id).where(Person.id.in_(subq)))
+    person_ids = [str(r[0]) for r in people_ids_result.all()]
+    if not person_ids:
+        return PersonListResponse(people=[])
+
+    async def get_people():
+        r = await db.execute(select(Person).where(Person.id.in_(person_ids)))
+        return {str(p.id): p for p in r.scalars().all()}
+
+    async def get_bios():
+        r = await db.execute(select(Bio).where(Bio.person_id.in_(person_ids)))
+        return {str(b.person_id): b for b in r.scalars().all()}
+
+    async def get_card_summaries():
+        # Only fetch columns needed for discover list (avoids loading embedding, raw_text, search_document)
+        r = await db.execute(
+            select(ExperienceCard.person_id, ExperienceCard.summary, ExperienceCard.created_at)
+            .where(
+                ExperienceCard.person_id.in_(person_ids),
+                ExperienceCard.visibility == True,
+            )
+            .order_by(ExperienceCard.person_id, ExperienceCard.created_at.desc())
+        )
+        return r.all()
+
+    people, bios, card_rows = await asyncio.gather(get_people(), get_bios(), get_card_summaries())
+
+    summaries_by_person: dict[str, list[str]] = {pid: [] for pid in person_ids}
+    for row in card_rows:
+        pid = str(row.person_id)
+        if len(summaries_by_person[pid]) >= 5:
+            continue
+        summary = (row.summary or "").strip()
+        if summary:
+            summaries_by_person[pid].append(summary)
+
+    people_list = [
+        PersonListItem(
+            id=pid,
+            display_name=p.display_name,
+            current_location=bios[pid].current_city if pid in bios else None,
+            experience_summaries=summaries_by_person.get(pid, [])[:5],
+        )
+        for pid, p in people.items()
+    ]
+    return PersonListResponse(people=people_list)
+
+
+def _bio_response_for_public(person: Person, bio: Bio | None, contact: ContactDetails | None) -> BioResponse:
+    """Build BioResponse for public profile (no sensitive overrides)."""
+    from src.schemas import PastCompanyItem
+    past = []
+    if bio and bio.past_companies:
+        for p in bio.past_companies:
+            if isinstance(p, dict):
+                past.append(PastCompanyItem(
+                    company_name=p.get("company_name", "") or "",
+                    role=p.get("role"),
+                    years=p.get("years"),
+                ))
+    return BioResponse(
+        first_name=bio.first_name if bio else None,
+        last_name=bio.last_name if bio else None,
+        date_of_birth=bio.date_of_birth if bio else None,
+        current_city=bio.current_city if bio else None,
+        profile_photo_url=bio.profile_photo_url if bio else None,
+        school=bio.school if bio else None,
+        college=bio.college if bio else None,
+        current_company=bio.current_company if bio else None,
+        past_companies=past or None,
+        email=None,
+        linkedin_url=contact.linkedin_url if contact else None,
+        phone=contact.phone if contact else None,
+        complete=bool(bio and (bio.school or "").strip() and (person.email or "").strip()),
+    )
+
+
+async def get_public_profile_impl(db: AsyncSession, person_id: str) -> PersonPublicProfileResponse:
+    """Load public profile for person detail page: full bio + all experience card families (parent → children)."""
+    p_result = await db.execute(select(Person).where(Person.id == person_id))
+    person = p_result.scalar_one_or_none()
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    bio_result, c_result, cards_result = await asyncio.gather(
+        db.execute(select(Bio).where(Bio.person_id == person_id)),
+        db.execute(select(ContactDetails).where(ContactDetails.person_id == person_id)),
+        db.execute(
+            select(ExperienceCard).where(
+                ExperienceCard.user_id == person_id,
+                ExperienceCard.visibility == True,
+            ).order_by(ExperienceCard.created_at.desc())
+        ),
+    )
+    bio = bio_result.scalar_one_or_none()
+    contact = c_result.scalar_one_or_none()
+    bio_resp = _bio_response_for_public(person, bio, contact)
+    parents = cards_result.scalars().all()
+    if not parents:
+        return PersonPublicProfileResponse(
+            id=person.id,
+            display_name=person.display_name,
+            bio=bio_resp,
+            card_families=[],
+        )
+
+    children_result = await db.execute(
+        select(ExperienceCardChild).where(
+            ExperienceCardChild.parent_experience_id.in_([c.id for c in parents])
+        )
+    )
+    children_list = children_result.scalars().all()
+    by_parent: dict[str, list] = {}
+    for ch in children_list:
+        pid = str(ch.parent_experience_id)
+        by_parent.setdefault(pid, []).append(ch)
+
+    card_families = [
+        CardFamilyResponse(
+            parent=experience_card_to_response(card),
+            children=[experience_card_child_to_response(ch) for ch in by_parent.get(str(card.id), [])],
+        )
+        for card in parents
+    ]
+    return PersonPublicProfileResponse(
+        id=person.id,
+        display_name=person.display_name,
+        bio=bio_resp,
+        card_families=card_families,
+    )
+
+
 class SearchService:
     """Facade for search operations."""
 
@@ -389,6 +546,14 @@ class SearchService:
     @staticmethod
     async def unlock(db: AsyncSession, searcher_id: str, person_id: str, search_id: str, idempotency_key: str | None) -> UnlockContactResponse:
         return await unlock_contact(db, searcher_id, person_id, search_id, idempotency_key)
+
+    @staticmethod
+    async def list_people(db: AsyncSession) -> PersonListResponse:
+        return await list_people_for_discover(db)
+
+    @staticmethod
+    async def get_public_profile(db: AsyncSession, person_id: str) -> PersonPublicProfileResponse:
+        return await get_public_profile_impl(db, person_id)
 
 
 search_service = SearchService()

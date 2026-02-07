@@ -1,6 +1,6 @@
 """Shared utilities."""
 
-from src.constants import EMBEDDING_DIM
+from src.core import EMBEDDING_DIM
 
 
 def normalize_embedding(vec: list[float], dim: int = EMBEDDING_DIM) -> list[float]:

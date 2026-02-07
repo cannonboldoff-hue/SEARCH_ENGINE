@@ -12,9 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/auth-context";
-import { AuthLayout } from "@/components/auth-layout";
-import { LoadingScreen } from "@/components/loading-screen";
-import { ErrorMessage } from "@/components/error-message";
+import { AuthLayout } from "@/components/auth";
+import { LoadingScreen, ErrorMessage } from "@/components/feedback";
 
 const schema = z.object({
   email: z.string().email("Invalid email"),
@@ -55,7 +54,7 @@ export default function SignupPage() {
 
   return (
     <AuthLayout
-      title="Create account"
+      title="Cipher"
       subtitle="Start with 1,000 credits. Build your experience and get discovered."
     >
       <motion.div

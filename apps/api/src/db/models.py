@@ -179,7 +179,7 @@ class DraftSet(Base):
     raw_experience = relationship("RawExperience", back_populates="draft_sets")
     experience_card_children = relationship("ExperienceCardChild", back_populates="draft_set")
     experience_cards = relationship("ExperienceCard", back_populates="draft_set")
-    
+
 
 class ExperienceCard(Base):
     __tablename__ = "experience_cards"
@@ -219,6 +219,8 @@ class ExperienceCard(Base):
 
     confidence_score = Column(Float, nullable=True)
     visibility = Column(Boolean, default=True, nullable=False)
+    search_phrases = Column(ARRAY(String), default=list)
+    search_document = Column(Text, nullable=True)
     embedding = Column(Vector(384), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

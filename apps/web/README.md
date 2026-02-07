@@ -151,7 +151,7 @@ apps/web/
   1. **useQuery** loads saved experience cards from `api("/me/experience-cards")`.
   2. User types in textarea; “Update” calls **extractDraftV1**: POST `/experience-cards/draft-v1` with `raw_text`; response gives `card_families` (parent + children per family). Cards are persisted as DRAFT on the backend.
   3. **handleSaveCards** approves all cards in `cardFamilies` via POST `/experience-cards/:id/approve` for each, then closes modal, invalidates queries, and `router.push("/home")`; on error sets `saveError`.
-  4. Saved cards list: hide (POST `/experience-cards/:id/hide`). **CardTypeIcon** picks icon from tags/title (research, startup, quant, open-source, default).
+  4. Saved cards list: delete (DELETE `/experience-cards/:id`). **CardTypeIcon** picks icon from tags/title (research, startup, quant, open-source, default).
 - **Functions:**
   - **extractDraftV1():** POST draft-v1, set `cardFamilies`, expand all family IDs in `expandedFamilies`.
   - **handleSaveCards():** Approve all card IDs in `cardFamilies`, then redirect or set error.

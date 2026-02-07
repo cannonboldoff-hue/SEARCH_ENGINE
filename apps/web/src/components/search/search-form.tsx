@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { apiWithIdempotency } from "@/lib/api";
 import { useCredits } from "@/hooks";
-import { ErrorMessage } from "@/components/error-message";
+import { ErrorMessage } from "@/components/feedback";
 import type { SearchResponse } from "@/types";
 
 type SearchFormProps = {

@@ -52,7 +52,7 @@ export function TiltCard({
   return (
     <motion.div
       ref={ref}
-      className={cn(perspective && "perspective-1000", "transform-3d", className)}
+      className={cn(perspective && "perspective-1000", !disabled && "transform-3d", className)}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       style={
@@ -68,9 +68,13 @@ export function TiltCard({
       whileHover={disabled ? undefined : { scale }}
       transition={{ type: "spring", stiffness: 300, damping: 24 }}
     >
-      <div className="card-3d-inner" style={{ transform: "translateZ(6px)" }}>
-        {children}
-      </div>
+      {disabled ? (
+        children
+      ) : (
+        <div className="card-3d-inner" style={{ transform: "translateZ(6px)" }}>
+          {children}
+        </div>
+      )}
     </motion.div>
   );
 }

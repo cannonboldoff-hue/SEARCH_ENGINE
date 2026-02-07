@@ -42,104 +42,156 @@ User message:
 {{USER_TEXT}}
 """
 
+
 # -----------------------------------------------------------------------------
 # 2. Extract ALL parents + children (SINGLE PASS)
 # -----------------------------------------------------------------------------
 
 PROMPT_EXTRACT_ALL_CARDS = """You are a structured data extraction system.
 
-Your job is to extract ALL Experience Card parents and their dimension-based
-children from cleaned user text.
+Extract ALL ExperienceCard parents and their child dimension cards from the FULL cleaned text in ONE pass.
 
 ========================
-HARD GATES (CRITICAL)
+NON-NEGOTIABLE OUTPUT RULE
 ========================
-* Do NOT infer roles, skills, or responsibilities from industry or company.
-* Do NOT invent facts.
-* Do NOT split one experience into multiple parents unless clearly distinct.
-* If content is vague, create a minimal parent with intent="other" and NO children. For such minimal parents, headline MUST be a short phrase derived from the raw text (e.g. first few words or "General experience"), never "Unspecified experience".
+- Return ONLY valid JSON.
+- NEVER omit keys defined below.
+- If a field is missing from text, return null (or [] for arrays).
+- Do NOT invent facts.
 
 ========================
-PARENT CARD RULES
+PARENT SPLITTING (CRITICAL)
 ========================
-* One parent = one dominant experience or intent block.
-* intent MUST be one of:
-  {{INTENT_ENUM}}
-* headline: <=120 chars, outcome- or responsibility-focused. Never use "Unspecified experience"; use a brief phrase from the text or "General experience" for vague content.
-* summary: 1–3 factual sentences.
-* raw_text: verbatim supporting text.
-* time/location: extract ONLY what is explicitly stated.
-* index.search_phrases: 5–15 concise, diverse phrases.
+Create MULTIPLE parents when the text contains multiple distinct experience blocks.
+Strong split signals:
+- multiple products/apps/projects (e.g., "first app", "second app", "third app")
+- "then", "after that", "also", "another"
+- two clearly different domains (e.g., quant research + product engineering)
+- different time ranges or different employers
+
+Rule: One parent = one dominant intent block. Do NOT merge unrelated blocks.
 
 ========================
-CHILD CARD RULES (VERY IMPORTANT)
+PARENT OBJECT (matches ExperienceCard table + embedding needs)
 ========================
-* You may create AT MOST 10 children per parent.
-* Each child represents ONE dimension only.
-* Allowed child_type values:
-  {{ALLOWED_CHILD_TYPES}}
+Each parent MUST include ALL keys:
 
-* NEVER create multiple children of the same child_type.
-* ALL items of the same type MUST be grouped inside one child.
+{
+  "title": null,
+  "normalized_role": null,
+  "domain": null,
+  "sub_domain": null,
+  "company_name": null,
+  "company_type": null,
+  "employment_type": null,
 
-CORRECT:
-  skills → Python, statistics, modeling
-WRONG:
-  skill(Python), skill(statistics), skill(modeling)
+  "start_date": null,
+  "end_date": null,
+  "is_current": null,
 
-* Each child MUST add searchable value beyond the parent.
-* Child intent MUST be one of:
-  {{CHILD_INTENT_ENUM}}
-* relation_type (how child relates to parent) MUST be one of:
-  {{CHILD_RELATION_TYPE_ENUM}}
+  "location": null,
+  "time_text": null,
+  "city": null,
+  "country": null,
+
+  "seniority_level": null,
+
+  "summary": "",
+  "raw_text": "",
+
+  "intent_primary": null,
+  "intent_secondary": [],
+
+  "confidence_score": 0.0,
+  "visibility": true,
+
+  "search_phrases": [],
+  "search_document": ""
+}
+
+- intent_primary MUST be one of: {{INTENT_ENUM}}
+- search_phrases: 5–15 concise, diverse phrases (role/domain/outcome/company/tools if present)
+- search_document: a single text blob for embedding that includes ALL present fields:
+  title + summary + role + company + time_text + dates + location + city/country +
+  key tools/skills/metrics mentioned in this parent + search_phrases.
+
+raw_text must be a verbatim supporting excerpt from CLEANED text for THIS parent only.
 
 ========================
-CHILD STORAGE MODEL
+CHILD OBJECT (matches ExperienceCardChild table)
 ========================
-Each child MUST contain:
-- child_type (one of allowed types above)
-- label (human readable, <=255 chars)
-- value (JSON dimension container):
-    - headline
-    - summary
-    - raw_text
-    - time
-    - location
-    - roles
-    - actions
-    - topics
-    - entities
-    - tooling
-    - outcomes
-    - evidence
-    - depth = 1
-- search_phrases (5–15 phrases UNIQUE to this dimension)
-- search_document (auto-generated text blob)
+IMPORTANT: Your DB enforces UNIQUE child_type per parent.
+So:
+- You MUST NOT output multiple children with the same child_type.
+- Instead, group all items for that type into ONE child.value container.
 
-========================
-ANTI-HALLUCINATION
-========================
-* Every child fact MUST be grounded in raw_text.
-* Do NOT restate the parent in children.
-* If no valid child dimensions exist, return children=[].
+Allowed child_type values:
+{{ALLOWED_CHILD_TYPES}}
+
+Each child MUST include ALL keys:
+
+{
+  "child_type": "",
+  "label": null,
+
+  "value": {
+    "headline": "",
+    "summary": "",
+    "raw_text": "",
+
+    "time": { "start": null, "end": null, "ongoing": null, "text": null, "confidence": "low" },
+    "location": { "city": null, "region": null, "country": null, "text": null, "confidence": "low" },
+
+    "roles": [],
+    "actions": [],
+    "topics": [],
+    "entities": [],
+    "tooling": { "tools": [], "processes": [], "raw": null },
+    "outcomes": [],
+    "evidence": [],
+
+    "privacy": { "visibility": "searchable", "sensitive": false },
+    "quality": { "overall_confidence": "low", "claim_state": "self_claim", "needs_clarification": false, "clarifying_question": null },
+    "index": { "search_phrases": [], "embedding_ref": null },
+
+    "depth": 1,
+    "parent_id": "__PARENT_INDEX__",     // temporary marker; validator will keep logical link
+    "relation_type": null,
+    "intent": null
+  },
+
+  "confidence_score": 0.0,
+  "search_phrases": [],
+  "search_document": ""
+}
+
+- value.intent MUST be one of: {{CHILD_INTENT_ENUM}} (or null if truly unclear)
+- value.relation_type MUST be one of: {{CHILD_RELATION_TYPE_ENUM}} (or null if unclear)
+- search_phrases: 5–15 phrases UNIQUE to this dimension
+- search_document: include child_type + label + ALL items inside value + parent context (company/role/time/location)
+
+Child.value should store grouped items like:
+- skills: put skill names into value.topics as TopicItem(label=skill, confidence="medium"/"high")
+- tools: put tools into value.tooling.tools
+- metrics: put measurable results into value.outcomes (include metric if possible)
+- achievements/responsibilities: put actions/outcomes
+- collaborations/exposure: put entities (person/team/org) + topics
+
+DO NOT create children that merely restate the parent.
 
 ========================
 OUTPUT FORMAT
 ========================
-Return ONLY valid JSON.
-
 {
   "parents": [
     {
-      "parent": { <ExperienceCardParentV1Schema> },
-      "children": [ { <ExperienceCardChildV1Schema> } ]
+      "parent": { ... },
+      "children": [ ... ]
     }
   ]
 }
 
-========================
-INPUT
-========================
+INPUT:
 Cleaned text:
 {{USER_TEXT}}
 
@@ -152,73 +204,73 @@ created_by = {{PERSON_ID}}
 # 4. Validate + Normalize (FINAL GATE)
 # -----------------------------------------------------------------------------
 
-PROMPT_VALIDATE_ALL_CARDS = """You are a strict validator for Experience Card v1 JSON.
+PROMPT_VALIDATE_ALL_CARDS = """You are a strict validator for our Experience Card output JSON.
 
 MISSION:
-Validate, normalize, prune, and finalize parents + children.
+Validate, normalize, de-duplicate, and finalize parents + children.
 
 ========================
-SCHEMA ENFORCEMENT
+INPUTS
 ========================
-* Parent intent MUST be one of:
-  {{INTENT_ENUM}}
-* Child intent MUST be one of:
-  {{CHILD_INTENT_ENUM}}
-* Child relation_type MUST be one of:
-  {{CHILD_RELATION_TYPE_ENUM}}
-* child_type MUST be one of:
-  {{ALLOWED_CHILD_TYPES}}
-* Max 10 children per parent.
+raw_text_original:
+{{RAW_TEXT_ORIGINAL}}
+
+raw_text_cleaned:
+{{RAW_TEXT_CLEANED}}
+
+extracted_json:
+{{PARENT_AND_CHILDREN_JSON}}
 
 ========================
 HALLUCINATION REMOVAL
 ========================
-* Remove any skill, tool, metric, role, or claim not grounded in raw_text.
-* Rewrite headlines/summaries to match raw_text exactly.
-* Remove children that restate the parent or add no new value.
+- Remove any claim not grounded in raw_text_cleaned.
+- Tighten summaries to only what the text says.
+- raw_text excerpts must be copied from raw_text_cleaned (not invented).
 
 ========================
-NORMALIZATION
+SCHEMA ENFORCEMENT
 ========================
-* Merge duplicate topics and tools.
-* Normalize verbs; keep verb_raw.
-* Enforce confidence values: high | medium | low.
-* Enforce date formats (YYYY-MM or YYYY-MM-DD).
+- NEVER omit required keys; fill missing with null/[].
+- intent_primary must be one of: {{INTENT_ENUM}} (or "other" if unclear).
+- child_type must be one of: {{ALLOWED_CHILD_TYPES}}
+- For each parent: enforce UNIQUE child_type (merge if duplicates appear).
+- Enforce confidence_score is a float in [0.0, 1.0].
+- Enforce value.quality.overall_confidence is one of: high|medium|low.
+- Enforce dates format: YYYY-MM-DD when possible; else keep in time_text or value.time.text.
 
 ========================
-SEARCH QUALITY
+PARENT SPLIT CHECK (IMPORTANT)
 ========================
-* Parent search_phrases: role + domain + outcome.
-* Child search_phrases: ONLY dimension-specific terms.
-* Remove generic or duplicate phrases.
+If the cleaned text clearly contains multiple projects/apps/blocks and extracted_json has only 1 parent,
+split into multiple parents and reassign children accordingly.
 
 ========================
-PRIVACY
+CHILD QUALITY
 ========================
-Default:
-  visibility="searchable", sensitive=false
-
-If medical, legal, salary, or personal identifiers appear:
-  sensitive=true, visibility="private"
+- Remove children that add no new info vs parent.
+- Merge duplicate items inside a child (e.g., repeated skills/tools).
+- Ensure child.search_phrases are dimension-specific (no generic phrases).
 
 ========================
-OUTPUT
+SEARCH DOCUMENTS
 ========================
-Return ONLY valid JSON.
+- Ensure every parent.search_document exists and contains all present fields.
+- Ensure every child.search_document exists and includes parent context.
 
+========================
+OUTPUT (JSON only)
+========================
 {
   "raw_text_original": "...",
   "raw_text_cleaned": "...",
   "parents": [
     {
-      "parent": { <validated parent> },
-      "children": [ <validated children or []> ]
+      "parent": { ...validated parent... },
+      "children": [ ...validated children... ]
     }
   ]
 }
-
-INPUT:
-{{PARENT_AND_CHILDREN_JSON}}
 """
 
 # -----------------------------------------------------------------------------
@@ -231,18 +283,24 @@ def fill_prompt(
     user_text: str | None = None,
     person_id: str | None = None,
     parent_and_children_json: str | None = None,
+    raw_text_original: str | None = None,
+    raw_text_cleaned: str | None = None,
 ) -> str:
     out = template
-    # Replace enum placeholders (previously handled by f-string, now explicit)
     out = out.replace("{{INTENT_ENUM}}", INTENT_ENUM)
     out = out.replace("{{CHILD_INTENT_ENUM}}", CHILD_INTENT_ENUM)
     out = out.replace("{{CHILD_RELATION_TYPE_ENUM}}", CHILD_RELATION_TYPE_ENUM)
     out = out.replace("{{ALLOWED_CHILD_TYPES}}", ALLOWED_CHILD_TYPES_STR)
-    # Replace caller-provided placeholders
+
     if user_text is not None:
         out = out.replace("{{USER_TEXT}}", user_text)
     if person_id is not None:
         out = out.replace("{{PERSON_ID}}", person_id)
     if parent_and_children_json is not None:
         out = out.replace("{{PARENT_AND_CHILDREN_JSON}}", parent_and_children_json)
+    if raw_text_original is not None:
+        out = out.replace("{{RAW_TEXT_ORIGINAL}}", raw_text_original)
+    if raw_text_cleaned is not None:
+        out = out.replace("{{RAW_TEXT_CLEANED}}", raw_text_cleaned)
+
     return out

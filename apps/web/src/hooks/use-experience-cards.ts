@@ -8,5 +8,6 @@ export function useExperienceCards() {
   return useQuery({
     queryKey: EXPERIENCE_CARDS_QUERY_KEY,
     queryFn: () => api<ExperienceCard[]>("/me/experience-cards"),
+    staleTime: 2 * 60 * 1000,
   });
 }

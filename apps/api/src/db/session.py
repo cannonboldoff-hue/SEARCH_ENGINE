@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
 
-from src.config import get_settings
+from src.core import get_settings
 
 database_url = get_settings().database_url
 if "asyncpg" not in database_url:

@@ -53,6 +53,26 @@ export type PersonSearchResult = {
   open_to_contact: boolean;
 };
 
+/** One person in the discover grid (GET /people). */
+export type PersonListItem = {
+  id: string;
+  display_name: string | null;
+  current_location: string | null;
+  experience_summaries: string[];
+};
+
+export type PersonListResponse = {
+  people: PersonListItem[];
+};
+
+/** Public profile for person detail page (GET /people/:id/profile). */
+export type PersonPublicProfile = {
+  id: string;
+  display_name: string | null;
+  bio: BioResponse | null;
+  card_families: { parent: ExperienceCard; children: ExperienceCardChild[] }[];
+};
+
 export type SearchResponse = {
   search_id: string;
   people: PersonSearchResult[];
