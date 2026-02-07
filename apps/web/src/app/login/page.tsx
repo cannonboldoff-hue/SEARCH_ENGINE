@@ -40,7 +40,7 @@ export default function LoginPage() {
   }, [hasToken, router]);
 
   if (hasToken) {
-    return <LoadingScreen message="Loading…" />;
+    return <LoadingScreen message="Loading..." />;
   }
 
   const onSubmit = async (data: FormData) => {
@@ -55,62 +55,59 @@ export default function LoginPage() {
   return (
     <AuthLayout
       title="Discover"
-      subtitle="People by what they've actually done. Trust-weighted, credit-governed search."
+      subtitle="Find people by what they've actually done. Trust-weighted, credit-governed search."
     >
       <motion.div
-        initial={{ opacity: 0, y: 24, rotateX: 12, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
-        transition={{ type: "spring", stiffness: 260, damping: 26 }}
-        style={{ transformStyle: "preserve-3d", perspective: 1000 }}
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.1 }}
       >
-      <Card className="glass border-border/50 shadow-xl glow-ring overflow-hidden depth-shadow-lg perspective-1000 transform-3d">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-xl">Sign in</CardTitle>
-          <CardDescription>
-            Use your email and password to continue.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            {error && <ErrorMessage message={error} />}
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                {...register("email")}
-                className="bg-background/50 border-border/70"
-              />
-              {errors.email && (
-                <p className="text-sm text-destructive">{errors.email.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                {...register("password")}
-                className="bg-background/50 border-border/70"
-              />
-              {errors.password && (
-                <p className="text-sm text-destructive">{errors.password.message}</p>
-              )}
-            </div>
-            <Button type="submit" className="w-full" size="lg" disabled={isSubmitting}>
-              {isSubmitting ? "Signing in…" : "Sign in"}
-            </Button>
-            <p className="text-center text-sm text-muted-foreground">
-              No account?{" "}
-              <Link href="/signup" className="text-primary font-medium hover:underline">
-                Sign up
-              </Link>
-            </p>
-          </form>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg">Sign in</CardTitle>
+            <CardDescription>
+              Use your email and password to continue.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              {error && <ErrorMessage message={error} />}
+              <div className="space-y-1.5">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  {...register("email")}
+                />
+                {errors.email && (
+                  <p className="text-xs text-destructive">{errors.email.message}</p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  {...register("password")}
+                />
+                {errors.password && (
+                  <p className="text-xs text-destructive">{errors.password.message}</p>
+                )}
+              </div>
+              <Button type="submit" className="w-full" disabled={isSubmitting}>
+                {isSubmitting ? "Signing in..." : "Sign in"}
+              </Button>
+              <p className="text-center text-sm text-muted-foreground">
+                {"Don't have an account? "}
+                <Link href="/signup" className="text-foreground font-medium hover:underline">
+                  Sign up
+                </Link>
+              </p>
+            </form>
+          </CardContent>
+        </Card>
       </motion.div>
     </AuthLayout>
   );

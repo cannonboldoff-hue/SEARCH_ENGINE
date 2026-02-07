@@ -13,57 +13,59 @@ export default function SettingsPage() {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="max-w-2xl mx-auto space-y-6"
+      transition={{ duration: 0.35 }}
+      className="max-w-xl mx-auto space-y-6"
     >
       <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="text-muted-foreground mt-1">
-          Account settings.
+        <h1 className="text-lg font-semibold">Settings</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Manage your account.
         </p>
       </div>
 
-      <Card className="glass border-border/50 overflow-hidden">
-        <CardHeader className="border-b border-border/50">
+      <Card>
+        <CardHeader className="border-b border-border pb-4">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-muted flex items-center justify-center">
-              <User className="h-5 w-5 text-muted-foreground" />
+            <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center">
+              <User className="h-4 w-4 text-muted-foreground" />
             </div>
             <div>
-              <CardTitle className="text-lg">Account</CardTitle>
+              <CardTitle className="text-base">Account</CardTitle>
               <CardDescription>
                 Your sign-in identity.
               </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-6 space-y-2">
-          <p className="text-sm">
+        <CardContent className="pt-4 space-y-2">
+          <div className="text-sm">
             <span className="text-muted-foreground">Email:</span>{" "}
-            <span className="font-medium">{user?.email ?? "—"}</span>
-          </p>
+            <span className="text-foreground font-medium">{user?.email ?? "--"}</span>
+          </div>
           {user?.display_name && (
-            <p className="text-sm">
+            <div className="text-sm">
               <span className="text-muted-foreground">Display name:</span>{" "}
-              <span className="font-medium">{user.display_name}</span>
-            </p>
+              <span className="text-foreground font-medium">{user.display_name}</span>
+            </div>
           )}
         </CardContent>
       </Card>
 
-      <Card className="glass border-border/50 overflow-hidden">
-        <CardHeader className="border-b border-border/50">
-          <CardTitle className="text-lg">Sign out</CardTitle>
+      <Card>
+        <CardHeader className="border-b border-border pb-4">
+          <CardTitle className="text-base">Sign out</CardTitle>
           <CardDescription>
             Sign out of this device. You can sign back in with the same email.
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-6">
+        <CardContent className="pt-4">
           <Button
             variant="outline"
+            size="sm"
             className="text-muted-foreground hover:text-destructive hover:border-destructive/50"
             onClick={() => logout()}
           >
-            <LogOut className="h-4 w-4 mr-2" />
+            <LogOut className="h-3.5 w-3.5 mr-1.5" />
             Log out
           </Button>
         </CardContent>

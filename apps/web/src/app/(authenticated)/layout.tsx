@@ -26,8 +26,9 @@ export default function AuthenticatedLayout({
 
   if (hasToken !== true) {
     return (
-      <div className="min-h-screen flex items-center justify-center mesh-bg">
-        <div className="animate-pulse text-muted-foreground">Loading…</div>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3">
+        <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+        <p className="text-sm text-muted-foreground">Loading...</p>
       </div>
     );
   }
@@ -35,7 +36,7 @@ export default function AuthenticatedLayout({
   return (
     <SearchProvider>
       <AppNav />
-      <main className="container mx-auto px-4 py-6 min-h-[calc(100vh-3.5rem)] mesh-bg">
+      <main className="container mx-auto px-4 py-6 min-h-[calc(100vh-3.5rem)]">
         {children}
       </main>
     </SearchProvider>
