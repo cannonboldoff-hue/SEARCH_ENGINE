@@ -15,24 +15,21 @@ export function SearchResults({ searchId, people }: SearchResultsProps) {
       {searchId && (
         <motion.div
           key={searchId}
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ type: "spring", stiffness: 280, damping: 26 }}
-          className="space-y-4"
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+          className="space-y-3"
         >
-          <h2 className="text-lg font-semibold">Results</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">
+            {people.length} {people.length === 1 ? "result" : "results"}
+          </h2>
           {people.length === 0 ? (
-            <motion.p
-              className="text-muted-foreground py-8 text-center rounded-xl border border-dashed border-border/50"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.15 }}
-            >
-              No matches. Try a different query or clear &quot;Open to work only&quot;.
-            </motion.p>
+            <p className="text-muted-foreground py-12 text-center text-sm rounded-lg border border-dashed border-border">
+              {'No matches. Try a different query or clear "Open to work only".'}
+            </p>
           ) : (
-            <ul className="grid gap-3">
+            <ul className="grid gap-2">
               {people.map((person, i) => (
                 <PersonResultCard
                   key={person.id}

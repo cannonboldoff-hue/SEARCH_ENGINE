@@ -1,10 +1,10 @@
-import type { Metadata } from "next";
-import { Outfit, JetBrains_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { AuthProvider } from "@/contexts/auth-context";
 
-const outfit = Outfit({
+const inter = Inter({
   subsets: ["latin"],
   variable: "--font-outfit",
   display: "swap",
@@ -16,8 +16,12 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Discover — People by what they've actually done",
-  description: "Trust-weighted, AI-structured search. Find people by experience. Governed by credits.",
+  title: "Discover - Find people by what they've done",
+  description: "Trust-weighted, AI-structured search. Find people by real experience.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0a0a0a",
 };
 
 export default function RootLayout({
@@ -27,7 +31,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${outfit.variable} ${jetbrainsMono.variable} font-sans bg-background text-foreground antialiased`}>
+      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans bg-background text-foreground antialiased`}>
         <Providers>
           <AuthProvider>{children}</AuthProvider>
         </Providers>
