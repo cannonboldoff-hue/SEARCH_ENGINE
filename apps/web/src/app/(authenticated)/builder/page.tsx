@@ -207,7 +207,7 @@ export default function BuilderPage() {
         intent_secondary: intentSecondary.length ? intentSecondary : null,
         seniority_level: toNull(editForm.seniority_level),
         confidence_score: confNum != null && !Number.isNaN(confNum) ? confNum : null,
-        visibility: editForm.visibility,
+        experience_card_visibility: editForm.experience_card_visibility,
       },
     });
   }, [editingCardId, editingKind, editingSavedCardId, editForm, patchCardMutation]);

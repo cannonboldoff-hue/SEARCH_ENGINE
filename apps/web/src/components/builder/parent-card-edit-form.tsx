@@ -22,7 +22,7 @@ interface ParentCardEditFormProps {
     intent_secondary_str: string;
     seniority_level: string;
     confidence_score: string;
-    visibility: boolean;
+    experience_card_visibility: boolean;
   };
   onChange: (updates: Partial<ParentCardEditFormProps["form"]>) => void;
   onSubmit: () => void;
@@ -244,8 +244,8 @@ export function ParentCardEditForm({
           <input
             type="checkbox"
             id={`${checkboxIdPrefix}-visible`}
-            checked={form.visibility}
-            onChange={(e) => onChange({ visibility: e.target.checked })}
+            checked={form.experience_card_visibility}
+            onChange={(e) => onChange({ experience_card_visibility: e.target.checked })}
             className="rounded border-border"
           />
           <Label htmlFor={`${checkboxIdPrefix}-visible`} className="text-xs cursor-pointer">Visible</Label>

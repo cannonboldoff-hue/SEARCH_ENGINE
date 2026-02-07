@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from src.services.credits import add_credits as add_credits_to_wallet
-from src.db.models import Person, VisibilitySettings, CreditWallet, CreditLedger, Bio, ContactDetails
+from src.db.models import Person, PersonProfile, CreditLedger
 from src.serializers import person_to_person_schema
 from src.domain import PersonSchema
 from src.schemas import (
@@ -55,13 +55,9 @@ async def get_profile(person: Person) -> PersonResponse:
 
 async def _get_profile_v1_response(db: AsyncSession, person: Person) -> PersonSchema:
     """Return current user as PersonSchema (domain v1)."""
-    result_bio, result_vis = await asyncio.gather(
-        db.execute(select(Bio).where(Bio.person_id == person.id)),
-        db.execute(select(VisibilitySettings).where(VisibilitySettings.person_id == person.id)),
-    )
-    bio = result_bio.scalar_one_or_none()
-    vis = result_vis.scalar_one_or_none()
-    return person_to_person_schema(person, bio=bio, visibility_settings=vis)
+    result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person.id))
+    profile = result.scalar_one_or_none()
+    return person_to_person_schema(person, profile=profile)
 
 
 async def update_profile(db: AsyncSession, person: Person, body: PatchMeRequest) -> PersonResponse:
@@ -72,17 +68,16 @@ async def update_profile(db: AsyncSession, person: Person, body: PatchMeRequest)
 
 async def get_visibility(db: AsyncSession, person_id: str) -> VisibilitySettingsResponse:
     result = await db.execute(
-        select(VisibilitySettings).where(VisibilitySettings.person_id == person_id)
+        select(PersonProfile).where(PersonProfile.person_id == person_id)
     )
-    vis = result.scalar_one_or_none()
-    if not vis:
-        raise HTTPException(status_code=404, detail="Visibility settings not found")
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
     return VisibilitySettingsResponse(
-        open_to_work=vis.open_to_work,
-        work_preferred_locations=vis.work_preferred_locations or [],
-        work_preferred_salary_min=vis.work_preferred_salary_min,
-        work_preferred_salary_max=vis.work_preferred_salary_max,
-        open_to_contact=vis.open_to_contact,
+        open_to_work=profile.open_to_work,
+        work_preferred_locations=profile.work_preferred_locations or [],
+        work_preferred_salary_min=profile.work_preferred_salary_min,
+        open_to_contact=profile.open_to_contact,
     )
 
 
@@ -92,58 +87,51 @@ async def patch_visibility(
     body: PatchVisibilityRequest,
 ) -> VisibilitySettingsResponse:
     result = await db.execute(
-        select(VisibilitySettings).where(VisibilitySettings.person_id == person_id)
+        select(PersonProfile).where(PersonProfile.person_id == person_id)
     )
-    vis = result.scalar_one_or_none()
-    if not vis:
-        vis = VisibilitySettings(person_id=person_id)
-        db.add(vis)
+    profile = result.scalar_one_or_none()
+    if not profile:
+        profile = PersonProfile(person_id=person_id)
+        db.add(profile)
         await db.flush()
     if body.open_to_work is not None:
-        vis.open_to_work = body.open_to_work
+        profile.open_to_work = body.open_to_work
     if body.work_preferred_locations is not None:
-        vis.work_preferred_locations = body.work_preferred_locations
+        profile.work_preferred_locations = body.work_preferred_locations
     if body.work_preferred_salary_min is not None:
-        vis.work_preferred_salary_min = body.work_preferred_salary_min
-    if body.work_preferred_salary_max is not None:
-        vis.work_preferred_salary_max = body.work_preferred_salary_max
+        profile.work_preferred_salary_min = body.work_preferred_salary_min
     if body.open_to_contact is not None:
-        vis.open_to_contact = body.open_to_contact
+        profile.open_to_contact = body.open_to_contact
     return VisibilitySettingsResponse(
-        open_to_work=vis.open_to_work,
-        work_preferred_locations=vis.work_preferred_locations or [],
-        work_preferred_salary_min=vis.work_preferred_salary_min,
-        work_preferred_salary_max=vis.work_preferred_salary_max,
-        open_to_contact=vis.open_to_contact,
+        open_to_work=profile.open_to_work,
+        work_preferred_locations=profile.work_preferred_locations or [],
+        work_preferred_salary_min=profile.work_preferred_salary_min,
+        open_to_contact=profile.open_to_contact,
     )
 
 
 async def get_bio_response(db: AsyncSession, person: Person) -> BioResponse:
-    result, contact_result = await asyncio.gather(
-        db.execute(select(Bio).where(Bio.person_id == person.id)),
-        db.execute(select(ContactDetails).where(ContactDetails.person_id == person.id)),
-    )
-    bio = result.scalar_one_or_none()
-    contact = contact_result.scalar_one_or_none()
-    past = _past_companies_to_items(bio.past_companies if bio else None)
+    result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person.id))
+    profile = result.scalar_one_or_none()
+    past = _past_companies_to_items(profile.past_companies if profile else None)
     complete = bool(
-        bio
-        and (bio.school or "").strip()
+        profile
+        and (profile.school or "").strip()
         and (person.email or "").strip()
     )
     return BioResponse(
-        first_name=bio.first_name if bio else None,
-        last_name=bio.last_name if bio else None,
-        date_of_birth=bio.date_of_birth if bio else None,
-        current_city=bio.current_city if bio else None,
-        profile_photo_url=bio.profile_photo_url if bio else None,
-        school=bio.school if bio else None,
-        college=bio.college if bio else None,
-        current_company=bio.current_company if bio else None,
+        first_name=profile.first_name if profile else None,
+        last_name=profile.last_name if profile else None,
+        date_of_birth=profile.date_of_birth if profile else None,
+        current_city=profile.current_city if profile else None,
+        profile_photo_url=profile.profile_photo_url if profile else None,
+        school=profile.school if profile else None,
+        college=profile.college if profile else None,
+        current_company=profile.current_company if profile else None,
         past_companies=past,
         email=person.email,
-        linkedin_url=contact.linkedin_url if contact else None,
-        phone=contact.phone if contact else None,
+        linkedin_url=profile.linkedin_url if profile else None,
+        phone=profile.phone if profile else None,
         complete=complete,
     )
 
@@ -153,34 +141,30 @@ async def update_bio(
     person: Person,
     body: BioCreateUpdate,
 ) -> BioResponse:
-    result, contact_result = await asyncio.gather(
-        db.execute(select(Bio).where(Bio.person_id == person.id)),
-        db.execute(select(ContactDetails).where(ContactDetails.person_id == person.id)),
-    )
-    bio = result.scalar_one_or_none()
-    contact = contact_result.scalar_one_or_none()
-    if not bio:
-        bio = Bio(person_id=person.id)
-        db.add(bio)
+    result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person.id))
+    profile = result.scalar_one_or_none()
+    if not profile:
+        profile = PersonProfile(person_id=person.id)
+        db.add(profile)
         await db.flush()
     if body.first_name is not None:
-        bio.first_name = body.first_name
+        profile.first_name = body.first_name
     if body.last_name is not None:
-        bio.last_name = body.last_name
+        profile.last_name = body.last_name
     if body.date_of_birth is not None:
-        bio.date_of_birth = body.date_of_birth
+        profile.date_of_birth = body.date_of_birth
     if body.current_city is not None:
-        bio.current_city = body.current_city
+        profile.current_city = body.current_city
     if body.profile_photo_url is not None:
-        bio.profile_photo_url = body.profile_photo_url
+        profile.profile_photo_url = body.profile_photo_url
     if body.school is not None:
-        bio.school = body.school
+        profile.school = body.school
     if body.college is not None:
-        bio.college = body.college
+        profile.college = body.college
     if body.current_company is not None:
-        bio.current_company = body.current_company
+        profile.current_company = body.current_company
     if body.past_companies is not None:
-        bio.past_companies = [
+        profile.past_companies = [
             {"company_name": p.company_name, "role": p.role, "years": p.years}
             for p in body.past_companies
         ]
@@ -195,43 +179,38 @@ async def update_bio(
             person.email = new_email
             db.add(person)
     if body.first_name is not None or body.last_name is not None:
-        parts = [bio.first_name or "", bio.last_name or ""]
+        parts = [profile.first_name or "", profile.last_name or ""]
         person.display_name = " ".join(parts).strip() or person.display_name
         db.add(person)
-    if body.linkedin_url is not None or body.phone is not None:
-        if not contact:
-            contact = ContactDetails(person_id=person.id)
-            db.add(contact)
-            await db.flush()
-        if body.linkedin_url is not None:
-            contact.linkedin_url = body.linkedin_url
-        if body.phone is not None:
-            contact.phone = body.phone
-    past = _past_companies_to_items(bio.past_companies)
-    complete = bool((bio.school or "").strip() and (person.email or "").strip())
+    if body.linkedin_url is not None:
+        profile.linkedin_url = body.linkedin_url
+    if body.phone is not None:
+        profile.phone = body.phone
+    past = _past_companies_to_items(profile.past_companies)
+    complete = bool((profile.school or "").strip() and (person.email or "").strip())
     return BioResponse(
-        first_name=bio.first_name,
-        last_name=bio.last_name,
-        date_of_birth=bio.date_of_birth,
-        current_city=bio.current_city,
-        profile_photo_url=bio.profile_photo_url,
-        school=bio.school,
-        college=bio.college,
-        current_company=bio.current_company,
+        first_name=profile.first_name,
+        last_name=profile.last_name,
+        date_of_birth=profile.date_of_birth,
+        current_city=profile.current_city,
+        profile_photo_url=profile.profile_photo_url,
+        school=profile.school,
+        college=profile.college,
+        current_company=profile.current_company,
         past_companies=past,
         email=person.email,
-        linkedin_url=contact.linkedin_url if contact else None,
-        phone=contact.phone if contact else None,
+        linkedin_url=profile.linkedin_url,
+        phone=profile.phone,
         complete=complete,
     )
 
 
 async def get_credits(db: AsyncSession, person_id: str) -> CreditsResponse:
-    result = await db.execute(select(CreditWallet).where(CreditWallet.person_id == person_id))
-    wallet = result.scalar_one_or_none()
-    if not wallet:
+    result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person_id))
+    profile = result.scalar_one_or_none()
+    if not profile:
         return CreditsResponse(balance=0)
-    return CreditsResponse(balance=wallet.balance)
+    return CreditsResponse(balance=profile.balance)
 
 
 async def purchase_credits(
@@ -268,8 +247,8 @@ async def get_credits_ledger(db: AsyncSession, person_id: str) -> list[LedgerEnt
     ]
 
 
-def _contact_response(c: ContactDetails | None) -> ContactDetailsResponse:
-    if not c:
+def _contact_response(p: PersonProfile | None) -> ContactDetailsResponse:
+    if not p:
         return ContactDetailsResponse(
             email_visible=True,
             phone=None,
@@ -277,17 +256,17 @@ def _contact_response(c: ContactDetails | None) -> ContactDetailsResponse:
             other=None,
         )
     return ContactDetailsResponse(
-        email_visible=c.email_visible,
-        phone=c.phone,
-        linkedin_url=c.linkedin_url,
-        other=c.other,
+        email_visible=p.email_visible,
+        phone=p.phone,
+        linkedin_url=p.linkedin_url,
+        other=p.other,
     )
 
 
 async def get_contact_response(db: AsyncSession, person_id: str) -> ContactDetailsResponse:
-    result = await db.execute(select(ContactDetails).where(ContactDetails.person_id == person_id))
-    contact = result.scalar_one_or_none()
-    return _contact_response(contact)
+    result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person_id))
+    profile = result.scalar_one_or_none()
+    return _contact_response(profile)
 
 
 async def update_contact(
@@ -295,21 +274,21 @@ async def update_contact(
     person_id: str,
     body: PatchContactRequest,
 ) -> ContactDetailsResponse:
-    result = await db.execute(select(ContactDetails).where(ContactDetails.person_id == person_id))
-    contact = result.scalar_one_or_none()
-    if not contact:
-        contact = ContactDetails(person_id=person_id)
-        db.add(contact)
+    result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person_id))
+    profile = result.scalar_one_or_none()
+    if not profile:
+        profile = PersonProfile(person_id=person_id)
+        db.add(profile)
         await db.flush()
     if body.email_visible is not None:
-        contact.email_visible = body.email_visible
+        profile.email_visible = body.email_visible
     if body.phone is not None:
-        contact.phone = body.phone
+        profile.phone = body.phone
     if body.linkedin_url is not None:
-        contact.linkedin_url = body.linkedin_url
+        profile.linkedin_url = body.linkedin_url
     if body.other is not None:
-        contact.other = body.other
-    return _contact_response(contact)
+        profile.other = body.other
+    return _contact_response(profile)
 
 
 class MeService:

@@ -37,10 +37,7 @@ class Person(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
-    visibility_settings = relationship("VisibilitySettings", back_populates="person", uselist=False)
-    contact_details = relationship("ContactDetails", back_populates="person", uselist=False)
-    credit_wallet = relationship("CreditWallet", back_populates="person", uselist=False)
-    bio = relationship("Bio", back_populates="person", uselist=False)
+    profile = relationship("PersonProfile", back_populates="person", uselist=False)
     raw_experiences = relationship("RawExperience", back_populates="person")
     draft_sets = relationship("DraftSet", back_populates="person")
     experience_cards = relationship("ExperienceCard", back_populates="person")
@@ -48,77 +45,43 @@ class Person(Base):
     searches_made = relationship("Search", back_populates="searcher", foreign_keys="Search.searcher_id")
 
 
-class Bio(Base):
-    __tablename__ = "bios"
+class PersonProfile(Base):
+    """Merged profile: bio + visibility + contact prefs + wallet balance (one row per person)."""
+    __tablename__ = "person_profiles"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, unique=True)
 
+    # Bio
     first_name = Column(String(255), nullable=True)
     last_name = Column(String(255), nullable=True)
-    date_of_birth = Column(String(20), nullable=True)  # YYYY-MM-DD or free text
+    date_of_birth = Column(String(20), nullable=True)
     current_city = Column(String(255), nullable=True)
     profile_photo_url = Column(String(1000), nullable=True)
-
     school = Column(String(255), nullable=True)
     college = Column(String(255), nullable=True)
-
     current_company = Column(String(255), nullable=True)
-    past_companies = Column(JSONB, nullable=True)  # list of {company_name, role?, years?}
+    past_companies = Column(JSONB, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
-
-    person = relationship("Person", back_populates="bio")
-
-
-class VisibilitySettings(Base):
-    __tablename__ = "visibility_settings"
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
-    person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, unique=True)
-
+    # Visibility
     open_to_work = Column(Boolean, default=False)
     work_preferred_locations = Column(ARRAY(String), default=list)
-    work_preferred_salary_min = Column(Numeric(12, 2), nullable=True)
-    work_preferred_salary_max = Column(Numeric(12, 2), nullable=True)
-
+    work_preferred_salary_min = Column(Numeric(12, 2), nullable=True)  # minimum salary needed (₹/year)
     open_to_contact = Column(Boolean, default=False)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
-
-    person = relationship("Person", back_populates="visibility_settings")
-
-
-class ContactDetails(Base):
-    __tablename__ = "contact_details"
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
-    person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, unique=True)
-
+    # Contact
     email_visible = Column(Boolean, default=True)
     phone = Column(String(50), nullable=True)
     linkedin_url = Column(String(500), nullable=True)
     other = Column(Text, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
-
-    person = relationship("Person", back_populates="contact_details")
-
-
-class CreditWallet(Base):
-    __tablename__ = "credit_wallets"
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
-    person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, unique=True)
+    # Wallet
     balance = Column(Integer, default=1000, nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
-    person = relationship("Person", back_populates="credit_wallet")
+    person = relationship("Person", back_populates="profile")
 
 
 class CreditLedger(Base):
@@ -218,7 +181,7 @@ class ExperienceCard(Base):
     seniority_level = Column(Text, nullable=True)
 
     confidence_score = Column(Float, nullable=True)
-    visibility = Column(Boolean, default=True, nullable=False)
+    experience_card_visibility = Column(Boolean, default=True, nullable=False)
     search_phrases = Column(ARRAY(String), default=list)
     search_document = Column(Text, nullable=True)
     embedding = Column(Vector(384), nullable=True)

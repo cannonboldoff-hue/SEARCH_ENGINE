@@ -19,20 +19,18 @@ class PatchMeRequest(BaseModel):
 
 
 class VisibilitySettingsResponse(BaseModel):
-    """Matches db.models.VisibilitySettings."""
+    """Visibility fields from PersonProfile (person_profiles)."""
 
     open_to_work: bool
     work_preferred_locations: list[str]
-    work_preferred_salary_min: Optional[Decimal] = None
-    work_preferred_salary_max: Optional[Decimal] = None
+    work_preferred_salary_min: Optional[Decimal] = None  # minimum salary needed (₹/year)
     open_to_contact: bool
 
 
 class PatchVisibilityRequest(BaseModel):
-    """Optional fields for patching VisibilitySettings (matches DB columns)."""
+    """Optional fields for patching visibility on PersonProfile."""
 
     open_to_work: Optional[bool] = None
     work_preferred_locations: Optional[list[str]] = None
     work_preferred_salary_min: Optional[Decimal] = None
-    work_preferred_salary_max: Optional[Decimal] = None
     open_to_contact: Optional[bool] = None

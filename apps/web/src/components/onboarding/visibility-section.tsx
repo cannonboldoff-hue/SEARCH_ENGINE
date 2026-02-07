@@ -115,7 +115,7 @@ export function VisibilitySection({
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="work_salary_min">{"Minimum package (Rs./year, optional)"}</Label>
+            <Label htmlFor="work_salary_min">Minimum salary needed (₹/year, optional)</Label>
             <Input
               id="work_salary_min"
               type="number"

@@ -6,7 +6,7 @@ from src.db.models import ExperienceCard, ExperienceCardChild, Person
 from src.schemas import ExperienceCardResponse, ExperienceCardChildResponse
 
 if TYPE_CHECKING:
-    from src.db.models import Bio, VisibilitySettings
+    from src.db.models import PersonProfile
 from src.domain import (
     PersonSchema,
     LocationBasic,
@@ -47,7 +47,7 @@ def experience_card_to_response(card: ExperienceCard) -> ExperienceCardResponse:
         intent_secondary=card.intent_secondary or [],
         seniority_level=card.seniority_level,
         confidence_score=card.confidence_score,
-        visibility=card.visibility,
+        experience_card_visibility=card.experience_card_visibility,
         created_at=card.created_at,
         updated_at=card.updated_at,
     )
@@ -82,23 +82,20 @@ def experience_card_child_to_response(child: ExperienceCardChild) -> ExperienceC
 def person_to_person_schema(
     person: Person,
     *,
-    bio: "Bio | None" = None,
-    visibility_settings: "VisibilitySettings | None" = None,
+    profile: "PersonProfile | None" = None,
 ) -> PersonSchema:
-    """Map Person + optional Bio + optional VisibilitySettings to PersonSchema (domain v1)."""
-    from src.db.models import Bio, VisibilitySettings  # avoid circular import
+    """Map Person + optional PersonProfile to PersonSchema (domain v1)."""
+    from src.db.models import PersonProfile  # avoid circular import
 
     location = LocationBasic(
-        city=bio.current_city if bio else None,
+        city=profile.current_city if profile else None,
         region=None,
         country=None,
     )
     verification = PersonVerification(status="unverified", methods=[])
     default_visibility = "private"
-    if visibility_settings:
-        if getattr(visibility_settings, "open_to_work", False) or getattr(
-            visibility_settings, "open_to_contact", False
-        ):
+    if profile:
+        if getattr(profile, "open_to_work", False) or getattr(profile, "open_to_contact", False):
             default_visibility = "searchable"
     privacy_defaults = PersonPrivacyDefaults(default_visibility=default_visibility)
     updated = getattr(person, "updated_at", None) or person.created_at
@@ -106,7 +103,7 @@ def person_to_person_schema(
         person_id=person.id,
         username=person.email or "",
         display_name=person.display_name or "",
-        photo_url=bio.profile_photo_url if bio else None,
+        photo_url=profile.profile_photo_url if profile else None,
         bio=None,
         location=location,
         verification=verification,

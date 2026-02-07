@@ -3,13 +3,13 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from src.db.models import CreditWallet, CreditLedger, IdempotencyKey
+from src.db.models import PersonProfile, CreditLedger, IdempotencyKey
 
 
 async def get_balance(db: AsyncSession, person_id: str) -> int:
-    result = await db.execute(select(CreditWallet).where(CreditWallet.person_id == person_id))
-    w = result.scalar_one_or_none()
-    return w.balance if w else 0
+    result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person_id))
+    p = result.scalar_one_or_none()
+    return p.balance if p else 0
 
 
 async def deduct_credits(
@@ -21,17 +21,17 @@ async def deduct_credits(
     reference_id: str | None = None,
 ) -> bool:
     result = await db.execute(
-        select(CreditWallet)
-        .where(CreditWallet.person_id == person_id)
+        select(PersonProfile)
+        .where(PersonProfile.person_id == person_id)
         .with_for_update()
     )
-    wallet = result.scalar_one_or_none()
-    if not wallet:
+    profile = result.scalar_one_or_none()
+    if not profile:
         return False
-    if wallet.balance < amount:
+    if profile.balance < amount:
         return False
-    wallet.balance -= amount
-    new_balance = wallet.balance
+    profile.balance -= amount
+    new_balance = profile.balance
     ledger = CreditLedger(
         person_id=person_id,
         amount=-amount,
@@ -40,7 +40,7 @@ async def deduct_credits(
         reference_id=reference_id,
         balance_after=new_balance,
     )
-    db.add(wallet)
+    db.add(profile)
     db.add(ledger)
     await db.flush()
     return True
@@ -52,19 +52,19 @@ async def add_credits(
     amount: int,
     reason: str = "purchase",
 ) -> int:
-    """Add credits to wallet. Returns new balance."""
+    """Add credits to profile balance. Returns new balance."""
     result = await db.execute(
-        select(CreditWallet)
-        .where(CreditWallet.person_id == person_id)
+        select(PersonProfile)
+        .where(PersonProfile.person_id == person_id)
         .with_for_update()
     )
-    wallet = result.scalar_one_or_none()
-    if not wallet:
-        wallet = CreditWallet(person_id=person_id, balance=0)
-        db.add(wallet)
+    profile = result.scalar_one_or_none()
+    if not profile:
+        profile = PersonProfile(person_id=person_id, balance=0)
+        db.add(profile)
         await db.flush()
-    wallet.balance += amount
-    new_balance = wallet.balance
+    profile.balance += amount
+    new_balance = profile.balance
     ledger = CreditLedger(
         person_id=person_id,
         amount=amount,

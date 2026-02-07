@@ -103,7 +103,6 @@ Each parent MUST include ALL keys:
   "intent_secondary": [],
 
   "confidence_score": 0.0,
-  "visibility": true,
 
   "search_phrases": [],
   "search_document": ""

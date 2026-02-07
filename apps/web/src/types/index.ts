@@ -99,7 +99,7 @@ export type ExperienceCard = {
   intent_secondary: string[];
   seniority_level: string | null;
   confidence_score: number | null;
-  visibility: boolean;
+  experience_card_visibility: boolean;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -123,7 +123,7 @@ export type ExperienceCardCreate = {
   intent_secondary?: string[] | null;
   seniority_level?: string | null;
   confidence_score?: number | null;
-  visibility?: boolean | null;
+  experience_card_visibility?: boolean | null;
 };
 
 /** Request body for PATCH `/experience-cards/:card_id`. Matches backend `ExperienceCardPatch`. */
@@ -145,7 +145,7 @@ export type ExperienceCardPatch = {
   intent_secondary?: string[] | null;
   seniority_level?: string | null;
   confidence_score?: number | null;
-  visibility?: boolean | null;
+  experience_card_visibility?: boolean | null;
 };
 
 export type ContactDetails = {
@@ -162,7 +162,6 @@ export type PersonProfile = {
   open_to_contact: boolean;
   work_preferred_locations: string[];
   work_preferred_salary_min: number | null;
-  work_preferred_salary_max: number | null;
   experience_cards: ExperienceCard[];
   contact: ContactDetails | null;
 };
@@ -236,7 +235,6 @@ export type VisibilitySettingsResponse = {
   open_to_work: boolean;
   work_preferred_locations: string[];
   work_preferred_salary_min: number | null;
-  work_preferred_salary_max: number | null;
   open_to_contact: boolean;
 };
 
@@ -244,6 +242,5 @@ export type PatchVisibilityRequest = {
   open_to_work?: boolean;
   work_preferred_locations?: string[];
   work_preferred_salary_min?: number | null;
-  work_preferred_salary_max?: number | null;
   open_to_contact?: boolean;
 };

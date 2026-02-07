@@ -84,7 +84,7 @@ export function V1CardDetails({ card, compact = false, summaryFullWidth = false 
   const confidenceScore =
     typeof cardAny.confidence_score === "number" ? String(cardAny.confidence_score) : null;
   const visibilityStr =
-    typeof cardAny.visibility === "boolean" ? (cardAny.visibility ? "Visible" : "Hidden") : null;
+    typeof cardAny.experience_card_visibility === "boolean" ? (cardAny.experience_card_visibility ? "Visible" : "Hidden") : null;
 
   const rows = [
     card.parent_id != null && card.parent_id !== "" && { label: "Parent ID", value: card.parent_id },

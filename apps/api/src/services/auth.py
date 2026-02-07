@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from src.core import hash_password, verify_password, create_access_token
-from src.db.models import Person, VisibilitySettings, ContactDetails, CreditWallet, CreditLedger
+from src.db.models import Person, PersonProfile, CreditLedger
 from src.schemas import SignupRequest, LoginRequest, TokenResponse
 
 SIGNUP_CREDITS = 1000
@@ -27,10 +27,7 @@ async def signup(db: AsyncSession, body: SignupRequest) -> TokenResponse:
         await db.flush()
     except IntegrityError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
-    db.add(VisibilitySettings(person_id=person.id))
-    db.add(ContactDetails(person_id=person.id))
-    wallet = CreditWallet(person_id=person.id, balance=SIGNUP_CREDITS)
-    db.add(wallet)
+    db.add(PersonProfile(person_id=person.id, balance=SIGNUP_CREDITS))
     await db.flush()
     db.add(
         CreditLedger(

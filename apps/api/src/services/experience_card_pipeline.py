@@ -556,7 +556,7 @@ def card_to_experience_card_fields(
         "intent_secondary": [],
         "seniority_level": role_seniority,
         "confidence_score": None,
-        "visibility": False,
+        "experience_card_visibility": True,
         "search_phrases": search_phrases,
         "search_document": search_document,
     }

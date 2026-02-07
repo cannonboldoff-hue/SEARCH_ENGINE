@@ -87,7 +87,7 @@ export function useCardMutations(
                   intent_secondary: updated.intent_secondary ?? [],
                   seniority_level: updated.seniority_level ?? undefined,
                   confidence_score: updated.confidence_score ?? undefined,
-                  visibility: updated.visibility,
+                  experience_card_visibility: updated.experience_card_visibility,
                   ...(timeRange ? { time_range: timeRange } : {}),
                 },
               };

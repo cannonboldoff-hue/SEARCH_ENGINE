@@ -90,7 +90,7 @@ async def create_experience_card(
         intent_secondary=body.intent_secondary or [],
         seniority_level=body.seniority_level,
         confidence_score=body.confidence_score,
-        visibility=body.visibility if body.visibility is not None else True,
+        experience_card_visibility=body.experience_card_visibility if body.experience_card_visibility is not None else True,
     )
     db.add(card)
     await db.flush()
@@ -149,8 +149,8 @@ def apply_card_patch(card: ExperienceCard, body: ExperienceCardPatch) -> None:
         card.seniority_level = body.seniority_level
     if body.confidence_score is not None:
         card.confidence_score = body.confidence_score
-    if body.visibility is not None:
-        card.visibility = body.visibility
+    if body.experience_card_visibility is not None:
+        card.experience_card_visibility = body.experience_card_visibility
 
 
 def _child_search_document_from_value(label: str | None, value: dict) -> str | None:

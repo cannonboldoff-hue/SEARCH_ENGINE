@@ -59,7 +59,7 @@ class ExperienceCardCreate(BaseModel):
     intent_secondary: Optional[list[str]] = None
     seniority_level: Optional[str] = None
     confidence_score: Optional[float] = None
-    visibility: Optional[bool] = None
+    experience_card_visibility: Optional[bool] = None
 
 
 class ExperienceCardPatch(BaseModel):
@@ -80,7 +80,7 @@ class ExperienceCardPatch(BaseModel):
     intent_secondary: Optional[list[str]] = None
     seniority_level: Optional[str] = None
     confidence_score: Optional[float] = None
-    visibility: Optional[bool] = None
+    experience_card_visibility: Optional[bool] = None
 
 
 class ExperienceCardResponse(BaseModel):
@@ -103,7 +103,7 @@ class ExperienceCardResponse(BaseModel):
     intent_secondary: list[str] = []
     seniority_level: Optional[str] = None
     confidence_score: Optional[float] = None
-    visibility: bool = True
+    experience_card_visibility: bool = True
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

@@ -20,8 +20,8 @@ class BioResponse(BaseModel):
     current_company: Optional[str] = None
     past_companies: Optional[list[PastCompanyItem]] = None
     email: Optional[str] = None  # from Person, for display
-    linkedin_url: Optional[str] = None  # from ContactDetails
-    phone: Optional[str] = None  # from ContactDetails
+    linkedin_url: Optional[str] = None  # from PersonProfile
+    phone: Optional[str] = None  # from PersonProfile
     complete: bool = False
 
     model_config = ConfigDict(from_attributes=True)
@@ -38,5 +38,5 @@ class BioCreateUpdate(BaseModel):
     current_company: Optional[str] = None
     past_companies: Optional[list[PastCompanyItem]] = None
     email: Optional[str] = None  # sync to Person.email if provided
-    linkedin_url: Optional[str] = None  # sync to ContactDetails
-    phone: Optional[str] = None  # sync to ContactDetails
+    linkedin_url: Optional[str] = None  # sync to PersonProfile
+    phone: Optional[str] = None  # sync to PersonProfile

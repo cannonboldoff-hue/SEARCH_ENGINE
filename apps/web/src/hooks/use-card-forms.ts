@@ -18,7 +18,7 @@ export interface ParentCardForm {
   intent_secondary_str: string;
   seniority_level: string;
   confidence_score: string;
-  visibility: boolean;
+  experience_card_visibility: boolean;
 }
 
 export interface ChildCardForm {
@@ -47,7 +47,7 @@ const initialParentForm: ParentCardForm = {
   intent_secondary_str: "",
   seniority_level: "",
   confidence_score: "",
-  visibility: true,
+  experience_card_visibility: true,
 };
 
 const initialChildForm: ChildCardForm = {
@@ -87,7 +87,7 @@ export function useCardForms() {
       intent_secondary_str: Array.isArray(c.intent_secondary) ? (c.intent_secondary as unknown[]).map(String).join(", ") : "",
       seniority_level: (c.seniority_level as string) ?? "",
       confidence_score: c.confidence_score != null ? String(c.confidence_score) : "",
-      visibility: (c.visibility as boolean) ?? true,
+      experience_card_visibility: (c.experience_card_visibility as boolean) ?? true,
     });
   }, []);
 
