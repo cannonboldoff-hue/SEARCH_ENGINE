@@ -236,42 +236,21 @@ export default function BuilderPage() {
   const hasV1Families = (cardFamilies?.length ?? 0) > 0;
   const hasCards = hasV1Families || (draftSetId == null && savedFamilies.length > 0);
 
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: { staggerChildren: 0.06, delayChildren: 0.05 },
-    },
-  };
-  const panelVariants = {
-    hidden: { opacity: 0, x: -12 },
-    visible: { opacity: 1, x: 0 },
-  };
-  const panelVariantsRight = {
-    hidden: { opacity: 0, x: 12 },
-    visible: { opacity: 1, x: 0 },
-  };
-
   return (
     <motion.div
       className="flex flex-col h-[calc(100vh-6.5rem)] overflow-hidden"
-      initial="hidden"
-      animate="visible"
-      variants={containerVariants}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.35 }}
     >
-      <motion.div className="mb-4" variants={panelVariants}>
+      <div className="mb-4">
         <BackLink href="/profile" />
-      </motion.div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">
         {/* Left: Raw input */}
-        <motion.div
-          className="flex flex-col min-h-0 glass border-border/50 rounded-xl p-4 perspective-1000 transform-3d depth-shadow"
-          variants={panelVariants}
-          transition={{ type: "spring", stiffness: 200, damping: 24 }}
-          style={{ transformStyle: "preserve-3d" }}
-        >
+        <div className="flex flex-col min-h-0 border border-border rounded-xl p-4 bg-card">
           <div className="flex items-start justify-between gap-2 mb-1">
-            <h2 className="text-lg font-semibold">Raw experience</h2>
+            <h2 className="text-base font-medium">Raw experience</h2>
             <Button
               variant="outline"
               size="sm"
@@ -279,12 +258,12 @@ export default function BuilderPage() {
               disabled={!rawText.trim() || isRewriting}
               className="flex-shrink-0"
             >
-              <PenLine className="h-4 w-4 mr-1.5" />
-              {isRewriting ? "Rewriting…" : "Rewrite"}
+              <PenLine className="h-3.5 w-3.5 mr-1.5" />
+              {isRewriting ? "Rewriting..." : "Rewrite"}
             </Button>
           </div>
-          <p className="text-sm text-muted-foreground mb-3">
-            Write freely. Add one experience at a time or multiple. We&apos;ll structure it into cards.
+          <p className="text-xs text-muted-foreground mb-3">
+            {"Write freely. Add one experience at a time or multiple. We'll structure it into cards."}
           </p>
           <Textarea
             placeholder="Paste or type your experience. e.g. I worked at Razorpay in the backend team for 2 years..."
@@ -297,21 +276,16 @@ export default function BuilderPage() {
               onClick={extractDraftV1}
               disabled={!rawText.trim() || isUpdating}
             >
-              {isUpdating ? "Structuring…" : "Update"}
+              {isUpdating ? "Structuring..." : "Update"}
             </Button>
             <p className="text-xs text-muted-foreground">
               Extracts a parent card per experience and child cards (skills, outcomes, etc.).
             </p>
           </div>
-        </motion.div>
+        </div>
 
         {/* Right: Experience cards */}
-        <motion.div
-          className="flex flex-col min-h-0 glass border-border/50 rounded-xl p-4 flex-1 perspective-1000 transform-3d depth-shadow"
-          variants={panelVariantsRight}
-          transition={{ type: "spring", stiffness: 200, damping: 24 }}
-          style={{ transformStyle: "preserve-3d" }}
-        >
+        <div className="flex flex-col min-h-0 border border-border rounded-xl p-4 bg-card flex-1">
           <h2 className="text-lg font-semibold mb-3 flex-shrink-0">Experience cards</h2>
           <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0">
             {(loadingCards || loadingFamilies) && savedFamilies.length === 0 && !hasV1Families ? (
@@ -450,9 +424,9 @@ export default function BuilderPage() {
               Save Cards
             </Button>
           </div>
-        </motion.div>
+        </div>
       </div>
-
+      
       <SaveCardsModal
         open={saveModalOpen}
         onClose={() => setSaveModalOpen(false)}

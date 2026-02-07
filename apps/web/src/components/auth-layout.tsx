@@ -15,16 +15,16 @@ export function AuthLayout({ title, subtitle, children }: AuthLayoutProps) {
       <HeroBg />
       <DepthGrid />
       <motion.div
-        initial={{ opacity: 0, y: 16 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
-        className="w-full max-w-md relative z-10"
+        transition={{ duration: 0.35, ease: "easeOut" }}
+        className="w-full max-w-sm relative z-10"
       >
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground text-balance">
             {title}
           </h1>
-          <p className="text-muted-foreground mt-2 text-lg">{subtitle}</p>
+          <p className="text-muted-foreground mt-2 text-sm leading-relaxed">{subtitle}</p>
         </div>
         {children}
       </motion.div>

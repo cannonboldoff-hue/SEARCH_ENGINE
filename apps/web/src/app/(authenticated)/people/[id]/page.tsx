@@ -42,8 +42,8 @@ export default function PersonProfilePage() {
 
   if (!searchId) {
     return (
-      <div className="py-12 text-center max-w-md mx-auto space-y-4">
-        <p className="text-muted-foreground">
+      <div className="py-16 text-center max-w-sm mx-auto space-y-4">
+        <p className="text-sm text-muted-foreground">
           This profile must be opened from a search result so we can track your credit usage.
         </p>
         <Link
@@ -58,15 +58,16 @@ export default function PersonProfilePage() {
 
   if (isLoading) {
     return (
-      <div className="py-8 flex justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading profile…</div>
+      <div className="py-12 flex flex-col items-center justify-center gap-3">
+        <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+        <p className="text-sm text-muted-foreground">Loading profile...</p>
       </div>
     );
   }
 
   if (error || !profile) {
     return (
-      <div className="py-8 text-center text-destructive">
+      <div className="py-12 text-center text-sm text-destructive">
         {error instanceof Error ? error.message : "Failed to load profile"}
       </div>
     );
@@ -78,39 +79,37 @@ export default function PersonProfilePage() {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="max-w-3xl mx-auto space-y-6"
+      transition={{ duration: 0.35 }}
+      className="max-w-2xl mx-auto space-y-6"
     >
-      <div className="mb-4">
+      <div className="mb-2">
         <Link
           href="/home"
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
-          ← Back to Discover
+          {"<-"} Back to Discover
         </Link>
       </div>
-      <Card className="glass border-border/50 overflow-hidden">
-        <CardHeader>
-          <CardTitle className="text-xl">
+
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg">
             {profile.display_name || "Anonymous"}
           </CardTitle>
-          <div className="flex gap-2 text-sm text-muted-foreground">
+          <div className="flex gap-2 mt-1">
             {profile.open_to_work && (
-              <span className="rounded bg-green-100 px-2 py-0.5 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                Open to work
-              </span>
+              <span className="text-xs text-success font-medium">Open to work</span>
             )}
             {profile.open_to_contact && (
-              <span className="rounded bg-blue-100 px-2 py-0.5 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                Open to contact
-              </span>
+              <span className="text-xs text-info font-medium">Open to contact</span>
             )}
           </div>
           {profile.open_to_work && (
-            <p className="text-sm">
-              Locations: {profile.work_preferred_locations?.length ? profile.work_preferred_locations.join(", ") : "—"}
+            <p className="text-xs text-muted-foreground mt-1">
+              Locations: {profile.work_preferred_locations?.length ? profile.work_preferred_locations.join(", ") : "--"}
               {profile.work_preferred_salary_min != null && (
-                <> · Salary: {profile.work_preferred_salary_min}
-                  {profile.work_preferred_salary_max != null ? `–${profile.work_preferred_salary_max}` : ""}
+                <>{" / Salary: "}{profile.work_preferred_salary_min}
+                  {profile.work_preferred_salary_max != null ? `- ${profile.work_preferred_salary_max}` : ""}
                 </>
               )}
             </p>
@@ -118,60 +117,61 @@ export default function PersonProfilePage() {
         </CardHeader>
       </Card>
 
-      <div>
-        <h2 className="text-lg font-semibold mb-3">Experience cards</h2>
-        <ul className="space-y-4">
+      <section>
+        <h2 className="text-sm font-medium text-muted-foreground mb-3">Experience</h2>
+        <ul className="space-y-2">
           {profile.experience_cards.map((card) => (
-            <Card key={card.id} className="glass border-border/50 hover-lift">
+            <Card key={card.id}>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">
+                <CardTitle className="text-sm font-medium">
                   {card.title || card.company_name || "Untitled"}
                 </CardTitle>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {[card.company_name, card.normalized_role, card.location, card.start_date, card.end_date]
                     .filter(Boolean)
-                    .join(" · ")}
+                    .join(" / ")}
                 </p>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {card.summary && <p>{card.summary}</p>}
+              <CardContent className="text-sm">
+                {card.summary && <p className="text-muted-foreground">{card.summary}</p>}
               </CardContent>
             </Card>
           ))}
         </ul>
-      </div>
+      </section>
 
-      <Card className="glass border-border/50 overflow-hidden">
-        <CardHeader>
-          <CardTitle className="text-base">Contact</CardTitle>
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium">Contact</CardTitle>
         </CardHeader>
         <CardContent>
           {contactUnlocked ? (
-            <div className="space-y-2 text-sm">
-              {profile.contact?.email_visible && <p>Email: (visible to you)</p>}
-              {profile.contact?.phone && <p>Phone: {profile.contact.phone}</p>}
+            <div className="space-y-1.5 text-sm">
+              {profile.contact?.email_visible && <p className="text-foreground">Email: (visible to you)</p>}
+              {profile.contact?.phone && <p className="text-foreground">Phone: {profile.contact.phone}</p>}
               {profile.contact?.linkedin_url && (
                 <a
                   href={profile.contact.linkedin_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-primary hover:underline"
+                  className="text-foreground hover:underline"
                 >
                   LinkedIn
                 </a>
               )}
-              {profile.contact?.other && <p>{profile.contact.other}</p>}
+              {profile.contact?.other && <p className="text-muted-foreground">{profile.contact.other}</p>}
             </div>
           ) : profile.open_to_contact ? (
             <div>
-              <p className="text-muted-foreground text-sm mb-2">
-                Unlock contact for 1 credit.
+              <p className="text-sm text-muted-foreground mb-3">
+                Unlock contact details for 1 credit.
               </p>
               <Button
+                size="sm"
                 onClick={() => unlockMutation.mutate()}
                 disabled={unlockMutation.isPending}
               >
-                {unlockMutation.isPending ? "Unlocking…" : "Unlock contact (1 credit)"}
+                {unlockMutation.isPending ? "Unlocking..." : "Unlock contact (1 credit)"}
               </Button>
               {unlockMutation.isError && (
                 <div className="mt-2">
@@ -186,7 +186,7 @@ export default function PersonProfilePage() {
               )}
             </div>
           ) : (
-            <p className="text-muted-foreground text-sm">
+            <p className="text-sm text-muted-foreground">
               This person is not open to contact.
             </p>
           )}

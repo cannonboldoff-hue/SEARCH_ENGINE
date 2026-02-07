@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { Pencil, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageLoading } from "@/components/page-loading";
@@ -16,7 +17,7 @@ export default function ProfilePage() {
   const isLoading = loadingBio || loadingCards;
 
   if (isLoading) {
-    return <PageLoading message="Loading profile…" className="py-8 flex justify-center" />;
+    return <PageLoading message="Loading profile..." className="py-8 flex flex-col items-center justify-center gap-3" />;
   }
 
   if (bioError || cardsError) {
@@ -24,7 +25,7 @@ export default function ProfilePage() {
       <PageError
         message="Failed to load profile. Please try again."
         backHref="/home"
-        backLabel="← Go home"
+        backLabel="Go home"
         className="py-8"
       />
     );
@@ -34,117 +35,108 @@ export default function ProfilePage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ type: "spring", stiffness: 200, damping: 24 }}
-      style={{ transformStyle: "preserve-3d", perspective: 1000 }}
-      className="max-w-3xl mx-auto space-y-6"
+      transition={{ duration: 0.35 }}
+      className="max-w-2xl mx-auto space-y-6"
     >
-      <motion.div
-        initial={{ opacity: 0, y: 12, rotateX: -6 }}
-        animate={{ opacity: 1, y: 0, rotateX: 0 }}
-        transition={{ delay: 0.06, type: "spring", stiffness: 260, damping: 24 }}
-        style={{ transformStyle: "preserve-3d" }}
-      >
-      <Card className="glass border-border/50 overflow-hidden depth-shadow perspective-1000 transform-3d">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50">
-          <CardTitle className="text-xl">My profile</CardTitle>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border pb-4">
+          <CardTitle className="text-lg">My profile</CardTitle>
           <div className="flex gap-2">
             <Link href="/onboarding/bio">
               <Button variant="outline" size="sm">
+                <Pencil className="h-3.5 w-3.5 mr-1.5" />
                 Edit Bio
               </Button>
             </Link>
             <Link href="/builder">
               <Button variant="outline" size="sm">
-                Experience builder
+                <Layers className="h-3.5 w-3.5 mr-1.5" />
+                Builder
               </Button>
             </Link>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="pt-4">
           <section>
-            <h3 className="text-sm font-semibold text-muted-foreground mb-2">Bio</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-sm">
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Bio</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
               {(bio?.first_name || bio?.last_name) && (
-                <p><span className="text-muted-foreground">Name:</span> {displayName}</p>
+                <div><span className="text-muted-foreground">Name:</span> <span className="text-foreground">{displayName}</span></div>
               )}
               {bio?.date_of_birth && (
-                <p><span className="text-muted-foreground">DOB:</span> {bio.date_of_birth}</p>
+                <div><span className="text-muted-foreground">DOB:</span> <span className="text-foreground">{bio.date_of_birth}</span></div>
               )}
               {bio?.current_city && (
-                <p><span className="text-muted-foreground">City:</span> {bio.current_city}</p>
+                <div><span className="text-muted-foreground">City:</span> <span className="text-foreground">{bio.current_city}</span></div>
               )}
               {bio?.school && (
-                <p><span className="text-muted-foreground">School:</span> {bio.school}</p>
+                <div><span className="text-muted-foreground">School:</span> <span className="text-foreground">{bio.school}</span></div>
               )}
               {bio?.college && (
-                <p><span className="text-muted-foreground">College:</span> {bio.college}</p>
+                <div><span className="text-muted-foreground">College:</span> <span className="text-foreground">{bio.college}</span></div>
               )}
               {bio?.current_company && (
-                <p><span className="text-muted-foreground">Current company:</span> {bio.current_company}</p>
+                <div><span className="text-muted-foreground">Company:</span> <span className="text-foreground">{bio.current_company}</span></div>
               )}
               {bio?.email && (
-                <p><span className="text-muted-foreground">Email:</span> {bio.email}</p>
+                <div><span className="text-muted-foreground">Email:</span> <span className="text-foreground">{bio.email}</span></div>
               )}
               {bio?.linkedin_url && (
-                <p>
+                <div>
                   <span className="text-muted-foreground">LinkedIn:</span>{" "}
-                  <a href={bio.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                    {bio.linkedin_url}
+                  <a href={bio.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-foreground hover:underline">
+                    View
                   </a>
-                </p>
+                </div>
               )}
               {bio?.phone && (
-                <p><span className="text-muted-foreground">Phone:</span> {bio.phone}</p>
+                <div><span className="text-muted-foreground">Phone:</span> <span className="text-foreground">{bio.phone}</span></div>
               )}
             </div>
             {bio?.past_companies && bio.past_companies.length > 0 && (
-              <div className="mt-2">
-                <p className="text-muted-foreground text-sm mb-1">Past companies</p>
-                <ul className="text-sm list-disc list-inside space-y-0.5">
+              <div className="mt-4">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Past companies</p>
+                <ul className="text-sm space-y-1">
                   {bio.past_companies.map((p, i) => (
-                    <li key={i}>
+                    <li key={i} className="text-foreground">
                       {p.company_name}
-                      {p.role && ` — ${p.role}`}
-                      {p.years && ` (${p.years})`}
+                      {p.role && <span className="text-muted-foreground">{` - ${p.role}`}</span>}
+                      {p.years && <span className="text-muted-foreground">{` (${p.years})`}</span>}
                     </li>
                   ))}
                 </ul>
               </div>
             )}
             {!bio?.complete && (
-              <p className="text-sm text-muted-foreground mt-2">
+              <p className="text-xs text-muted-foreground mt-3 border-t border-border pt-3">
                 Complete your bio in Edit Bio to improve your Builder context.
               </p>
             )}
           </section>
         </CardContent>
       </Card>
-      </motion.div>
 
-      <motion.section
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-      >
-        <h2 className="text-lg font-semibold mb-3">Experience cards</h2>
+      <section>
+        <h2 className="text-sm font-medium text-muted-foreground mb-3">Experience cards</h2>
         {cardFamilies.length === 0 ? (
-          <p className="text-muted-foreground text-sm py-6 rounded-xl border border-dashed border-border/50 text-center">
-            No experience cards yet.{" "}
-            <Link href="/builder" className="text-primary font-medium hover:underline">
-              Add experience in the builder
-            </Link>
-            .
-          </p>
+          <div className="text-center py-12 rounded-lg border border-dashed border-border">
+            <p className="text-sm text-muted-foreground">
+              No experience cards yet.{" "}
+              <Link href="/builder" className="text-foreground font-medium hover:underline">
+                Add experience in the builder
+              </Link>
+            </p>
+          </div>
         ) : (
-          <ul className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+          <ul className="space-y-3 max-h-[60vh] overflow-y-auto">
             {cardFamilies.map((family, idx) => (
               <ExpandableExperienceCard key={family.parent.id} family={family} index={idx} />
             ))}
           </ul>
         )}
-      </motion.section>
+      </section>
     </motion.div>
   );
 }

@@ -3,14 +3,15 @@ type PageLoadingProps = {
   className?: string;
 };
 
-export function PageLoading({ message = "Loading…", className }: PageLoadingProps) {
+export function PageLoading({ message = "Loading...", className }: PageLoadingProps) {
   return (
     <div
       className={
-        className ?? "min-h-[60vh] flex items-center justify-center"
+        className ?? "min-h-[60vh] flex flex-col items-center justify-center gap-3"
       }
     >
-      <div className="animate-pulse text-muted-foreground">{message}</div>
+      <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+      <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
 }
