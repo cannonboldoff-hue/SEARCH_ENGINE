@@ -1,5 +1,7 @@
 """Experience card and raw experience business logic."""
 
+from collections import defaultdict
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -230,6 +232,29 @@ async def list_my_cards(
     return list(result.scalars().all())
 
 
+async def list_my_children(
+    db: AsyncSession,
+    person_id: str,
+) -> list[ExperienceCardChild]:
+    """List all experience card children for the user."""
+    q = select(ExperienceCardChild).where(ExperienceCardChild.person_id == person_id)
+    result = await db.execute(q)
+    return list(result.scalars().all())
+
+
+async def list_my_card_families(
+    db: AsyncSession,
+    person_id: str,
+) -> list[tuple[ExperienceCard, list[ExperienceCardChild]]]:
+    """List experience cards with their children grouped by parent."""
+    parents = await list_my_cards(db, person_id)
+    children = await list_my_children(db, person_id)
+    by_parent: dict[str, list[ExperienceCardChild]] = defaultdict(list)
+    for c in children:
+        by_parent[c.parent_experience_id].append(c)
+    return [(p, by_parent.get(p.id, [])) for p in parents]
+
+
 class ExperienceCardService:
     """Facade for experience card operations (for dependency injection if needed)."""
 
@@ -248,6 +273,12 @@ class ExperienceCardService:
     @staticmethod
     async def list_cards(db: AsyncSession, person_id: str) -> list[ExperienceCard]:
         return await list_my_cards(db, person_id)
+
+    @staticmethod
+    async def list_card_families(
+        db: AsyncSession, person_id: str
+    ) -> list[tuple[ExperienceCard, list[ExperienceCardChild]]]:
+        return await list_my_card_families(db, person_id)
 
 
 experience_card_service = ExperienceCardService()

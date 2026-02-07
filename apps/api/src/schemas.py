@@ -293,6 +293,13 @@ class ExperienceCardChildResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CardFamilyResponse(BaseModel):
+    """One parent experience card and its child cards (for saved cards list)."""
+
+    parent: ExperienceCardResponse
+    children: list[ExperienceCardChildResponse] = []
+
+
 # -----------------------------------------------------------------------------
 # Search
 # -----------------------------------------------------------------------------

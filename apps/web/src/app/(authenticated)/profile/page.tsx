@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageLoading } from "@/components/page-loading";
 import { PageError } from "@/components/page-error";
-import { useBio, useExperienceCards } from "@/hooks";
+import { ExpandableExperienceCard } from "@/components/profile/expandable-experience-card";
+import { useBio, useExperienceCardFamilies } from "@/hooks";
 
 export default function ProfilePage() {
   const { data: bio, isLoading: loadingBio, isError: bioError } = useBio();
-  const { data: experienceCards = [], isLoading: loadingCards, isError: cardsError } = useExperienceCards();
+  const { data: cardFamilies = [], isLoading: loadingCards, isError: cardsError } = useExperienceCardFamilies();
 
   const isLoading = loadingBio || loadingCards;
 
@@ -128,7 +129,7 @@ export default function ProfilePage() {
         transition={{ delay: 0.15 }}
       >
         <h2 className="text-lg font-semibold mb-3">Experience cards</h2>
-        {experienceCards.length === 0 ? (
+        {cardFamilies.length === 0 ? (
           <p className="text-muted-foreground text-sm py-6 rounded-xl border border-dashed border-border/50 text-center">
             No experience cards yet.{" "}
             <Link href="/builder" className="text-primary font-medium hover:underline">
@@ -137,33 +138,9 @@ export default function ProfilePage() {
             .
           </p>
         ) : (
-          <ul className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
-            {experienceCards.map((card, idx) => (
-              <motion.div
-                key={card.id}
-                initial={{ opacity: 0, x: -12, rotateY: 8 }}
-                animate={{ opacity: 1, x: 0, rotateY: 0 }}
-                transition={{ delay: idx * 0.04, type: "spring", stiffness: 280, damping: 24 }}
-                style={{ transformStyle: "preserve-3d", perspective: 800 }}
-              >
-              <Card className="glass border-border/50 hover-lift depth-shadow perspective-1000 transform-3d">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <CardTitle className="text-base">
-                      {card.title || card.company_name || "Untitled"}
-                    </CardTitle>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {[card.company_name, card.normalized_role, card.location, card.start_date, card.end_date]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  {card.summary && <p>{card.summary}</p>}
-                </CardContent>
-              </Card>
-              </motion.div>
+          <ul className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+            {cardFamilies.map((family, idx) => (
+              <ExpandableExperienceCard key={family.parent.id} family={family} index={idx} />
             ))}
           </ul>
         )}

@@ -190,6 +190,12 @@ export type ExperienceCardChild = {
   location: string | null;
 };
 
+/** One parent + children from GET /me/experience-card-families. Matches backend CardFamilyResponse. */
+export type SavedCardFamily = {
+  parent: ExperienceCard;
+  children: ExperienceCardChild[];
+};
+
 export type BioResponse = {
   first_name: string | null;
   last_name: string | null;

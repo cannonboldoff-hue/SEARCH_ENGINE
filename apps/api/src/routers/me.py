@@ -14,9 +14,10 @@ from src.schemas import (
     BioResponse,
     BioCreateUpdate,
     ExperienceCardResponse,
+    CardFamilyResponse,
 )
 from src.domain import PersonSchema, ExperienceCardV1Schema
-from src.serializers import experience_card_to_response, experience_card_to_v1_schema
+from src.serializers import experience_card_to_response, experience_card_to_v1_schema, experience_card_child_to_response
 from src.services.me import me_service
 from src.services.experience_card import experience_card_service
 
@@ -114,6 +115,22 @@ async def list_my_experience_cards(
 ):
     cards = await experience_card_service.list_cards(db, current_user.id)
     return [experience_card_to_response(c) for c in cards]
+
+
+@router.get("/experience-card-families", response_model=list[CardFamilyResponse])
+async def list_my_experience_card_families(
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List saved experience cards with their children grouped by parent."""
+    families = await experience_card_service.list_card_families(db, current_user.id)
+    return [
+        CardFamilyResponse(
+            parent=experience_card_to_response(parent),
+            children=[experience_card_child_to_response(c) for c in children],
+        )
+        for parent, children in families
+    ]
 
 
 @router.get("/experience-cards-v1", response_model=list[ExperienceCardV1Schema])
