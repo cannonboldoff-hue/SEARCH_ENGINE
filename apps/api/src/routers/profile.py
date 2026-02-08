@@ -5,7 +5,7 @@ from src.db.models import Person
 from src.dependencies import get_current_user, get_db
 from src.schemas import (
     PersonResponse,
-    PatchMeRequest,
+    PatchProfileRequest,
     VisibilitySettingsResponse,
     PatchVisibilityRequest,
     CreditsResponse,
@@ -18,26 +18,26 @@ from src.schemas import (
 )
 from src.domain import PersonSchema, ExperienceCardV1Schema
 from src.serializers import experience_card_to_response, experience_card_to_v1_schema, experience_card_child_to_response
-from src.services.me import me_service
+from src.services.profile import profile_service
 from src.services.experience_card import experience_card_service
 
-router = APIRouter(prefix="/me", tags=["me"])
+router = APIRouter(prefix="/me", tags=["profile"])
 
 
 @router.get("", response_model=PersonResponse)
 async def get_me(
     current_user: Person = Depends(get_current_user),
 ):
-    return await me_service.get_me(current_user)
+    return await profile_service.get_current_user(current_user)
 
 
 @router.patch("", response_model=PersonResponse)
 async def patch_me(
-    body: PatchMeRequest,
+    body: PatchProfileRequest,
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await me_service.patch_me(db, current_user, body)
+    return await profile_service.patch_current_user(db, current_user, body)
 
 
 @router.get("/profile-v1", response_model=PersonSchema)
@@ -46,7 +46,7 @@ async def get_profile_v1(
     db: AsyncSession = Depends(get_db),
 ):
     """Current user profile in domain v1 schema (Person)."""
-    return await me_service.get_profile_v1(db, current_user)
+    return await profile_service.get_profile_v1(db, current_user)
 
 
 @router.get("/visibility", response_model=VisibilitySettingsResponse)
@@ -54,7 +54,7 @@ async def get_visibility(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await me_service.get_visibility(db, current_user.id)
+    return await profile_service.get_visibility(db, current_user.id)
 
 
 @router.patch("/visibility", response_model=VisibilitySettingsResponse)
@@ -63,7 +63,7 @@ async def patch_visibility(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await me_service.patch_visibility(db, current_user.id, body)
+    return await profile_service.patch_visibility(db, current_user.id, body)
 
 
 @router.get("/bio", response_model=BioResponse)
@@ -71,7 +71,7 @@ async def get_bio(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await me_service.get_bio(db, current_user)
+    return await profile_service.get_bio(db, current_user)
 
 
 @router.put("/bio", response_model=BioResponse)
@@ -80,7 +80,7 @@ async def put_bio(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await me_service.put_bio(db, current_user, body)
+    return await profile_service.put_bio(db, current_user, body)
 
 
 @router.get("/credits", response_model=CreditsResponse)
@@ -88,7 +88,7 @@ async def get_credits(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await me_service.get_credits(db, current_user.id)
+    return await profile_service.get_credits(db, current_user.id)
 
 
 @router.post("/credits/purchase", response_model=CreditsResponse)
@@ -97,7 +97,7 @@ async def purchase_credits(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await me_service.purchase_credits(db, current_user.id, body)
+    return await profile_service.purchase_credits(db, current_user.id, body)
 
 
 @router.get("/credits/ledger", response_model=list[LedgerEntryResponse])
@@ -105,7 +105,7 @@ async def get_credits_ledger(
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await me_service.get_credits_ledger(db, current_user.id)
+    return await profile_service.get_credits_ledger(db, current_user.id)
 
 
 @router.get("/experience-cards", response_model=list[ExperienceCardResponse])

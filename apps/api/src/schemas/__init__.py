@@ -1,9 +1,9 @@
 """Pydantic request/response schemas. Re-exported for backward compatibility."""
 
 from src.schemas.auth import SignupRequest, LoginRequest, TokenResponse
-from src.schemas.me import (
+from src.schemas.profile import (
     PersonResponse,
-    PatchMeRequest,
+    PatchProfileRequest,
     VisibilitySettingsResponse,
     PatchVisibilityRequest,
 )
@@ -43,7 +43,7 @@ __all__ = [
     "LoginRequest",
     "TokenResponse",
     "PersonResponse",
-    "PatchMeRequest",
+    "PatchProfileRequest",
     "VisibilitySettingsResponse",
     "PatchVisibilityRequest",
     "PastCompanyItem",

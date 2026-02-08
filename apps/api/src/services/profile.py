@@ -1,6 +1,4 @@
-"""Me (profile, visibility, bio, credits, contact) business logic."""
-
-import asyncio
+"""Profile (visibility, bio, credits, contact) business logic."""
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +10,7 @@ from src.serializers import person_to_person_schema
 from src.domain import PersonSchema
 from src.schemas import (
     PersonResponse,
-    PatchMeRequest,
+    PatchProfileRequest,
     VisibilitySettingsResponse,
     PatchVisibilityRequest,
     CreditsResponse,
@@ -60,13 +58,13 @@ async def _get_profile_v1_response(db: AsyncSession, person: Person) -> PersonSc
     return person_to_person_schema(person, profile=profile)
 
 
-async def update_profile(db: AsyncSession, person: Person, body: PatchMeRequest) -> PersonResponse:
+async def update_profile(db: AsyncSession, person: Person, body: PatchProfileRequest) -> PersonResponse:
     if body.display_name is not None:
         person.display_name = body.display_name
     return _person_response(person)
 
 
-async def get_visibility(db: AsyncSession, person_id: str) -> VisibilitySettingsResponse:
+async def _get_visibility(db: AsyncSession, person_id: str) -> VisibilitySettingsResponse:
     result = await db.execute(
         select(PersonProfile).where(PersonProfile.person_id == person_id)
     )
@@ -81,7 +79,7 @@ async def get_visibility(db: AsyncSession, person_id: str) -> VisibilitySettings
     )
 
 
-async def patch_visibility(
+async def _patch_visibility(
     db: AsyncSession,
     person_id: str,
     body: PatchVisibilityRequest,
@@ -205,7 +203,7 @@ async def update_bio(
     )
 
 
-async def get_credits(db: AsyncSession, person_id: str) -> CreditsResponse:
+async def _get_credits(db: AsyncSession, person_id: str) -> CreditsResponse:
     result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person_id))
     profile = result.scalar_one_or_none()
     if not profile:
@@ -213,7 +211,7 @@ async def get_credits(db: AsyncSession, person_id: str) -> CreditsResponse:
     return CreditsResponse(balance=profile.balance)
 
 
-async def purchase_credits(
+async def _purchase_credits(
     db: AsyncSession,
     person_id: str,
     body: PurchaseCreditsRequest,
@@ -226,7 +224,7 @@ async def purchase_credits(
     return CreditsResponse(balance=new_balance)
 
 
-async def get_credits_ledger(db: AsyncSession, person_id: str) -> list[LedgerEntryResponse]:
+async def _get_credits_ledger(db: AsyncSession, person_id: str) -> list[LedgerEntryResponse]:
     result = await db.execute(
         select(CreditLedger)
         .where(CreditLedger.person_id == person_id)
@@ -291,11 +289,11 @@ async def update_contact(
     return _contact_response(profile)
 
 
-class MeService:
-    """Facade for me (profile, visibility, bio, credits, contact) operations."""
+class ProfileService:
+    """Facade for profile (visibility, bio, credits, contact) operations."""
 
     @staticmethod
-    async def get_me(person: Person) -> PersonResponse:
+    async def get_current_user(person: Person) -> PersonResponse:
         return await get_profile(person)
 
     @staticmethod
@@ -303,12 +301,12 @@ class MeService:
         return await _get_profile_v1_response(db, person)
 
     @staticmethod
-    async def patch_me(db: AsyncSession, person: Person, body: PatchMeRequest) -> PersonResponse:
+    async def patch_current_user(db: AsyncSession, person: Person, body: PatchProfileRequest) -> PersonResponse:
         return await update_profile(db, person, body)
 
     @staticmethod
     async def get_visibility(db: AsyncSession, person_id: str) -> VisibilitySettingsResponse:
-        return await get_visibility(db, person_id)
+        return await _get_visibility(db, person_id)
 
     @staticmethod
     async def patch_visibility(
@@ -316,7 +314,7 @@ class MeService:
         person_id: str,
         body: PatchVisibilityRequest,
     ) -> VisibilitySettingsResponse:
-        return await patch_visibility(db, person_id, body)
+        return await _patch_visibility(db, person_id, body)
 
     @staticmethod
     async def get_bio(db: AsyncSession, person: Person) -> BioResponse:
@@ -332,7 +330,7 @@ class MeService:
 
     @staticmethod
     async def get_credits(db: AsyncSession, person_id: str) -> CreditsResponse:
-        return await get_credits(db, person_id)
+        return await _get_credits(db, person_id)
 
     @staticmethod
     async def purchase_credits(
@@ -340,11 +338,11 @@ class MeService:
         person_id: str,
         body: PurchaseCreditsRequest,
     ) -> CreditsResponse:
-        return await purchase_credits(db, person_id, body)
+        return await _purchase_credits(db, person_id, body)
 
     @staticmethod
     async def get_credits_ledger(db: AsyncSession, person_id: str) -> list[LedgerEntryResponse]:
-        return await get_credits_ledger(db, person_id)
+        return await _get_credits_ledger(db, person_id)
 
     @staticmethod
     async def get_contact(db: AsyncSession, person_id: str) -> ContactDetailsResponse:
@@ -359,4 +357,4 @@ class MeService:
         return await update_contact(db, person_id, body)
 
 
-me_service = MeService()
+profile_service = ProfileService()

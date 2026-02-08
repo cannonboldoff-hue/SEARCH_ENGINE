@@ -47,7 +47,7 @@ Tech: **PostgreSQL** (async via asyncpg), **pgvector** for embeddings, **Alembic
 | 3 | **`app.state.limiter = limiter`** — Attach SlowAPI limiter for rate-limited routes. |
 | 4 | **`app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)`** — Return 429 when rate limit exceeded. |
 | 5 | **CORS** — `get_settings().cors_origins` is split by comma; if empty, `["*"]`. Middleware allows credentials, all methods/headers. **Production:** set `CORS_ORIGINS` to your web app URL(s), e.g. `https://search-engine-web-3aqy.onrender.com` — browsers reject `*` when credentials are used. |
-| 6 | **Routers** — `auth_router`, `me_router`, `contact_router`, `builder_router`, `search_router` are included. |
+| 6 | **Routers** — `auth_router`, `profile_router`, `contact_router`, `builder_router`, `search_router` are included. |
 | 7 | **`GET /health`** — Returns `{"status": "ok"}` (no auth). |
 
 ---
@@ -143,7 +143,7 @@ Credit balance, deductions, and idempotency storage.
 Pydantic models for request/response. Summary:
 
 - **Auth**: `SignupRequest`, `LoginRequest`, `TokenResponse`.
-- **Me**: `PersonResponse`, `PatchMeRequest`, `VisibilitySettingsResponse`, `PatchVisibilityRequest`, `BioResponse`, `BioCreateUpdate`, `PastCompanyItem`.
+- **Profile**: `PersonResponse`, `PatchProfileRequest`, `VisibilitySettingsResponse`, `PatchVisibilityRequest`, `BioResponse`, `BioCreateUpdate`, `PastCompanyItem`.
 - **Contact**: `ContactDetailsResponse`, `PatchContactRequest`.
 - **Credits**: `CreditsResponse`, `LedgerEntryResponse`.
 - **Builder**: `RawExperienceCreate`, `RawExperienceResponse`, `ExperienceCardCreate`, `ExperienceCardPatch`, `ExperienceCardResponse`, `DraftSetV1Response`, `CardFamilyV1Response`.
@@ -242,7 +242,7 @@ Use `fill_prompt(template, user_text=..., person_id=..., parent_and_children_jso
 | **`_contact_response(c)`** | Map ContactDetails or None to ContactDetailsResponse (email_visible, phone, linkedin_url, other). |
 | **`get_contact_response(db, person_id)`** | Load ContactDetails; return _contact_response(contact). |
 | **`update_contact(db, person_id, body)`** | Load or create ContactDetails; apply email_visible, phone, linkedin_url, other from body; return _contact_response(contact). |
-| **`MeService`** | Facade wrapping all above. `me_service` used by me and contact routers. |
+| **`ProfileService`** | Facade wrapping all above. `profile_service` used by profile and contact routers. |
 
 ### Search (`services/search.py`)
 
@@ -277,25 +277,26 @@ Use `fill_prompt(template, user_text=..., person_id=..., parent_and_children_jso
 - **POST /auth/signup** — Body: SignupRequest. Depends: get_db. Calls `auth_service.signup(db, body)`; returns TokenResponse.
 - **POST /auth/login** — Body: LoginRequest. Depends: get_db. Calls `auth_service.login(db, body)`; returns TokenResponse.
 
-### Me (`routers/me.py`)
+### Profile (`routers/profile.py`)
 
 All require `get_current_user` (JWT). Prefix `/me`.
 
-- **GET /me** — Returns PersonResponse via `me_service.get_me(current_user)`.
-- **PATCH /me** — Body: PatchMeRequest. `me_service.patch_me(db, current_user, body)`.
-- **GET /me/visibility** — `me_service.get_visibility(db, current_user.id)`.
-- **PATCH /me/visibility** — Body: PatchVisibilityRequest. `me_service.patch_visibility(db, current_user.id, body)`.
-- **GET /me/bio** — `me_service.get_bio(db, current_user)`.
-- **PUT /me/bio** — Body: BioCreateUpdate. `me_service.put_bio(db, current_user, body)`.
-- **GET /me/credits** — `me_service.get_credits(db, current_user.id)`.
-- **GET /me/credits/ledger** — `me_service.get_credits_ledger(db, current_user.id)`.
+- **GET /me** — Returns PersonResponse via `profile_service.get_current_user(current_user)`.
+- **PATCH /me** — Body: PatchProfileRequest. `profile_service.patch_current_user(db, current_user, body)`.
+- **GET /me/visibility** — `profile_service.get_visibility(db, current_user.id)`.
+- **PATCH /me/visibility** — Body: PatchVisibilityRequest. `profile_service.patch_visibility(db, current_user.id, body)`.
+- **GET /me/bio** — `profile_service.get_bio(db, current_user)`.
+- **PUT /me/bio** — Body: BioCreateUpdate. `profile_service.put_bio(db, current_user, body)`.
+- **GET /me/credits** — `profile_service.get_credits(db, current_user.id)`.
+- **POST /me/credits/purchase** — Body: PurchaseCreditsRequest. `profile_service.purchase_credits(db, current_user.id, body)`.
+- **GET /me/credits/ledger** — `profile_service.get_credits_ledger(db, current_user.id)`.
 
 ### Contact (`routers/contact.py`)
 
-Prefix `/me` (mounted with me). Requires `get_current_user`.
+Prefix `/me` (mounted with profile). Requires `get_current_user`.
 
-- **GET /me/contact** — `me_service.get_contact(db, current_user.id)`.
-- **PATCH /me/contact** — Body: PatchContactRequest. `me_service.patch_contact(db, current_user.id, body)`.
+- **GET /me/contact** — `profile_service.get_contact(db, current_user.id)`.
+- **PATCH /me/contact** — Body: PatchContactRequest. `profile_service.patch_contact(db, current_user.id, body)`.
 
 ### Builder (`routers/builder.py`)
 

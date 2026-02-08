@@ -14,7 +14,7 @@ class PersonResponse(BaseModel):
     created_at: Optional[datetime] = None
 
 
-class PatchMeRequest(BaseModel):
+class PatchProfileRequest(BaseModel):
     display_name: Optional[str] = None
 
 

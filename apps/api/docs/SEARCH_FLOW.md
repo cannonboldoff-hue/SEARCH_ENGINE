@@ -211,7 +211,7 @@ Turn the raw user query into a **single JSON** that fits `ParsedConstraintsPaylo
 
 ### Validate/Normalize step
 
-**File:** `src/services/search_filters_validator.py`  
+**File:** `src/services/filter_validator.py`  
 **Function:** `validate_and_normalize(payload: ParsedConstraintsPayload) -> ParsedConstraintsPayload`
 
 After `ParsedConstraintsPayload.from_llm_dict(filters_raw)`, the payload is run through a **deterministic post-processor** so that LLM quirks do not kill recall or produce malformed filters:

@@ -35,7 +35,7 @@ from src.schemas import (
 )
 from src.schemas.search import ParsedConstraintsPayload, ParsedConstraintsShould
 from src.services.credits import get_balance, deduct_credits, get_idempotent_response, save_idempotent_response
-from src.services.search_filters_validator import validate_and_normalize
+from src.services.filter_validator import validate_and_normalize
 from src.providers import get_chat_provider, get_embedding_provider, ChatServiceError, EmbeddingServiceError
 from src.serializers import experience_card_to_response, experience_card_child_to_response
 from src.utils import normalize_embedding
