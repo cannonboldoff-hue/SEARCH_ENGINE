@@ -29,6 +29,7 @@ from src.schemas.search import (
     PersonSearchResult,
     SearchResponse,
     PersonProfileResponse,
+    UnlockContactRequest,
     UnlockContactResponse,
 )
 from src.schemas.discover import (
@@ -69,6 +70,7 @@ __all__ = [
     "PersonSearchResult",
     "SearchResponse",
     "PersonProfileResponse",
+    "UnlockContactRequest",
     "UnlockContactResponse",
     "PersonListItem",
     "PersonListResponse",

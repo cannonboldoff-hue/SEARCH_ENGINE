@@ -151,11 +151,11 @@ export default function PersonProfilePage() {
 
   const unlockMutation = useMutation({
     mutationFn: () => {
-      const key = `unlock-${personId}-${searchId}-${Date.now()}`;
+      const key = `unlock-${personId}-${searchId}`;
       return apiWithIdempotency<{ unlocked: boolean; contact: ContactDetails }>(
-        `/people/${personId}/unlock-contact?search_id=${encodeURIComponent(searchId!)}`,
+        `/people/${personId}/unlock-contact`,
         key,
-        { method: "POST" }
+        { method: "POST", body: { search_id: searchId! } }
       );
     },
     onSuccess: () => {
@@ -192,11 +192,11 @@ export default function PersonProfilePage() {
         className="max-w-2xl mx-auto space-y-6"
       >
         <Link
-          href="/home"
+          href="/search"
           className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5 group"
         >
           <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
-          Back to Cipher
+          Back to Search
         </Link>
         <Card>
           <CardHeader className="pb-4">

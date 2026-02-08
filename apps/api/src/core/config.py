@@ -20,16 +20,17 @@ class Settings(BaseSettings):
     chat_api_key: str | None = None
     chat_model: str | None = None
 
-    # Embeddings (OpenAI-compatible)
+    # Embeddings (OpenAI-compatible; text-embedding-3-large uses 3072 dims, run migration if changing)
     embed_api_base_url: str | None = None
     embed_api_key: str | None = None
-    embed_model: str = "bge-base-en-v1.5"
+    embed_model: str = "text-embedding-3-large"
+    embed_dimension: int = 324  # match DB (migration 018)
 
     openai_api_key: str | None = None
 
-    # Rate limiting
+    # Rate limiting (per-user when key_func uses user id; multi-instance needs Redis later)
     search_rate_limit: str = "10/minute"
-    unlock_rate_limit: str = "20/minute"
+    unlock_rate_limit: str = "30/minute"
 
     # CORS (comma-separated origins; * allows all)
     cors_origins: str = "*"

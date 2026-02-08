@@ -163,7 +163,10 @@ class ExperienceCard(Base):
     sub_domain = Column(Text, nullable=True)
 
     company_name = Column(Text, nullable=True)
+    company_norm = Column(String(255), nullable=True, index=True)  # lowercased trimmed for exact match
     company_type = Column(Text, nullable=True)
+    team = Column(Text, nullable=True)
+    team_norm = Column(String(255), nullable=True, index=True)  # lowercased trimmed for ILIKE
 
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
@@ -184,7 +187,7 @@ class ExperienceCard(Base):
     experience_card_visibility = Column(Boolean, default=True, nullable=False)
     search_phrases = Column(ARRAY(String), default=list)
     search_document = Column(Text, nullable=True)
-    embedding = Column(Vector(384), nullable=True)
+    embedding = Column(Vector(324), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
@@ -214,7 +217,7 @@ class ExperienceCardChild(Base):
 
     search_phrases = Column(ARRAY(String), default=list)
     search_document = Column(Text, nullable=True)
-    embedding = Column(Vector(384), nullable=True)
+    embedding = Column(Vector(324), nullable=True)
 
     extra = Column(JSONB, nullable=True)
 
@@ -234,9 +237,11 @@ class Search(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
     searcher_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
-    query_text = Column(Text, nullable=False)
-    filters = Column(JSONB, nullable=True)  # company, team, open_to_work_only, etc.
+    query_text = Column(Text, nullable=False)  # raw_query
+    parsed_constraints_json = Column(JSONB, nullable=True)
+    filters = Column(JSONB, nullable=True)  # legacy / extra
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
 
     searcher = relationship("Person", back_populates="searches_made", foreign_keys=[searcher_id])
     results = relationship("SearchResult", back_populates="search")

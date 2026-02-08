@@ -10,6 +10,7 @@ from src.schemas import (
     PersonProfileResponse,
     PersonListResponse,
     PersonPublicProfileResponse,
+    UnlockContactRequest,
     UnlockContactResponse,
 )
 from src.services.search import search_service
@@ -66,9 +67,9 @@ async def get_person(
 async def unlock_contact(
     request: Request,
     person_id: str,
-    search_id: str = Query(...),
+    body: UnlockContactRequest,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await search_service.unlock(db, current_user.id, person_id, search_id, idempotency_key)
+    return await search_service.unlock(db, current_user.id, person_id, body.search_id, idempotency_key)

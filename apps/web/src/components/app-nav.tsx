@@ -29,6 +29,7 @@ export function AppNav() {
   }, []);
 
   const menuItems = [
+    { href: "/search", label: "Search", icon: Search },
     { href: "/profile", label: "Profile", icon: User },
     { href: "/settings", label: "Settings", icon: Settings },
   ];

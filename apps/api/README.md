@@ -173,7 +173,8 @@ All used by routers and services for validation and serialization.
 
 | Item | Purpose |
 |------|--------|
-| **`limiter`** | `Limiter(key_func=get_remote_address)` from SlowAPI. Used as decorator on search and unlock-contact routes; limits come from config (`search_rate_limit`, `unlock_rate_limit`). |
+| **`get_rate_limit_key(request)`** | Returns `user:{user_id}` when request has valid Bearer token, else `get_remote_address(request)`. So limits are per-user when authenticated. |
+| **`limiter`** | `Limiter(key_func=get_rate_limit_key)`. Applied to POST /search and POST /people/:id/unlock-contact. Limits from config: `search_rate_limit` (e.g. 10/min), `unlock_rate_limit` (e.g. 30/min). **MVP uses in-memory storage; multi-instance deployment should use Redis-backed storage.** |
 
 ---
 

@@ -48,9 +48,14 @@ export type {
 
 export type PersonSearchResult = {
   id: string;
-  display_name: string | null;
+  name: string | null;
+  headline: string | null;
+  bio: string | null;
   open_to_work: boolean;
   open_to_contact: boolean;
+  work_preferred_locations: string[];
+  work_preferred_salary_min: number | null;
+  matched_cards: ExperienceCard[];
 };
 
 /** One person in the discover grid (GET /people). */

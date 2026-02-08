@@ -30,9 +30,12 @@ export function PersonResultCard({ person, searchId, index = 0 }: PersonResultCa
           </div>
           <div className="min-w-0">
             <p className="text-sm font-medium text-foreground truncate">
-              {person.display_name || "Anonymous"}
+              {person.name || "Anonymous"}
             </p>
-            <div className="flex gap-2 mt-0.5">
+            {person.headline && (
+              <p className="text-xs text-muted-foreground truncate mt-0.5">{person.headline}</p>
+            )}
+            <div className="flex gap-2 mt-0.5 flex-wrap">
               {person.open_to_work && (
                 <span className="text-xs text-success">Open to work</span>
               )}

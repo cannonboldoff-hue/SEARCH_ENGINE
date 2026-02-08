@@ -1,12 +1,14 @@
 """Search, profile view, and contact unlock business logic."""
 
 import asyncio
+import logging
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, and_
 
 from src.core import SEARCH_RESULT_EXPIRY_HOURS
 from src.db.models import (
@@ -31,10 +33,14 @@ from src.schemas import (
     ContactDetailsResponse,
     UnlockContactResponse,
 )
+from src.schemas.search import ParsedConstraintsPayload, ParsedConstraintsShould
 from src.services.credits import get_balance, deduct_credits, get_idempotent_response, save_idempotent_response
-from src.providers import get_chat_provider, ChatServiceError
+from src.services.search_filters_validator import validate_and_normalize
+from src.providers import get_chat_provider, get_embedding_provider, ChatServiceError, EmbeddingServiceError
 from src.serializers import experience_card_to_response, experience_card_child_to_response
+from src.utils import normalize_embedding
 
+logger = logging.getLogger(__name__)
 SEARCH_ENDPOINT = "POST /search"
 
 
@@ -44,8 +50,64 @@ def unlock_endpoint(person_id: str) -> str:
 
 
 def _search_expired(search_rec: Search) -> bool:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
+    now = datetime.now(timezone.utc)
+    if getattr(search_rec, "expires_at", None):
+        return search_rec.expires_at < now
+    cutoff = now - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
     return not search_rec.created_at or search_rec.created_at < cutoff
+
+
+OVERFETCH_CARDS = 50
+TOP_PEOPLE = 20
+MATCHED_CARDS_PER_PERSON = 3
+
+
+def _parse_date(s: str | None):
+    """Parse YYYY-MM-DD or YYYY-MM to date; return None if invalid or missing."""
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    for fmt in ("%Y-%m-%d", "%Y-%m"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _card_dates_overlap_query(
+    card_start: object, card_end: object, query_start: object, query_end: object
+) -> bool:
+    """True if card has both dates and [card_start, card_end] overlaps [query_start, query_end]."""
+    if card_start is None or card_end is None or query_start is None or query_end is None:
+        return False
+    return card_start <= query_end and card_end >= query_start
+
+
+def _text_contains_any(haystack: str, terms: list[str]) -> bool:
+    """True if any term (lower) appears in haystack (lower)."""
+    if not terms or not (haystack or "").strip():
+        return False
+    h = haystack.lower()
+    return any((t or "").strip().lower() in h for t in terms if (t or "").strip())
+
+
+def _should_bonus(card: ExperienceCard, should: ParsedConstraintsShould) -> int:
+    """Count how many should-constraints this card matches (for rerank boost). Matches in search_phrases and search_document."""
+    hits = 0
+    if should.intent_secondary and card.intent_secondary:
+        if any(i in (card.intent_secondary or []) for i in should.intent_secondary):
+            hits += 1
+    phrases = (card.search_phrases or []) if hasattr(card, "search_phrases") else []
+    phrases_lower = [p.lower() for p in phrases if p]
+    doc_text = (getattr(card, "search_document", None) or "") or ""
+    skills_or_tools = [t.strip().lower() for t in (should.skills_or_tools or []) if (t or "").strip()]
+    if skills_or_tools and (any(any(t in p for p in phrases_lower) for t in skills_or_tools) or _text_contains_any(doc_text, skills_or_tools)):
+        hits += 1
+    keywords = [t.strip().lower() for t in (should.keywords or []) if (t or "").strip()]
+    if keywords and (any(any(t in p for p in phrases_lower) for t in keywords) or _text_contains_any(doc_text, keywords)):
+        hits += 1
+    return hits
 
 
 async def run_search(
@@ -54,7 +116,16 @@ async def run_search(
     body: SearchRequest,
     idempotency_key: str | None,
 ) -> SearchResponse:
-    """Execute semantic search and return results. Raises HTTPException on validation/credit/API errors."""
+    """Production hybrid search.
+
+    Flow:
+    1. Parse constraints → store in Search.parsed_constraints_json
+    2. Embed query_embedding_text
+    3. Candidate generation (vector): top K parents (experience_cards.embedding), top K children (experience_card_children.embedding)
+    4. Apply MUST filters: company_norm, team_norm, experience_card_visibility=true, time overlap (NULL-safe), location, open_to_work_only → person_profiles.open_to_work, offer_salary_inr_per_year → work_preferred_salary_min <= offer OR NULL
+    5. Rerank: base = vector score, small boosts for should.skills_or_tools / should.keywords in search_phrases/search_document
+    6. Group by person (best evidence cards first), store results in search_results
+    """
     if idempotency_key:
         existing = await get_idempotent_response(db, idempotency_key, searcher_id, SEARCH_ENDPOINT)
         if existing and existing.response_body:
@@ -66,55 +137,56 @@ async def run_search(
 
     chat = get_chat_provider()
     try:
-        parsed = await chat.parse_search_query(body.query)
+        filters_raw = await chat.parse_search_filters(body.query)
     except ChatServiceError as e:
+        logger.warning("Search query parse failed, using raw-query fallback: %s", e)
+        raw_q = (body.query or "").strip()
+        filters_raw = {
+            "query_original": raw_q,
+            "query_cleaned": raw_q,
+            "query_embedding_text": raw_q,
+        }
+
+    payload = ParsedConstraintsPayload.from_llm_dict(filters_raw)
+    payload = validate_and_normalize(payload)
+    filters_dict = payload.model_dump(mode="json")
+    must = payload.must
+    exclude = payload.exclude
+
+    # Embedding text: from filters pipeline, else raw query
+    embedding_text = (payload.query_embedding_text or payload.query_original or body.query or "").strip()
+    if not embedding_text:
+        embedding_text = body.query or ""
+
+    # Request-level overrides (body wins over parsed)
+    open_to_work_only = body.open_to_work_only if body.open_to_work_only is not None else (must.open_to_work_only or False)
+    # Recruiter offer budget (₹/year): from body.salary_max or from parsed offer_salary_inr_per_year.
+    # We match candidates where work_preferred_salary_min <= offer_salary_inr_per_year; NULL = keep but downrank.
+    offer_salary_inr_per_year: float | None = None
+    if body.salary_max is not None:
+        offer_salary_inr_per_year = float(body.salary_max)
+    elif must.offer_salary_inr_per_year is not None:
+        offer_salary_inr_per_year = must.offer_salary_inr_per_year
+
+    # 2) Embed query for vector similarity
+    try:
+        embed_provider = get_embedding_provider()
+        texts = [embedding_text] if embedding_text else [body.query or ""]
+        vecs = await embed_provider.embed(texts)
+        query_vec = normalize_embedding(vecs[0], embed_provider.dimension) if vecs else []
+    except (EmbeddingServiceError, RuntimeError) as e:
+        logger.warning("Search embedding failed (503): %s", e, exc_info=True)
         raise HTTPException(status_code=503, detail=str(e))
 
-    open_to_work_only = body.open_to_work_only if body.open_to_work_only is not None else parsed.open_to_work_only
-
-    query_text = (parsed.semantic_text or body.query or "").strip()
-    card_query = select(ExperienceCard).where(ExperienceCard.experience_card_visibility == True)
-    if parsed.company:
-        card_query = card_query.where(func.lower(ExperienceCard.company_name) == parsed.company.strip().lower())
-    if query_text:
-        like_pattern = f"%{query_text}%"
-        card_query = card_query.where(
-            or_(
-                ExperienceCard.title.ilike(like_pattern),
-                ExperienceCard.normalized_role.ilike(like_pattern),
-                ExperienceCard.summary.ilike(like_pattern),
-                ExperienceCard.raw_text.ilike(like_pattern),
-                ExperienceCard.domain.ilike(like_pattern),
-                ExperienceCard.sub_domain.ilike(like_pattern),
-                ExperienceCard.company_name.ilike(like_pattern),
-                ExperienceCard.company_type.ilike(like_pattern),
-                ExperienceCard.location.ilike(like_pattern),
-                ExperienceCard.employment_type.ilike(like_pattern),
-                ExperienceCard.intent_primary.ilike(like_pattern),
-                ExperienceCard.seniority_level.ilike(like_pattern),
-            )
-        )
-    card_query = card_query.order_by(
-        ExperienceCard.confidence_score.desc().nullslast(),
-        ExperienceCard.created_at.desc(),
-    )
-    cards_result = await db.execute(card_query)
-    cards = list(cards_result.scalars().all())
-    ranked = []
-    seen = set()
-    for card in cards:
-        if card.user_id in seen:
-            continue
-        seen.add(card.user_id)
-        score = float(card.confidence_score) if card.confidence_score is not None else 0.0
-        ranked.append((str(card.user_id), score))
-    pid_list = [pid for pid, _ in ranked]
-
-    if not pid_list:
+    if not query_vec:
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
         search_rec = Search(
             searcher_id=searcher_id,
             query_text=body.query,
-            filters={"company": parsed.company, "team": parsed.team, "open_to_work_only": open_to_work_only},
+            parsed_constraints_json=filters_dict,
+            filters=filters_dict,
+            expires_at=expires_at,
         )
         db.add(search_rec)
         await db.flush()
@@ -122,109 +194,467 @@ async def run_search(
             raise HTTPException(status_code=402, detail="Insufficient credits")
         resp = SearchResponse(search_id=search_rec.id, people=[])
         if idempotency_key:
-            await save_idempotent_response(db, idempotency_key, searcher_id, SEARCH_ENDPOINT, 200, resp.model_dump())
+            await save_idempotent_response(db, idempotency_key, searcher_id, SEARCH_ENDPOINT, 200, resp.model_dump(mode="json"))
         return resp
 
-    vis_map = {}
-    match_ids = None
-    if pid_list:
-        async def get_vis():
-            r = await db.execute(
-                select(PersonProfile).where(PersonProfile.person_id.in_(pid_list))
+    # Build base query: visible cards with embedding. Use pgvector's native cosine_distance for proper bind handling.
+    dist_expr = ExperienceCard.embedding.cosine_distance(query_vec).label("dist")
+    stmt_with_dist = (
+        select(ExperienceCard, dist_expr)
+        .where(ExperienceCard.experience_card_visibility == True)
+        .where(ExperienceCard.embedding.isnot(None))
+    )
+
+    # MUST filters (strict): company_norm, team_norm, intent_primary, domain, sub_domain, employment_type, seniority_level, location, time, is_current, open_to_work_only, offer_salary_inr_per_year.
+    company_norms = [c.strip().lower() for c in (must.company_norm or []) if (c or "").strip()]
+    if company_norms:
+        stmt_with_dist = stmt_with_dist.where(ExperienceCard.company_norm.in_(company_norms))
+    team_norms = [t.strip().lower() for t in (must.team_norm or []) if (t or "").strip()]
+    if team_norms:
+        stmt_with_dist = stmt_with_dist.where(ExperienceCard.team_norm.in_(team_norms))
+    if must.intent_primary:
+        stmt_with_dist = stmt_with_dist.where(ExperienceCard.intent_primary.in_(must.intent_primary))
+    if must.domain:
+        stmt_with_dist = stmt_with_dist.where(ExperienceCard.domain.in_(must.domain))
+    if must.sub_domain:
+        stmt_with_dist = stmt_with_dist.where(ExperienceCard.sub_domain.in_(must.sub_domain))
+    if must.employment_type:
+        stmt_with_dist = stmt_with_dist.where(ExperienceCard.employment_type.in_(must.employment_type))
+    if must.seniority_level:
+        stmt_with_dist = stmt_with_dist.where(ExperienceCard.seniority_level.in_(must.seniority_level))
+    if must.city or must.country or must.location_text:
+        loc_conds = []
+        if must.city:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.city}%"))
+        if must.country:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.country}%"))
+        if must.location_text:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.location_text}%"))
+        if loc_conds:
+            stmt_with_dist = stmt_with_dist.where(or_(*loc_conds))
+    _start = _parse_date(must.time_start)
+    _end = _parse_date(must.time_end)
+    if _start and _end:
+        # Overlap-safe: keep cards where (both dates known AND overlap) OR any date missing (keep but downrank later).
+        both_known_and_overlap = and_(
+            ExperienceCard.start_date.isnot(None),
+            ExperienceCard.end_date.isnot(None),
+            ExperienceCard.start_date <= _end,
+            ExperienceCard.end_date >= _start,
+        )
+        has_missing_date = or_(
+            ExperienceCard.start_date.is_(None),
+            ExperienceCard.end_date.is_(None),
+        )
+        stmt_with_dist = stmt_with_dist.where(or_(both_known_and_overlap, has_missing_date))
+    if must.is_current is not None:
+        stmt_with_dist = stmt_with_dist.where(ExperienceCard.is_current == must.is_current)
+
+    # EXCLUDE filters
+    exclude_norms = [c.strip().lower() for c in (exclude.company_norm or []) if (c or "").strip()]
+    if exclude_norms:
+        stmt_with_dist = stmt_with_dist.where(~ExperienceCard.company_norm.in_(exclude_norms))
+    if exclude.keywords:
+        norm_terms = [t.strip().lower() for t in exclude.keywords if (t or "").strip()]
+        if norm_terms:
+            stmt_with_dist = stmt_with_dist.where(~ExperienceCard.search_phrases.overlap(norm_terms))
+
+    # Join PersonProfile when filtering by open_to_work, location, or salary (offer budget).
+    if open_to_work_only or offer_salary_inr_per_year is not None:
+        join_conds = [ExperienceCard.person_id == PersonProfile.person_id]
+        if open_to_work_only:
+            join_conds.append(PersonProfile.open_to_work == True)
+        stmt_with_dist = stmt_with_dist.join(PersonProfile, and_(*join_conds))
+        if open_to_work_only and body.preferred_locations:
+            loc_arr = [x.strip() for x in body.preferred_locations if x]
+            if loc_arr:
+                stmt_with_dist = stmt_with_dist.where(
+                    PersonProfile.work_preferred_locations.overlap(loc_arr)
+                )
+        # Salary: candidate's work_preferred_salary_min (₹/year) <= recruiter's offer_salary_inr_per_year; NULL = keep but downrank later.
+        if offer_salary_inr_per_year is not None:
+            stmt_with_dist = stmt_with_dist.where(
+                or_(
+                    PersonProfile.work_preferred_salary_min.is_(None),
+                    PersonProfile.work_preferred_salary_min <= offer_salary_inr_per_year,
+                )
             )
-            return {str(v.person_id): v for v in r.scalars().all()}
 
-        async def get_company_match():
-            if not parsed.company:
-                return None
-            r = await db.execute(
-                select(ExperienceCard.user_id)
-                .where(ExperienceCard.experience_card_visibility == True)
-                .where(func.lower(ExperienceCard.company_name) == parsed.company.strip().lower())
-                .distinct()
+    stmt_with_dist = stmt_with_dist.order_by(ExperienceCard.embedding.cosine_distance(query_vec)).limit(OVERFETCH_CARDS)
+    rows = (await db.execute(stmt_with_dist)).all()
+
+    # Child embedding search: best distance per person, with same MUST filters on parent card (visibility, company_norm, team_norm, time, location, open_to_work, salary)
+    child_dist_stmt = (
+        select(
+            ExperienceCardChild.person_id,
+            func.min(ExperienceCardChild.embedding.cosine_distance(query_vec)).label("dist"),
+        )
+        .join(
+            ExperienceCard,
+            and_(
+                ExperienceCard.id == ExperienceCardChild.parent_experience_id,
+                ExperienceCard.experience_card_visibility == True,
+            ),
+        )
+        .where(ExperienceCardChild.embedding.isnot(None))
+    )
+    if company_norms:
+        child_dist_stmt = child_dist_stmt.where(ExperienceCard.company_norm.in_(company_norms))
+    if team_norms:
+        child_dist_stmt = child_dist_stmt.where(ExperienceCard.team_norm.in_(team_norms))
+    if must.intent_primary:
+        child_dist_stmt = child_dist_stmt.where(ExperienceCard.intent_primary.in_(must.intent_primary))
+    if must.domain:
+        child_dist_stmt = child_dist_stmt.where(ExperienceCard.domain.in_(must.domain))
+    if must.sub_domain:
+        child_dist_stmt = child_dist_stmt.where(ExperienceCard.sub_domain.in_(must.sub_domain))
+    if must.employment_type:
+        child_dist_stmt = child_dist_stmt.where(ExperienceCard.employment_type.in_(must.employment_type))
+    if must.seniority_level:
+        child_dist_stmt = child_dist_stmt.where(ExperienceCard.seniority_level.in_(must.seniority_level))
+    if must.city or must.country or must.location_text:
+        loc_conds = []
+        if must.city:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.city}%"))
+        if must.country:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.country}%"))
+        if must.location_text:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.location_text}%"))
+        if loc_conds:
+            child_dist_stmt = child_dist_stmt.where(or_(*loc_conds))
+    if _start and _end:
+        both_known_and_overlap = and_(
+            ExperienceCard.start_date.isnot(None),
+            ExperienceCard.end_date.isnot(None),
+            ExperienceCard.start_date <= _end,
+            ExperienceCard.end_date >= _start,
+        )
+        has_missing_date = or_(
+            ExperienceCard.start_date.is_(None),
+            ExperienceCard.end_date.is_(None),
+        )
+        child_dist_stmt = child_dist_stmt.where(or_(both_known_and_overlap, has_missing_date))
+    if must.is_current is not None:
+        child_dist_stmt = child_dist_stmt.where(ExperienceCard.is_current == must.is_current)
+    if exclude_norms:
+        child_dist_stmt = child_dist_stmt.where(~ExperienceCard.company_norm.in_(exclude_norms))
+    if exclude.keywords:
+        norm_terms = [t.strip().lower() for t in exclude.keywords if (t or "").strip()]
+        if norm_terms:
+            child_dist_stmt = child_dist_stmt.where(~ExperienceCard.search_phrases.overlap(norm_terms))
+    if open_to_work_only or offer_salary_inr_per_year is not None:
+        join_conds = [ExperienceCardChild.person_id == PersonProfile.person_id]
+        if open_to_work_only:
+            join_conds.append(PersonProfile.open_to_work == True)
+        child_dist_stmt = child_dist_stmt.join(PersonProfile, and_(*join_conds))
+        if open_to_work_only and body.preferred_locations:
+            loc_arr = [x.strip() for x in body.preferred_locations if x]
+            if loc_arr:
+                child_dist_stmt = child_dist_stmt.where(
+                    PersonProfile.work_preferred_locations.overlap(loc_arr)
+                )
+        if offer_salary_inr_per_year is not None:
+            child_dist_stmt = child_dist_stmt.where(
+                or_(
+                    PersonProfile.work_preferred_salary_min.is_(None),
+                    PersonProfile.work_preferred_salary_min <= offer_salary_inr_per_year,
+                )
             )
-            return {r[0] for r in r.fetchall()}
+    # Child search: (1) best similarity per person for scoring, (2) best 1–3 (child, parent) per person for evidence
+    child_dist_stmt = child_dist_stmt.group_by(ExperienceCardChild.person_id)
+    child_rows = (await db.execute(child_dist_stmt)).all()
+    child_best_sim: dict[str, float] = {}
+    for row in child_rows:
+        pid = str(row.person_id)
+        dist = float(row.dist) if row.dist is not None else 1.0
+        child_best_sim[pid] = max(child_best_sim.get(pid, 0.0), 1.0 - dist)
 
-        vis_map, match_ids = await asyncio.gather(get_vis(), get_company_match())
+    # Evidence query: per person, top 1–3 (parent_experience_id, child_id) by distance for matched cards in response
+    child_evidence_stmt = (
+        select(
+            ExperienceCardChild.person_id,
+            ExperienceCardChild.parent_experience_id,
+            ExperienceCardChild.id.label("child_id"),
+            ExperienceCardChild.embedding.cosine_distance(query_vec).label("dist"),
+        )
+        .join(
+            ExperienceCard,
+            and_(
+                ExperienceCard.id == ExperienceCardChild.parent_experience_id,
+                ExperienceCard.experience_card_visibility == True,
+            ),
+        )
+        .where(ExperienceCardChild.embedding.isnot(None))
+    )
+    if company_norms:
+        child_evidence_stmt = child_evidence_stmt.where(ExperienceCard.company_norm.in_(company_norms))
+    if team_norms:
+        child_evidence_stmt = child_evidence_stmt.where(ExperienceCard.team_norm.in_(team_norms))
+    if must.intent_primary:
+        child_evidence_stmt = child_evidence_stmt.where(ExperienceCard.intent_primary.in_(must.intent_primary))
+    if must.domain:
+        child_evidence_stmt = child_evidence_stmt.where(ExperienceCard.domain.in_(must.domain))
+    if must.sub_domain:
+        child_evidence_stmt = child_evidence_stmt.where(ExperienceCard.sub_domain.in_(must.sub_domain))
+    if must.employment_type:
+        child_evidence_stmt = child_evidence_stmt.where(ExperienceCard.employment_type.in_(must.employment_type))
+    if must.seniority_level:
+        child_evidence_stmt = child_evidence_stmt.where(ExperienceCard.seniority_level.in_(must.seniority_level))
+    if must.city or must.country or must.location_text:
+        loc_conds = []
+        if must.city:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.city}%"))
+        if must.country:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.country}%"))
+        if must.location_text:
+            loc_conds.append(ExperienceCard.location.ilike(f"%{must.location_text}%"))
+        if loc_conds:
+            child_evidence_stmt = child_evidence_stmt.where(or_(*loc_conds))
+    if _start and _end:
+        both_known_and_overlap = and_(
+            ExperienceCard.start_date.isnot(None),
+            ExperienceCard.end_date.isnot(None),
+            ExperienceCard.start_date <= _end,
+            ExperienceCard.end_date >= _start,
+        )
+        has_missing_date = or_(
+            ExperienceCard.start_date.is_(None),
+            ExperienceCard.end_date.is_(None),
+        )
+        child_evidence_stmt = child_evidence_stmt.where(or_(both_known_and_overlap, has_missing_date))
+    if must.is_current is not None:
+        child_evidence_stmt = child_evidence_stmt.where(ExperienceCard.is_current == must.is_current)
+    if exclude_norms:
+        child_evidence_stmt = child_evidence_stmt.where(~ExperienceCard.company_norm.in_(exclude_norms))
+    if exclude.keywords:
+        norm_terms = [t.strip().lower() for t in exclude.keywords if (t or "").strip()]
+        if norm_terms:
+            child_evidence_stmt = child_evidence_stmt.where(~ExperienceCard.search_phrases.overlap(norm_terms))
+    if open_to_work_only or offer_salary_inr_per_year is not None:
+        join_conds = [ExperienceCardChild.person_id == PersonProfile.person_id]
+        if open_to_work_only:
+            join_conds.append(PersonProfile.open_to_work == True)
+        child_evidence_stmt = child_evidence_stmt.join(PersonProfile, and_(*join_conds))
+        if open_to_work_only and body.preferred_locations:
+            loc_arr = [x.strip() for x in body.preferred_locations if x]
+            if loc_arr:
+                child_evidence_stmt = child_evidence_stmt.where(
+                    PersonProfile.work_preferred_locations.overlap(loc_arr)
+                )
+        if offer_salary_inr_per_year is not None:
+            child_evidence_stmt = child_evidence_stmt.where(
+                or_(
+                    PersonProfile.work_preferred_salary_min.is_(None),
+                    PersonProfile.work_preferred_salary_min <= offer_salary_inr_per_year,
+                )
+            )
+    child_dists_cte = child_evidence_stmt.cte("child_dists")
+    rn = func.row_number().over(
+        partition_by=child_dists_cte.c.person_id,
+        order_by=child_dists_cte.c.dist,
+    ).label("rn")
+    ranked = (
+        select(
+            child_dists_cte.c.person_id,
+            child_dists_cte.c.parent_experience_id,
+            child_dists_cte.c.child_id,
+            child_dists_cte.c.dist,
+            rn,
+        )
+        .select_from(child_dists_cte)
+        .subquery("ranked")
+    )
+    top_children_stmt = (
+        select(
+            ranked.c.person_id,
+            ranked.c.parent_experience_id,
+            ranked.c.child_id,
+            ranked.c.dist,
+        )
+        .select_from(ranked)
+        .where(ranked.c.rn <= MATCHED_CARDS_PER_PERSON)
+    )
+    child_evidence_rows = (await db.execute(top_children_stmt)).all()
 
-    # Exclude "Hide Contact": anyone with both open_to_work=False and open_to_contact=False does not appear in search
-    ranked = [
-        (pid, score)
-        for pid, score in ranked
-        if not (pid in vis_map and not vis_map[pid].open_to_work and not vis_map[pid].open_to_contact)
-    ]
+    # Per person: ordered list of parent_experience_ids that actually matched (for loading cards in Step 11)
+    child_best_parent_ids: dict[str, list[str]] = {}
+    for row in child_evidence_rows:
+        pid = str(row.person_id)
+        parent_id = str(row.parent_experience_id)
+        if pid not in child_best_parent_ids:
+            child_best_parent_ids[pid] = []
+        if parent_id not in child_best_parent_ids[pid] and len(child_best_parent_ids[pid]) < MATCHED_CARDS_PER_PERSON:
+            child_best_parent_ids[pid].append(parent_id)
 
-    if open_to_work_only:
-        ranked = [
-            (pid, score)
-            for pid, score in ranked
-            if pid in vis_map and vis_map[pid].open_to_work
-        ]
+    # rows are (ExperienceCard, distance); similarity = 1 - distance; add should bonus for rerank
+    SHOULD_BOOST = 0.02
+    SHOULD_CAP = 10
+    person_cards: dict[str, list[tuple[ExperienceCard, float]]] = defaultdict(list)
+    for row in rows:
+        card = row[0]
+        dist = float(row[1]) if row[1] is not None else 1.0
+        sim = 1.0 - dist
+        bonus = min(_should_bonus(card, payload.should), SHOULD_CAP) * SHOULD_BOOST
+        person_cards[str(card.person_id)].append((card, sim + bonus))
 
-    if match_ids is not None:
-        ranked = [(pid, score) for pid, score in ranked if pid in match_ids]
+    # Collapse by person_id: best (parent) score, then merge with child best sim
+    person_best: list[tuple[str, float]] = []
+    for pid, card_list in person_cards.items():
+        best_sim = max(sim for _, sim in card_list)
+        child_sim = child_best_sim.get(pid, 0.0)
+        person_best.append((pid, max(best_sim, child_sim)))
+    # Include persons that only matched via children (no parent rows)
+    for pid, child_sim in child_best_sim.items():
+        if pid not in person_cards:
+            person_best.append((pid, child_sim))
+    person_best.sort(key=lambda x: -x[1])
+    top_20 = person_best[:TOP_PEOPLE]
 
-    if body.preferred_locations:
-        loc_set = set(x.strip().lower() for x in body.preferred_locations if x)
-        if loc_set:
-            filtered = []
-            for pid, score in ranked:
-                vis = vis_map.get(pid)
-                locs = vis.work_preferred_locations if vis else None
-                if locs and any(loc and loc.strip().lower() in loc_set for loc in locs):
-                    filtered.append((pid, score))
-            ranked = filtered
+    if not top_20:
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
+        search_rec = Search(
+            searcher_id=searcher_id,
+            query_text=body.query,
+            parsed_constraints_json=filters_dict,
+            filters=filters_dict,
+            expires_at=expires_at,
+        )
+        db.add(search_rec)
+        await db.flush()
+        if not await deduct_credits(db, searcher_id, 1, "search", "search_id", search_rec.id):
+            raise HTTPException(status_code=402, detail="Insufficient credits")
+        resp = SearchResponse(search_id=search_rec.id, people=[])
+        if idempotency_key:
+            await save_idempotent_response(db, idempotency_key, searcher_id, SEARCH_ENDPOINT, 200, resp.model_dump(mode="json"))
+        return resp
 
-    if body.salary_min is not None or body.salary_max is not None:
-        filtered = []
-        for pid, score in ranked:
+    pid_list = [p[0] for p in top_20]
+    people_result = await db.execute(select(Person).where(Person.id.in_(pid_list)))
+    people_map = {str(p.id): p for p in people_result.scalars().all()}
+    profiles_result = await db.execute(select(PersonProfile).where(PersonProfile.person_id.in_(pid_list)))
+    vis_map = {str(p.person_id): p for p in profiles_result.scalars().all()}
+    # When recruiter set offer salary: downrank candidates with unknown (NULL) work_preferred_salary_min.
+    if offer_salary_inr_per_year is not None:
+        def _salary_rank_key(item: tuple[str, float]) -> tuple[float, int]:
+            pid, score = item
             vis = vis_map.get(pid)
-            if not vis:
-                filtered.append((pid, score))
-                continue
-            w_min = vis.work_preferred_salary_min  # candidate's minimum salary needed
-            if body.salary_max is not None and w_min is not None and float(body.salary_max) < float(w_min):
-                continue
-            filtered.append((pid, score))
-        ranked = filtered
+            has_stated_min = vis and vis.work_preferred_salary_min is not None
+            return (-score, 0 if has_stated_min else 1)  # same score → stated min first
+        top_20 = sorted(top_20, key=_salary_rank_key)
 
-    ranked = ranked[:20]
+    # When query has date range: downrank persons whose matched cards have missing start/end (don't drop them).
+    if _start and _end:
+        def _date_rank_key(item: tuple[str, float]) -> tuple[float, int]:
+            pid, score = item
+            cards_with_sim = person_cards.get(pid, [])
+            has_full_date_overlap = any(
+                _card_dates_overlap_query(c.start_date, c.end_date, _start, _end)
+                for c, _ in cards_with_sim
+            )
+            return (-score, 0 if has_full_date_overlap else 1)  # same score → full date overlap first
+        top_20 = sorted(top_20, key=_date_rank_key)
 
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
     search_rec = Search(
         searcher_id=searcher_id,
         query_text=body.query,
-        filters={"company": parsed.company, "team": parsed.team, "open_to_work_only": open_to_work_only},
+        parsed_constraints_json=filters_dict,
+        filters=filters_dict,
+        expires_at=expires_at,
     )
     db.add(search_rec)
     await db.flush()
     if not await deduct_credits(db, searcher_id, 1, "search", "search_id", search_rec.id):
         raise HTTPException(status_code=402, detail="Insufficient credits")
 
-    for rank, (person_id, score) in enumerate(ranked, 1):
+    for rank, (person_id, score) in enumerate(top_20, 1):
         sr = SearchResult(search_id=search_rec.id, person_id=person_id, rank=rank, score=Decimal(str(score)))
         db.add(sr)
 
-    people_map = {}
-    if ranked:
-        people_result = await db.execute(select(Person).where(Person.id.in_([pid for pid, _ in ranked])))
-        people_map = {str(p.id): p for p in people_result.scalars().all()}
+    # Load cards for persons who only matched via child embedding: use the parent(s) that actually matched
+    child_only_pids = [p for p in pid_list if p not in person_cards]
+    child_only_cards: dict[str, list[ExperienceCard]] = {}
+    if child_only_pids:
+        # Prefer parents from child_best_parent_ids (the ones that matched the child embedding)
+        parent_ids_to_load: list[str] = []
+        pid_to_ordered_parent_ids: dict[str, list[str]] = {}
+        for pid in child_only_pids:
+            ordered = child_best_parent_ids.get(pid)
+            if ordered:
+                pid_to_ordered_parent_ids[pid] = ordered
+                parent_ids_to_load.extend(ordered)
+        if parent_ids_to_load:
+            parent_ids_to_load = list(dict.fromkeys(parent_ids_to_load))
+            stmt_matched = (
+                select(ExperienceCard)
+                .where(
+                    ExperienceCard.id.in_(parent_ids_to_load),
+                    ExperienceCard.experience_card_visibility == True,
+                )
+            )
+            matched_cards_by_id = {str(c.id): c for c in (await db.execute(stmt_matched)).scalars().all()}
+            for pid in child_only_pids:
+                ordered_ids = pid_to_ordered_parent_ids.get(pid, [])
+                child_only_cards[pid] = []
+                for card_id in ordered_ids:
+                    if card_id in matched_cards_by_id and len(child_only_cards[pid]) < MATCHED_CARDS_PER_PERSON:
+                        child_only_cards[pid].append(matched_cards_by_id[card_id])
+        # Fallback: any child-only person not in child_best_parent_ids gets latest 3 by created_at
+        for pid in child_only_pids:
+            if pid not in child_only_cards or not child_only_cards[pid]:
+                fallback_stmt = (
+                    select(ExperienceCard)
+                    .where(
+                        ExperienceCard.person_id == pid,
+                        ExperienceCard.experience_card_visibility == True,
+                    )
+                    .order_by(ExperienceCard.created_at.desc())
+                    .limit(MATCHED_CARDS_PER_PERSON)
+                )
+                fallback_rows = (await db.execute(fallback_stmt)).scalars().all()
+                child_only_cards[pid] = [c for c in fallback_rows]
 
     people_list = []
-    for pid, _ in ranked:
+    for pid, score in top_20:
         person = people_map.get(pid)
         vis = vis_map.get(pid)
+        # 1–3 best matching cards: from person_cards (parent matches) or child_only_cards
+        card_list = person_cards.get(pid, [])
+        card_list.sort(key=lambda x: -x[1])
+        best_cards = [c for c, _ in card_list[:MATCHED_CARDS_PER_PERSON]]
+        if not best_cards and pid in child_only_cards:
+            best_cards = child_only_cards[pid][:MATCHED_CARDS_PER_PERSON]
+        headline = None
+        if vis and (vis.current_company or vis.current_city):
+            headline = " / ".join(x for x in (vis.current_company, vis.current_city) if x)
+        bio_parts = []
+        if vis:
+            if vis.first_name or vis.last_name:
+                bio_parts.append(" ".join(x for x in (vis.first_name, vis.last_name) if x))
+            if vis.school:
+                bio_parts.append(f"School: {vis.school}")
+            if vis.college:
+                bio_parts.append(f"College: {vis.college}")
+        bio = " · ".join(bio_parts) if bio_parts else None
         people_list.append(
             PersonSearchResult(
                 id=pid,
-                display_name=person.display_name if person else None,
+                name=person.display_name if person else None,
+                headline=headline,
+                bio=bio,
                 open_to_work=vis.open_to_work if vis else False,
                 open_to_contact=vis.open_to_contact if vis else False,
+                work_preferred_locations=vis.work_preferred_locations or [] if vis else [],
+                work_preferred_salary_min=vis.work_preferred_salary_min if vis else None,
+                matched_cards=[experience_card_to_response(c) for c in best_cards],
             )
         )
 
     resp = SearchResponse(search_id=search_rec.id, people=people_list)
     if idempotency_key:
-        await save_idempotent_response(db, idempotency_key, searcher_id, SEARCH_ENDPOINT, 200, resp.model_dump())
+        await save_idempotent_response(db, idempotency_key, searcher_id, SEARCH_ENDPOINT, 200, resp.model_dump(mode="json"))
     return resp
 
 
@@ -366,8 +796,10 @@ async def unlock_contact(
         ),
     )
     profile = profile_result.scalar_one_or_none()
-    if not profile or not (profile.open_to_work or profile.open_to_contact):
-        raise HTTPException(status_code=400, detail="Person is not open to work or open to contact")
+    if not profile:
+        raise HTTPException(status_code=404, detail="Person profile not found")
+    if not profile.open_to_contact:
+        raise HTTPException(status_code=403, detail="Person is not open to contact")
 
     if u_result.scalar_one_or_none():
         return UnlockContactResponse(unlocked=True, contact=_contact_response(profile))
@@ -388,7 +820,7 @@ async def unlock_contact(
 
     resp = UnlockContactResponse(unlocked=True, contact=_contact_response(profile))
     if idempotency_key:
-        await save_idempotent_response(db, idempotency_key, searcher_id, endpoint, 200, resp.model_dump())
+        await save_idempotent_response(db, idempotency_key, searcher_id, endpoint, 200, resp.model_dump(mode="json"))
     return resp
 
 

@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import httpx
 
-from src.core import get_settings
+from src.core.config import get_settings, Settings
 
 
 class EmbeddingServiceError(Exception):
@@ -23,7 +23,7 @@ class EmbeddingProvider(ABC):
 class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
     """OpenAI-compatible /embeddings endpoint."""
 
-    def __init__(self, base_url: str, api_key: str | None, model: str, dimension: int = 384):
+    def __init__(self, base_url: str, api_key: str | None, model: str, dimension: int = 324):
         self.base_url = base_url.rstrip("/")
         if not self.base_url.endswith("/v1"):
             self.base_url = f"{self.base_url}/v1"
@@ -70,11 +70,13 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
 def get_embedding_provider() -> EmbeddingProvider:
     s = get_settings()
     if s.embed_api_base_url:
+        # Use fresh Settings for dimension so .env EMBED_DIMENSION is picked up without restart
+        dimension = Settings().embed_dimension
         return OpenAICompatibleEmbeddingProvider(
             base_url=s.embed_api_base_url,
             api_key=s.embed_api_key,
             model=s.embed_model,
-            dimension=384,
+            dimension=dimension,
         )
     raise RuntimeError(
         "Embedding model not configured. Set EMBED_API_BASE_URL (and EMBED_MODEL)."

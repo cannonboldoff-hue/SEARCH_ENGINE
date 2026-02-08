@@ -220,6 +220,31 @@ def _extract_json_from_text(text: str) -> str:
     raise ValueError("No valid JSON found in text")
 
 
+def _normalize_child_dict_for_v1_card(child_dict: dict) -> dict:
+    """
+    Map prompt-style child (child_type, label, value: { headline, summary, ... })
+    to V1Card-compatible top-level headline/title/summary so display and persist work.
+    """
+    if not isinstance(child_dict, dict):
+        return child_dict
+    out = dict(child_dict)
+    value = out.get("value") if isinstance(out.get("value"), dict) else None
+    label = out.get("label")
+    if value is not None:
+        if not out.get("headline") and value.get("headline"):
+            out["headline"] = value.get("headline")
+        if not out.get("title") and (value.get("headline") or label):
+            out["title"] = value.get("headline") or label
+        if not out.get("summary") and value.get("summary"):
+            out["summary"] = value.get("summary")
+        if not out.get("raw_text") and value.get("raw_text"):
+            out["raw_text"] = value.get("raw_text")
+    if label and not out.get("headline") and not out.get("title"):
+        out["headline"] = label
+        out["title"] = label
+    return out
+
+
 def parse_llm_response_to_families(
     response_text: str,
     stage: PipelineStage,
@@ -285,25 +310,31 @@ def parse_llm_response_to_families(
     
     # Validate each family using Pydantic
     validated_families: list[V1Family] = []
-    
+
     for i, family_dict in enumerate(family_dicts):
         if not isinstance(family_dict, dict):
             logger.warning(f"Skipping non-dict family at index {i}: {type(family_dict)}")
             continue
-        
+
         # Ensure family has parent key
         if "parent" not in family_dict:
             logger.warning(f"Skipping family at index {i}: missing 'parent' key")
             continue
-        
+
+        # Normalize children: LLM returns { label, value: { headline, summary } }; V1Card expects headline/title/summary at top level
+        normalized_family_dict = dict(family_dict)
+        raw_children = normalized_family_dict.get("children")
+        if isinstance(raw_children, list):
+            normalized_family_dict["children"] = [_normalize_child_dict_for_v1_card(c) for c in raw_children]
+
         try:
-            family = V1Family(**family_dict)
+            family = V1Family(**normalized_family_dict)
             validated_families.append(family)
         except ValidationError as e:
             logger.warning(f"Validation failed for family {i}: {e}")
             # Continue with other families rather than failing entire batch
             continue
-    
+
     if not validated_families:
         raise PipelineError(
             stage,
@@ -477,30 +508,30 @@ def normalize_card_title(card: V1Card, fallback_text: Optional[str] = None) -> s
     headline = (card.headline or "").strip()
     if headline and headline.lower() not in {"general experience", "unspecified experience"}:
         return headline[:500]
-    
+
     # Check title
     title = (card.title or "").strip()
     if title and title.lower() not in {"general experience", "unspecified experience"}:
         return title[:500]
-    
+
     # Try summary first line
     summary = (card.summary or "").strip()
     if summary:
         first_line = summary.split("\n")[0].strip()[:80]
         if first_line:
             return first_line
-    
+
     # Try raw_text first line
     raw_text = (card.raw_text or "").strip()
     if raw_text:
         first_line = raw_text.split("\n")[0].strip()[:80]
         if first_line:
             return first_line
-    
+
     # Use fallback
     if fallback_text:
         return fallback_text.split("\n")[0].strip()[:80] or "Experience"
-    
+
     return "Experience"
 
 
@@ -800,8 +831,10 @@ def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> d
         topics = value.get("topics") or []
         tags = value.get("tags") or []
         
+        relation_type = getattr(card, "child_type", None) or value.get("relation_type")
         return {
             "id": card.id,
+            "relation_type": relation_type,
             "title": card.label or value.get("headline") or "",
             "context": value.get("summary") or "",
             "tags": tags,
@@ -1041,12 +1074,12 @@ async def run_draft_v1_pipeline(
     for parent in parents:
         # Find children for this parent
         parent_children = [c for c in children if c.parent_experience_id == parent.id]
-        
+
         card_families.append({
             "parent": serialize_card_for_response(parent),
             "children": [serialize_card_for_response(c) for c in parent_children],
         })
-    
+
     logger.info(f"Pipeline complete: {len(card_families)} families ready")
     
     return draft_set_id, raw_experience_id, card_families
