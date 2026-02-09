@@ -240,6 +240,7 @@ class Search(Base):
     query_text = Column(Text, nullable=False)  # raw_query
     parsed_constraints_json = Column(JSONB, nullable=True)
     filters = Column(JSONB, nullable=True)  # legacy / extra
+    extra = Column(JSONB, nullable=True)  # e.g. fallback_tier for MUST relaxation
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
@@ -255,6 +256,7 @@ class SearchResult(Base):
     person_id = Column(UUID(as_uuid=False), ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     rank = Column(Integer, nullable=False)
     score = Column(Numeric(10, 6), nullable=True)
+    extra = Column(JSONB, nullable=True)  # matched_parent_ids, matched_child_ids, why_matched
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

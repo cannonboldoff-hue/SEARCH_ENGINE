@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Search, Coins } from "lucide-react";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { apiWithIdempotency } from "@/lib/api";
 import { useCredits } from "@/hooks";
 import { SearchResults } from "@/components/search";
@@ -70,6 +71,18 @@ export default function SearchPage() {
     searchMutation.mutate();
   };
 
+  const queryRef = useRef<HTMLTextAreaElement>(null);
+  const autoResizeQuery = useCallback(() => {
+    const el = queryRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, []);
+  useEffect(() => {
+    const id = setTimeout(autoResizeQuery, 0);
+    return () => clearTimeout(id);
+  }, [query, autoResizeQuery]);
+
   const addLocation = (loc: string) => {
     if (loc && !preferredLocations.includes(loc)) {
       setPreferredLocations((prev) => [...prev, loc]);
@@ -103,13 +116,24 @@ export default function SearchPage() {
               <Label htmlFor="query" className="sr-only">
                 Search
               </Label>
-              <Input
+              <Textarea
+                ref={queryRef}
                 id="query"
-                type="text"
                 placeholder="Describe who you're looking for..."
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="w-full"
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  autoResizeQuery();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (query.trim()) searchMutation.mutate();
+                  }
+                }}
+                rows={1}
+                className="min-h-9 w-full resize-none overflow-hidden py-2"
+                style={{ maxHeight: 160 }}
               />
             </div>
             <div className="flex items-center gap-2">

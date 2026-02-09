@@ -19,7 +19,7 @@ This document describes the **search flow** end-to-end: from the HTTP request th
 11. [Building the Response](#building-the-response)
 12. [Supporting Functions](#supporting-functions)
 13. [Profile View and Unlock](#profile-view-and-unlock)
-14. [Discover List](#discover-list)
+14. [Discover List and Public Profile](#discover-list-and-public-profile)
 15. [Constants and Configuration](#constants-and-configuration)
 16. [Prompts (Full Text and Usage)](#prompts-full-text-and-usage)
 17. [Schemas (Full Reference)](#schemas-full-reference)
@@ -28,18 +28,18 @@ This document describes the **search flow** end-to-end: from the HTTP request th
 
 ## Overview
 
-**Flow in one sentence:** The client sends a natural-language search query; the API parses it into structured constraints (LLM: cleanup → single extract → validate/normalize), embeds the query for semantic search, runs a hybrid SQL query (structured MUST/EXCLUDE filters + vector similarity on `experience_cards` and `experience_card_children`), collapses results by person, reranks with “should” bonuses, optionally downranks by salary/date clarity, returns top 5 people with 1–3 matched cards each, and persists the search for profile view/unlock.
+**Flow in one sentence:** The client sends a natural-language search query; the API parses it into structured constraints (LLM → validate/normalize), embeds the query, runs **hybrid candidate generation** (vector similarity + lexical FTS on `search_document`), applies MUST/EXCLUDE with **fallback retry tiers** if results are too few, **collapses by person** using a **top-K blended score** (parent best + child best + avg top-3 + lexical + should bonuses − penalties), applies **deterministic time/location penalties** when filters were relaxed, builds **explainability** (matched_parent_ids, matched_child_ids, why_matched) per result, and persists Search + SearchResults in a **single transaction** (no double charging).
 
 **Key components:**
 
 | Component | Role |
 |-----------|------|
 | **Router** | `POST /search` → rate limit, auth, delegate to service |
-| **Search service** | `run_search()` orchestrates parsing, embedding, SQL, ranking, downrank, response |
-| **Chat provider** | `parse_search_filters()` — cleanup (plain text) → single extract (JSON) → validate/normalize (deterministic post-process) |
+| **Search service** | `run_search()` — parsing, embedding, hybrid (vector + lexical), tiered MUST, collapse scoring, explainability, persist |
+| **Chat provider** | `parse_search_filters()` — cleanup → single extract → validate/normalize |
 | **Embedding provider** | Embeds `query_embedding_text` (or raw query) into a vector |
-| **Database** | `ExperienceCard` and `ExperienceCardChild` with `Vector(324)`; pgvector cosine distance for similarity |
-| **Credits** | 1 credit per search; idempotency key returns cached response |
+| **Database** | `ExperienceCard` / `ExperienceCardChild`: Vector(324), `search_document` (FTS via GIN on `to_tsvector('english', COALESCE(search_document,''))` — see migration 019), MUST/EXCLUDE filters |
+| **Credits** | 1 credit per search; idempotency key returns cached response; transaction-safe persist (Search → deduct → SearchResults) |
 
 ---
 
@@ -139,36 +139,39 @@ This is the core search implementation. Steps in order:
 - On embedding failure: raise `HTTPException(503, detail=str(e))`.
 - If `query_vec` is empty: create a `Search` record, deduct 1 credit, return `SearchResponse(search_id=..., people=[])` (and save idempotent response if key provided).
 
-### Step 7: Build base SQL + MUST/EXCLUDE filters
+### Step 7: Lexical (FTS) candidates
 
-- Build a query that:
-  - Selects `ExperienceCard` and a **distance** expression: `(experience_cards.embedding <=> CAST(:qvec AS vector))` (pgvector cosine distance).
-  - Restricts to `experience_card_visibility == True` and `embedding IS NOT NULL`.
-- Apply all **MUST** and **EXCLUDE** filters (see [SQL: Base Query and MUST/EXCLUDE Filters](#sql-base-query-and-mustexclude-filters)).
-- Order by distance, limit `OVERFETCH_CARDS` (50).
-- Execute with `execute_params` including `qvec`.
+- **Build `query_ts`:** `search_phrases` + first 5 `should.keywords`, joined by space; if empty, use `query_cleaned` or `body.query` truncated to 200 characters.
+- Run **full-text search** on `experience_cards` and `experience_card_children` using `to_tsvector('english', COALESCE(search_document, '')) @@ plainto_tsquery('english', :q)` and `ts_rank_cd` for ranking. Both tables have GIN indexes on the tsvector expression (migration 019).
+- Aggregate per person: max rank across both tables → normalize to `[0, LEXICAL_BONUS_MAX]` (0.25). Store in `lexical_scores`. Empty `query_ts` returns no lexical bonus.
 
-### Step 8: Child embedding search
+### Step 8: Vector + MUST/EXCLUDE with fallback tiers
 
-- Run a separate query on `experience_card_children`: for each **person_id**, compute **minimum** distance over all visible child cards (joined to visible parent `ExperienceCard`).
-- Build `child_best_sim: dict[person_id, similarity]` where similarity = `1 - distance` (and take max if multiple rows per person).
-- Run an **evidence** query (same filters): for each person, return the top 1–3 child rows by distance (using `ROW_NUMBER() OVER (PARTITION BY person_id ORDER BY distance)`). From that, build `child_best_parent_ids: dict[person_id, list[parent_experience_id]]` — the parent card(s) that actually matched the child embedding, in best-match order.
+- **Fallback loop:** Start with `fallback_tier = 0` (strict). Build parent and child SQL with MUST/EXCLUDE. **Never relax EXCLUDE.**
+- **Tier 0:** Apply time, location, company/team as strict SQL filters. **Time (tier 0):** card must have at least one date bound (start or end) and actual overlap with `[time_start, time_end]`; cards with both dates null are excluded.
+- **Tier 1+:** **Time:** omit time filter from SQL; apply `MISSING_DATE_PENALTY` when scoring if query has time and card has no dates.
+- **Tier 2:** Also relax **location** (omit location filter; apply `LOCATION_MISMATCH_PENALTY` when query has location and card doesn’t match).
+- **Tier 3:** Also relax **company/team** (omit from SQL).
+- If unique person count from (parent rows ∪ child rows) **&lt; MIN_RESULTS (15)** and tier &lt; 3, increment tier and re-run; otherwise exit. Store `fallback_tier` in `Search.extra`.
 
-### Step 9: Collapse by person and rerank
+### Step 9: Collapse by person — top-K blended scoring
 
-- From the parent-card rows, group by `person_id`; for each card compute `sim = 1 - distance` and add a **should bonus** (see `_should_bonus`).
-- Per person: **best parent score** = max of (sim + bonus) over their cards.
-- **Final person score** = max(best parent score, child_best_sim for that person).
-- Persons who **only** matched via children (no parent in `person_cards`) are added with their child similarity.
-- Sort by score descending; take **top 5** (`TOP_PEOPLE`).
-- **Downranking (tie-breaks):** When `offer_salary_inr_per_year` is set, re-sort so candidates with a stated `work_preferred_salary_min` rank above those with NULL. When the query has a date range (`time_start`/`time_end`), re-sort so persons whose matched cards have full date overlap rank above those with missing card dates.
+- **Similarity:** `sim = 1 / (1 + distance)` (robust to one-off spikes).
+- Per person: collect **top-K** (5) card scores from **parents + children** (by sim).
+- **parent_best** = max(sim) over parent cards; **child_best** = max(sim) over child cards; **avg_top3** = average of top 3 sims.
+- **Base score:** `0.65 * parent_best + 0.25 * child_best + 0.10 * avg_top3`.
+- Add **lexical_bonus** (from FTS, cap 0.25) and **should_bonus** (from `_should_bonus`, cap 0.25).
+- Subtract **penalties:** missing_date_penalty (query has time, card undated), location_mismatch_penalty (query location, card differs). Salary mismatch only if query explicitly asks.
+- **Final person score** = base + lexical_bonus + should_bonus − penalties (floor 0).
+- Sort by score descending; take **top 5** (`TOP_PEOPLE`). Tie-breaks: salary stated vs NULL, then date overlap vs missing.
 
-### Step 10: Persist search and results
+### Step 10: Persist search and results (transaction-safe)
 
-- Create `Search(searcher_id, query_text=body.query, parsed_constraints_json=filters_dict, filters=filters_dict, expires_at=now + SEARCH_RESULT_EXPIRY_HOURS)`.
-- `db.add(search_rec)`, `db.flush()`.
-- Deduct 1 credit: `deduct_credits(db, searcher_id, 1, "search", "search_id", search_rec.id)`; on failure raise 402.
-- For each of the top 5: create `SearchResult(search_id, person_id, rank, score)`.
+- Create `Search(..., extra={"fallback_tier": fallback_tier})` (stored in `Search.extra` JSONB), `db.add(search_rec)`, `db.flush()`.
+- **Deduct 1 credit** with `deduct_credits(..., "search", "search_id", search_rec.id)`. On failure raise 402 (session rolls back; no orphan Search).
+- For each of the top 5: create `SearchResult(search_id, person_id, rank, score, extra={...})` (stored in `SearchResult.extra` JSONB) where `extra` contains **explainability:** `matched_parent_ids` (top 1–3 parent card IDs), `matched_child_ids` (top 1–3 child IDs), `why_matched` (3–6 bullet strings from `search_phrases` and snippets of `search_document`). Child-only matches: `matched_parent_ids` = parents that **own** the best-matching children (from `child_best_parent_ids`), not “latest 3 parents.”
+- **matched_parent_ids rule:** If the best-matching child is from parent A, parent A is always first (`matched_parent_ids[0]`), even if that parent had low vector similarity; then up to 2 more from top parents by similarity. Child-only: list comes from `child_best_parent_ids`.
+- All in one transaction; idempotency key prevents double charging. `Search.extra` and `SearchResult.extra` were added in migration 019.
 
 ### Step 11: Build response
 
@@ -249,7 +252,7 @@ The result is what is stored in `Search.parsed_constraints_json` and used for SQ
 - **company_norm, team_norm** → `ExperienceCard.company_norm` / `team_norm` IN (normalized, lowercased lists).
 - **intent_primary, domain, sub_domain, employment_type, seniority_level** → `ExperienceCard` columns IN lists.
 - **city, country, location_text** → `ExperienceCard.location` ILIKE `%value%` (OR between them).
-- **time_start, time_end** → date overlap: card must have both dates and overlap `[time_start, time_end]`, or have a missing start/end (kept but downranked later).
+- **time_start, time_end** → **Tier 0:** card must have at least one date bound (start or end) and actual overlap with `[time_start, time_end]`; cards with both dates null are excluded. **Tier 1+:** time filter omitted; cards with no dates get `MISSING_DATE_PENALTY` when scoring.
 - **is_current** → `ExperienceCard.is_current == must.is_current`.
 - **open_to_work_only** → join `PersonProfile` with `open_to_work == True`; can be overridden by `body.open_to_work_only`.
 - **offer_salary_inr_per_year** → when set, join `PersonProfile` and filter `work_preferred_salary_min <= offer_salary_inr_per_year OR work_preferred_salary_min IS NULL` (NULL candidates kept but downranked).
@@ -312,7 +315,7 @@ The result is what is stored in `Search.parsed_constraints_json` and used for SQ
 | `must.employment_type` | `employment_type IN (...)` |
 | `must.seniority_level` | `seniority_level IN (...)` |
 | `must.city` / `country` / `location_text` | `location ILIKE %value%` (OR between them) |
-| `must.time_start`, `must.time_end` | Overlap: `(start_date IS NOT NULL AND end_date IS NOT NULL AND start_date <= time_end AND end_date >= time_start) OR (start_date IS NULL OR end_date IS NULL)` |
+| `must.time_start`, `must.time_end` | **Tier 0:** at least one bound `(start_date IS NOT NULL OR end_date IS NOT NULL)` and overlap `(start_date IS NULL OR start_date <= time_end) AND (end_date IS NULL OR end_date >= time_start)`. **Tier 1+:** no time filter; missing-date penalty in scoring. |
 | `must.is_current` | `is_current == must.is_current` |
 
 ### EXCLUDE filters
@@ -352,18 +355,17 @@ The result is what is stored in `Search.parsed_constraints_json` and used for SQ
 
 **Result:**
 
-- **Scoring:** For each person_id, minimum distance → `child_best_sim[person_id] = 1.0 - distance`. Used when collapsing: person’s final score = max(best parent score, child_best_sim).
+- **Scoring:** For each person_id, minimum distance → `child_best_sim[person_id] = 1/(1 + distance)` (same as parent: `sim = 1/(1+d)`). Used when collapsing: person’s final score = max(best parent score, child_best_sim).
 - **Evidence:** `child_best_parent_ids[person_id]` = ordered list (up to 3) of `parent_experience_id` values that correspond to the matching child rows. Used in Step 11 to load and show the parent card(s) that actually matched, not arbitrary recent cards.
 
 ---
 
 ## Ranking, Collapse, and Top N
 
-### Per-card score (parent rows)
+### Similarity and per-card bonus
 
-- **Similarity:** `sim = 1.0 - distance`.
-- **Should bonus:** `bonus = min(_should_bonus(card, payload.should), 10) * 0.02` (max +0.2).
-- **Card score:** `sim + bonus`.
+- **Similarity from distance:** `sim = 1 / (1 + distance)` (stable; avoids one-off child spikes dominating).
+- **Should bonus:** `min(_should_bonus(card, payload.should), SHOULD_CAP) * SHOULD_BOOST` (capped at `SHOULD_BONUS_MAX` 0.25).
 
 ### `_should_bonus(card, should) -> int`
 
@@ -372,18 +374,22 @@ The result is what is stored in `Search.parsed_constraints_json` and used for SQ
 Counts how many “should” constraints the card matches:
 
 - +1 if `should.intent_secondary` and any of `card.intent_secondary` is in `should.intent_secondary`.
-- +1 if `should.skills_or_tools` and any term appears in `card.search_phrases` (case-insensitive) or in `card.search_document` (substring).
-- +1 if `should.keywords` and any term appears in `card.search_phrases` or `card.search_document` (substring).
+- +1 if `should.skills_or_tools` and any term appears in `card.search_phrases` or `card.search_document`.
+- +1 if `should.keywords` and any term appears in `card.search_phrases` or `card.search_document`.
 
-Return value is capped at 10 in the caller (`SHOULD_CAP`), then multiplied by `SHOULD_BOOST = 0.02`.
+Capped at `SHOULD_CAP` (10), then multiplied by `SHOULD_BOOST` (0.02).
 
-### Collapse by person
+### Collapse by person (top-K blended)
 
-- **person_cards:** `dict[person_id, list[(ExperienceCard, score)]]` from parent rows.
-- **Per person:** `best_sim = max(score over their cards)`.
-- **Merge with children:** `final_score = max(best_sim, child_best_sim.get(person_id, 0))`.
-- Add persons that appear only in `child_best_sim` (no parent rows) with score = child similarity.
-- Sort by `final_score` descending; take first **TOP_PEOPLE** (5).
+- **person_cards:** `dict[person_id, list[(ExperienceCard, score)]]` from parent rows; child evidence in `child_sims_by_person` (parent_id, child_id, sim).
+- **Per person:** take **top K = 5** card scores (parents + children combined). Then:
+  - `parent_best` = max(sim) over parent cards
+  - `child_best` = max(sim) over child cards
+  - `avg_top3` = average of top 3 sims (or all if fewer)
+- **Base:** `0.65 * parent_best + 0.25 * child_best + 0.10 * avg_top3`.
+- Add **lexical_bonus** (FTS, cap 0.25) and **should_bonus** (cap 0.25); subtract **penalties** (missing date, location mismatch when tier relaxed).
+- Add persons that appear only via children; their `parent_best` contribution is 0, `child_best` from `child_best_sim`.
+- Sort by final score descending; take **TOP_PEOPLE** (5).
 
 ---
 
@@ -398,6 +404,14 @@ Return value is capped at 10 in the caller (`SHOULD_CAP`), then multiplied by `S
   - **PersonSearchResult:** id, name (display_name), headline, bio, open_to_work, open_to_contact, work_preferred_locations, work_preferred_salary_min, matched_cards (serialized via `experience_card_to_response`).
 
 **Serializer:** `experience_card_to_response(card)` in `src/serializers.py` maps `ExperienceCard` to `ExperienceCardResponse` (id, user_id, title, domain, company_name, dates, summary, intent_primary, seniority_level, etc.).
+
+### Explainability (SearchResult.extra)
+
+For each result person we store in `SearchResult.extra` (JSONB, see migration 019):
+
+- **matched_parent_ids:** Top 1–3 experience card IDs that contributed to the score. If the best-matching child is from parent A, parent A is always first (position 0), even if that parent had low vector similarity; remaining slots are filled from top parents by similarity. For child-only matches, the list is the parents that own the best-matching children (from `child_best_parent_ids`), not arbitrary recent parents.
+- **matched_child_ids:** Top 1–3 child card IDs that contributed.
+- **why_matched:** 3–6 bullet strings built from matched cards’ `search_phrases` and short snippets of `search_document` (evidence for ranking).
 
 ---
 
@@ -486,13 +500,17 @@ No search_id, no credits, no embedding.
 ## Constants and Configuration
 
 **File:** `src/core/constants.py`: `EMBEDDING_DIM = 324`, `SEARCH_RESULT_EXPIRY_HOURS = 24`.  
-**File:** `src/core/config.py`: `embed_dimension` (default 324, matches DB migration).  
+**File:** `src/core/config.py`: `embed_dimension` (default 324).  
+**Database (migration 019):** GIN indexes for FTS on `search_document`: `ix_experience_cards_search_document_fts` and `ix_experience_card_children_search_document_fts` on `to_tsvector('english', COALESCE(search_document, ''))`. No new columns.  
 **File:** `src/services/search.py`:
 
 - `OVERFETCH_CARDS = 50` — limit for parent vector search before collapse.
 - `TOP_PEOPLE = 5` — final number of people returned.
-- `MATCHED_CARDS_PER_PERSON = 3` — max cards per person in results.
-- `SHOULD_BOOST = 0.02`, `SHOULD_CAP = 10` — rerank bonus (defined inside `run_search`).
+- `MATCHED_CARDS_PER_PERSON = 3` — max cards per person in results; also used for evidence and explainability.
+- `MIN_RESULTS = 15` — minimum unique persons to avoid fallback; below this we relax MUST in tiers.
+- `TOP_K_CARDS = 5` — number of top card scores (parent + child) used per person for blended score.
+- **Scoring:** `_similarity_from_distance(d) = 1/(1+d)`; weights `WEIGHT_PARENT_BEST = 0.65`, `WEIGHT_CHILD_BEST = 0.25`, `WEIGHT_AVG_TOP3 = 0.10`; `LEXICAL_BONUS_MAX = 0.25`, `SHOULD_BOOST = 0.02`, `SHOULD_CAP = 10`, `SHOULD_BONUS_MAX = 0.25`; penalties `MISSING_DATE_PENALTY = 0.12`, `LOCATION_MISMATCH_PENALTY = 0.10`.
+- **Fallback tiers:** `FALLBACK_TIER_STRICT = 0`, `FALLBACK_TIER_TIME_SOFT = 1`, `FALLBACK_TIER_LOCATION_SOFT = 2`, `FALLBACK_TIER_COMPANY_TEAM_SOFT = 3`.
 
 **Config:** `src/core/config.py` — `search_rate_limit`, `unlock_rate_limit`, `embed_*`, `chat_*`, etc.
 
@@ -769,6 +787,7 @@ run_search
   → embedding_text; request overrides (open_to_work_only, offer_salary_inr_per_year)
   → embed(embedding_text) → query_vec (normalized)
   → If no query_vec: create Search, deduct 1, return empty people
+  → Lexical FTS: query_ts = search_phrases + first 5 should.keywords, or query_cleaned/body.query[:200]; FTS on experience_cards + experience_card_children.search_document → lexical_scores
   → SQL: experience_cards + MUST/EXCLUDE + PersonProfile join when open_to_work or offer salary, order by distance, limit 50
   → SQL: experience_card_children min distance per person_id (same MUST/EXCLUDE on parent)
   → Group by person, add should bonus, merge parent + child score, sort, top 5
@@ -782,4 +801,4 @@ run_search
 Client
 ```
 
-This document covers the search flow step-by-step and every major function in detail. For embedding indexing (how cards get their vectors), see `EXTRACTION_TO_EMBEDDING_PIPELINE.md`.
+This document covers the search flow step-by-step and every major function in detail. For embedding indexing (how cards get their vectors), see `EXTRACTION_TO_EMBEDDING_PIPELINE.md`. For automated acceptance checks (ranking, child-only mapping, fallback tier), see `scripts/search_acceptance.py`.
