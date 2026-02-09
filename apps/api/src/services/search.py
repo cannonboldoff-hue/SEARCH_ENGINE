@@ -716,6 +716,7 @@ async def get_person_profile(
     if (open_to_work or open_to_contact) and unlock_result.scalar_one_or_none() and profile:
         contact = ContactDetailsResponse(
             email_visible=profile.email_visible,
+            email=person.email if profile.email_visible else None,
             phone=profile.phone,
             linkedin_url=profile.linkedin_url,
             other=profile.other,
@@ -729,6 +730,28 @@ async def get_person_profile(
         locs = []
         sal_min = None
 
+    # Build card_families (parent + children) and bio so search profile shows full experience like public profile
+    bio_resp = _bio_response_for_public(person, profile)
+    card_families: list[CardFamilyResponse] = []
+    if cards:
+        children_result = await db.execute(
+            select(ExperienceCardChild).where(
+                ExperienceCardChild.parent_experience_id.in_([c.id for c in cards])
+            )
+        )
+        children_list = children_result.scalars().all()
+        by_parent: dict[str, list] = {}
+        for ch in children_list:
+            pid = str(ch.parent_experience_id)
+            by_parent.setdefault(pid, []).append(ch)
+        card_families = [
+            CardFamilyResponse(
+                parent=experience_card_to_response(card),
+                children=[experience_card_child_to_response(ch) for ch in by_parent.get(str(card.id), [])],
+            )
+            for card in cards
+        ]
+
     return PersonProfileResponse(
         id=person.id,
         display_name=person.display_name,
@@ -737,13 +760,17 @@ async def get_person_profile(
         work_preferred_locations=locs,
         work_preferred_salary_min=sal_min,
         experience_cards=[experience_card_to_response(c) for c in cards],
+        card_families=card_families,
+        bio=bio_resp,
         contact=contact,
     )
 
 
-def _contact_response(p: PersonProfile | None) -> ContactDetailsResponse:
+def _contact_response(p: PersonProfile | None, person: Person | None = None) -> ContactDetailsResponse:
+    email_visible = p.email_visible if p else True
     return ContactDetailsResponse(
-        email_visible=p.email_visible if p else True,
+        email_visible=email_visible,
+        email=(person.email if (person and email_visible) else None),
         phone=p.phone if p else None,
         linkedin_url=p.linkedin_url if p else None,
         other=p.other if p else None,
@@ -785,8 +812,9 @@ async def unlock_contact(
     if not r_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Person not in this search result")
 
-    profile_result, u_result = await asyncio.gather(
+    profile_result, person_result, u_result = await asyncio.gather(
         db.execute(select(PersonProfile).where(PersonProfile.person_id == person_id)),
+        db.execute(select(Person).where(Person.id == person_id)),
         db.execute(
             select(UnlockContact).where(
                 UnlockContact.searcher_id == searcher_id,
@@ -796,13 +824,14 @@ async def unlock_contact(
         ),
     )
     profile = profile_result.scalar_one_or_none()
+    person = person_result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Person profile not found")
-    if not profile.open_to_contact:
+    if not (profile.open_to_work or profile.open_to_contact):
         raise HTTPException(status_code=403, detail="Person is not open to contact")
 
     if u_result.scalar_one_or_none():
-        return UnlockContactResponse(unlocked=True, contact=_contact_response(profile))
+        return UnlockContactResponse(unlocked=True, contact=_contact_response(profile, person))
 
     balance = await get_balance(db, searcher_id)
     if balance < 1:
@@ -818,7 +847,7 @@ async def unlock_contact(
     if not await deduct_credits(db, searcher_id, 1, "unlock_contact", "unlock_id", unlock.id):
         raise HTTPException(status_code=402, detail="Insufficient credits")
 
-    resp = UnlockContactResponse(unlocked=True, contact=_contact_response(profile))
+    resp = UnlockContactResponse(unlocked=True, contact=_contact_response(profile, person))
     if idempotency_key:
         await save_idempotent_response(db, idempotency_key, searcher_id, endpoint, 200, resp.model_dump(mode="json"))
     return resp

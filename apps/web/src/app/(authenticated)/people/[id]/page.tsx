@@ -221,9 +221,21 @@ export default function PersonProfilePage() {
             )}
           </CardHeader>
         </Card>
+        {profile.bio && <BioSection bio={profile.bio} />}
         <section>
           <h2 className="text-sm font-medium text-muted-foreground mb-3">Experience</h2>
-          {profile.experience_cards.length === 0 ? (
+          {profile.card_families && profile.card_families.length > 0 ? (
+            <div className="space-y-6">
+              {profile.card_families.map((family, idx) => (
+                <CardFamilyBlock
+                  key={family.parent.id}
+                  parent={family.parent}
+                  children={family.children}
+                  index={idx}
+                />
+              ))}
+            </div>
+          ) : profile.experience_cards.length === 0 ? (
             <div className="text-center py-8 rounded-lg border border-dashed border-border">
               <Briefcase className="h-6 w-6 text-muted-foreground/40 mx-auto mb-2" />
               <p className="text-sm text-muted-foreground">No experience cards shared.</p>
@@ -264,23 +276,25 @@ export default function PersonProfilePage() {
           <CardContent>
             {contactUnlocked ? (
               <div className="space-y-2">
-                {profile.contact?.email_visible && (
+                {(profile.contact?.email != null && profile.contact.email !== "") || profile.contact?.email_visible ? (
                   <div className="flex items-center gap-2 text-sm">
-                    <Mail className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-foreground">Email visible to you</span>
+                    <Mail className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-foreground">
+                      {profile.contact?.email || "Email visible to you"}
+                    </span>
                   </div>
-                )}
+                ) : null}
                 {profile.contact?.phone && (
                   <div className="flex items-center gap-2 text-sm">
-                    <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                    <Phone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                     <span className="text-foreground">{profile.contact.phone}</span>
                   </div>
                 )}
                 {profile.contact?.linkedin_url && (
                   <div className="flex items-center gap-2 text-sm">
-                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-                    <a href={profile.contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-foreground hover:underline">
-                      LinkedIn
+                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <a href={profile.contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-foreground hover:underline break-all">
+                      {profile.contact.linkedin_url}
                     </a>
                   </div>
                 )}
@@ -288,7 +302,7 @@ export default function PersonProfilePage() {
                   <p className="text-sm text-muted-foreground mt-1">{profile.contact.other}</p>
                 )}
               </div>
-            ) : profile.open_to_contact ? (
+            ) : (profile.open_to_work || profile.open_to_contact) ? (
               <div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
                   <Lock className="h-3.5 w-3.5" />

@@ -4,7 +4,8 @@ from typing import Any, Optional
 from pydantic import BaseModel, field_serializer
 
 from src.schemas.contact import ContactDetailsResponse
-from src.schemas.builder import ExperienceCardResponse
+from src.schemas.builder import ExperienceCardResponse, CardFamilyResponse
+from src.schemas.bio import BioResponse
 
 
 def _list(d: dict, key: str) -> list:
@@ -143,7 +144,7 @@ class SearchResponse(BaseModel):
 
 
 class PersonProfileResponse(BaseModel):
-    """Profile for search results; visibility fields from PersonProfile."""
+    """Profile for search results; visibility fields from PersonProfile. Includes full card families and bio like public profile."""
 
     id: str
     display_name: Optional[str] = None
@@ -151,7 +152,9 @@ class PersonProfileResponse(BaseModel):
     open_to_contact: bool
     work_preferred_locations: list[str]
     work_preferred_salary_min: Optional[Decimal] = None  # minimum salary needed (₹/year)
-    experience_cards: list[ExperienceCardResponse]
+    experience_cards: list[ExperienceCardResponse]  # kept for backward compatibility
+    card_families: list[CardFamilyResponse] = []  # parent + children for full experience view
+    bio: Optional[BioResponse] = None
     contact: Optional[ContactDetailsResponse] = None  # only if unlocked
 
     @field_serializer("work_preferred_salary_min")

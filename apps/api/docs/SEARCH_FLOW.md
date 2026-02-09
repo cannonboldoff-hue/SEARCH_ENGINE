@@ -28,7 +28,7 @@ This document describes the **search flow** end-to-end: from the HTTP request th
 
 ## Overview
 
-**Flow in one sentence:** The client sends a natural-language search query; the API parses it into structured constraints (LLM: cleanup → single extract → validate/normalize), embeds the query for semantic search, runs a hybrid SQL query (structured MUST/EXCLUDE filters + vector similarity on `experience_cards` and `experience_card_children`), collapses results by person, reranks with “should” bonuses, optionally downranks by salary/date clarity, returns top 20 people with 1–3 matched cards each, and persists the search for profile view/unlock.
+**Flow in one sentence:** The client sends a natural-language search query; the API parses it into structured constraints (LLM: cleanup → single extract → validate/normalize), embeds the query for semantic search, runs a hybrid SQL query (structured MUST/EXCLUDE filters + vector similarity on `experience_cards` and `experience_card_children`), collapses results by person, reranks with “should” bonuses, optionally downranks by salary/date clarity, returns top 5 people with 1–3 matched cards each, and persists the search for profile view/unlock.
 
 **Key components:**
 
@@ -38,7 +38,7 @@ This document describes the **search flow** end-to-end: from the HTTP request th
 | **Search service** | `run_search()` orchestrates parsing, embedding, SQL, ranking, downrank, response |
 | **Chat provider** | `parse_search_filters()` — cleanup (plain text) → single extract (JSON) → validate/normalize (deterministic post-process) |
 | **Embedding provider** | Embeds `query_embedding_text` (or raw query) into a vector |
-| **Database** | `ExperienceCard` and `ExperienceCardChild` with `Vector(384)`; pgvector `<=>` for cosine distance |
+| **Database** | `ExperienceCard` and `ExperienceCardChild` with `Vector(324)`; pgvector cosine distance for similarity |
 | **Credits** | 1 credit per search; idempotency key returns cached response |
 
 ---
@@ -66,7 +66,7 @@ async def search(
 
 - **Rate limit:** Applied via `@limiter.limit(_settings.search_rate_limit)` (e.g. `"10/minute"`).
 - **Auth:** `get_current_user` ensures the caller is authenticated; `current_user.id` is the `searcher_id`.
-- **Body:** `SearchRequest` — `query` (required), optional `open_to_work_only`, `preferred_locations`, `salary_min`, `salary_max`.
+- **Body:** `SearchRequest` — `query` (required), optional `open_to_work_only`, `preferred_locations`, `salary_min` (recruiter min ₹/year, display only), `salary_max` (recruiter offer budget ₹/year).
 - **Idempotency:** Optional header `Idempotency-Key`; if present, duplicate requests can return the same cached response without charging again.
 - **Delegate:** Calls `search_service.search(db, searcher_id, body, idempotency_key)` and returns `SearchResponse`.
 
@@ -160,7 +160,7 @@ This is the core search implementation. Steps in order:
 - Per person: **best parent score** = max of (sim + bonus) over their cards.
 - **Final person score** = max(best parent score, child_best_sim for that person).
 - Persons who **only** matched via children (no parent in `person_cards`) are added with their child similarity.
-- Sort by score descending; take **top 20** (`TOP_PEOPLE`).
+- Sort by score descending; take **top 5** (`TOP_PEOPLE`).
 - **Downranking (tie-breaks):** When `offer_salary_inr_per_year` is set, re-sort so candidates with a stated `work_preferred_salary_min` rank above those with NULL. When the query has a date range (`time_start`/`time_end`), re-sort so persons whose matched cards have full date overlap rank above those with missing card dates.
 
 ### Step 10: Persist search and results
@@ -168,17 +168,17 @@ This is the core search implementation. Steps in order:
 - Create `Search(searcher_id, query_text=body.query, parsed_constraints_json=filters_dict, filters=filters_dict, expires_at=now + SEARCH_RESULT_EXPIRY_HOURS)`.
 - `db.add(search_rec)`, `db.flush()`.
 - Deduct 1 credit: `deduct_credits(db, searcher_id, 1, "search", "search_id", search_rec.id)`; on failure raise 402.
-- For each of the top 20: create `SearchResult(search_id, person_id, rank, score)`.
+- For each of the top 5: create `SearchResult(search_id, person_id, rank, score)`.
 
 ### Step 11: Build response
 
-- If top 20 is empty: return `SearchResponse(search_id, people=[])`, optionally save idempotent response, return.
-- Load `Person` and `PersonProfile` for the top 20 IDs.
+- If the top-N list is empty: return `SearchResponse(search_id, people=[])`, optionally save idempotent response, return.
+- Load `Person` and `PersonProfile` for the top 5 IDs.
 - For persons who **only** matched via children: load the **parent cards that actually matched** (from `child_best_parent_ids`) into `child_only_cards`, preserving match order; if a person has no evidence IDs, fall back to up to 3 visible parent cards by `created_at desc`.
-- For each (person_id, score) in top 20:
+- For each (person_id, score) in the top 5:
   - **Matched cards:** From `person_cards` take up to 3 best (by score); if none and person is in `child_only_cards`, use those (so the cards shown are the matched evidence, not arbitrary recent cards).
   - Build **headline** from profile’s `current_company` / `current_city`.
-  - Build **bio** from name, school, college.
+  - Build **bio** from profile first/last name, "School: …", "College: …" joined by " · ".
   - Append `PersonSearchResult(id, name, headline, bio, open_to_work, open_to_contact, work_preferred_*, matched_cards)`.
 - Return `SearchResponse(search_id=search_rec.id, people=people_list)`.
 - If `idempotency_key`: `save_idempotent_response(...)` with status 200 and response body.
@@ -268,14 +268,14 @@ The result is what is stored in `Search.parsed_constraints_json` and used for SQ
 - **open_to_work_only:** `body.open_to_work_only` overrides parsed value when not None.
 - **Offer salary (₹/year):** `body.salary_max` overrides parsed `must.offer_salary_inr_per_year` when set.
 - When **open_to_work_only** is True and `body.preferred_locations` is set: filter `PersonProfile.work_preferred_locations` overlap with that list.
-- When **offer_salary_inr_per_year** is set: filter as above; then downrank persons with NULL `work_preferred_salary_min` after taking top 20 by score.
+- When **offer_salary_inr_per_year** is set: filter as above; then downrank persons with NULL `work_preferred_salary_min` after taking top 5 by score.
 
 ---
 
 ## Embedding the Query
 
 **Provider:** `get_embedding_provider()` → `EmbeddingProvider.embed(texts)`.  
-**Config:** `embed_api_base_url`, `embed_model`, `embed_dimension` (e.g. 384).  
+**Config:** `embed_api_base_url`, `embed_model`, `embed_dimension` (e.g. 324).  
 **Util:** `normalize_embedding(vec, dim)` in `src/utils.py`.
 
 ### Flow
@@ -286,7 +286,7 @@ The result is what is stored in `Search.parsed_constraints_json` and used for SQ
 4. **Normalize:** `normalize_embedding(vecs[0], embed_provider.dimension)`:
    - If `len(vec) < dim`: zero-pad to `dim`.
    - If `len(vec) >= dim`: truncate to `dim`.
-   - Ensures compatibility with DB `Vector(384)`.
+   - Ensures compatibility with DB `Vector(324)` (or configured `embed_dimension`).
 
 ---
 
@@ -383,18 +383,18 @@ Return value is capped at 10 in the caller (`SHOULD_CAP`), then multiplied by `S
 - **Per person:** `best_sim = max(score over their cards)`.
 - **Merge with children:** `final_score = max(best_sim, child_best_sim.get(person_id, 0))`.
 - Add persons that appear only in `child_best_sim` (no parent rows) with score = child similarity.
-- Sort by `final_score` descending; take first **TOP_PEOPLE** (20).
+- Sort by `final_score` descending; take first **TOP_PEOPLE** (5).
 
 ---
 
 ## Building the Response
 
-- **Person/Profile:** Loaded for the top 20 IDs.
+- **Person/Profile:** Loaded for the top 5 IDs.
 - **Child-only persons:** If a person has no parent cards in `person_cards`, load the parent cards whose IDs are in `child_best_parent_ids[person_id]` (the parents that matched the child embedding), in that order, into `child_only_cards`; if none, fall back to up to 3 visible parent cards by `created_at desc`.
-- For each person in top 20:
+- For each person in the top 5:
   - **matched_cards:** Best 3 from `person_cards` (by score), or from `child_only_cards` if no parent matches (so child-only matches show the parent that actually matched as evidence).
   - **headline:** `current_company / current_city` from profile.
-  - **bio:** Name + “School: …” + “College: …” joined by “ · ”.
+  - **bio:** Profile first/last name, “School: …” + “College: …” joined by “ · ”.
   - **PersonSearchResult:** id, name (display_name), headline, bio, open_to_work, open_to_contact, work_preferred_locations, work_preferred_salary_min, matched_cards (serialized via `experience_card_to_response`).
 
 **Serializer:** `experience_card_to_response(card)` in `src/serializers.py` maps `ExperienceCard` to `ExperienceCardResponse` (id, user_id, title, domain, company_name, dates, summary, intent_primary, seniority_level, etc.).
@@ -442,9 +442,9 @@ Return value is capped at 10 in the caller (`SHOULD_CAP`), then multiplied by `S
 2. If `_search_expired(search_rec)`: 403 “Search expired”.
 3. Load `SearchResult` for (search_id, person_id); 403 if not in results.
 4. Load `Person`, `PersonProfile`, visible `ExperienceCard`s for person, and `UnlockContact` for (searcher, person, search).
-5. **Contact:** Only included if (open_to_work or open_to_contact) and an unlock record exists; then build `ContactDetailsResponse` from profile (email_visible, phone, linkedin_url, other).
+5. **Contact:** Only included if (open_to_work or open_to_contact) and an unlock record exists; then build `ContactDetailsResponse` from profile (email_visible, email when visible, phone, linkedin_url, other).
 6. **Locations/salary:** Only when open_to_work; else empty.
-7. Return `PersonProfileResponse` with experience_cards and contact (if unlocked).
+7. Return `PersonProfileResponse` with experience_cards (backward compatibility), card_families (parent + children), bio, and contact (if unlocked).
 
 ### Unlock contact
 
@@ -485,13 +485,14 @@ No search_id, no credits, no embedding.
 
 ## Constants and Configuration
 
-**File:** `src/core/constants.py`: `EMBEDDING_DIM = 384`, `SEARCH_RESULT_EXPIRY_HOURS = 24`.  
+**File:** `src/core/constants.py`: `EMBEDDING_DIM = 324`, `SEARCH_RESULT_EXPIRY_HOURS = 24`.  
+**File:** `src/core/config.py`: `embed_dimension` (default 324, matches DB migration).  
 **File:** `src/services/search.py`:
 
 - `OVERFETCH_CARDS = 50` — limit for parent vector search before collapse.
-- `TOP_PEOPLE = 20` — final number of people returned.
+- `TOP_PEOPLE = 5` — final number of people returned.
 - `MATCHED_CARDS_PER_PERSON = 3` — max cards per person in results.
-- `SHOULD_BOOST = 0.02`, `SHOULD_CAP = 10` — rerank bonus.
+- `SHOULD_BOOST = 0.02`, `SHOULD_CAP = 10` — rerank bonus (defined inside `run_search`).
 
 **Config:** `src/core/config.py` — `search_rate_limit`, `unlock_rate_limit`, `embed_*`, `chat_*`, etc.
 
@@ -687,7 +688,7 @@ Body of `POST /search`.
 | `query` | `str` | required | Natural-language search query. |
 | `open_to_work_only` | `Optional[bool]` | `None` | Override parsed value; when True, only people with open_to_work. |
 | `preferred_locations` | `Optional[list[str]]` | `None` | When open_to_work_only, filter by profile `work_preferred_locations` (any match). |
-| `salary_min` | `Optional[Decimal]` | `None` | Min salary (yearly); documented as salary_yearly_min. |
+| `salary_min` | `Optional[Decimal]` | `None` | Recruiter min (₹/year); for display only. |
 | `salary_max` | `Optional[Decimal]` | `None` | Recruiter offer budget (₹/year); overrides parsed `must.offer_salary_inr_per_year`; candidates matched where work_preferred_salary_min <= offer or NULL. |
 
 #### `PersonSearchResult`
@@ -713,7 +714,7 @@ Response of `POST /search`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `search_id` | `str` | ID of the created Search; required for profile view and unlock. |
-| `people` | `list[PersonSearchResult]` | Top people (up to 20). |
+| `people` | `list[PersonSearchResult]` | Top people (up to 5). |
 
 #### `PersonProfileResponse`
 
@@ -727,7 +728,9 @@ Full profile when viewing a person from search (`GET /people/{person_id}?search_
 | `open_to_contact` | `bool` | From PersonProfile. |
 | `work_preferred_locations` | `list[str]` | Shown only when open_to_work. |
 | `work_preferred_salary_min` | `Optional[Decimal]` | Min salary ₹/year; serialized as float; shown only when open_to_work. |
-| `experience_cards` | `list[ExperienceCardResponse]` | All visible experience cards for this person. |
+| `experience_cards` | `list[ExperienceCardResponse]` | All visible experience cards (kept for backward compatibility). |
+| `card_families` | `list[CardFamilyResponse]` | Parent cards with children for full experience view. |
+| `bio` | `Optional[BioResponse]` | Name, location, school, college, etc. |
 | `contact` | `Optional[ContactDetailsResponse]` | Present only if searcher has unlocked contact for this person in this search. |
 
 #### `UnlockContactRequest`
@@ -743,9 +746,9 @@ Body of `POST /people/{person_id}/unlock-contact`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `unlocked` | `bool` | Always true on success. |
-| `contact` | `ContactDetailsResponse` | email_visible, phone, linkedin_url, other from PersonProfile. |
+| `contact` | `ContactDetailsResponse` | email_visible, email (when visible), phone, linkedin_url, other from PersonProfile. |
 
-**Note:** `ContactDetailsResponse` and `ExperienceCardResponse` are defined in `src/schemas/contact.py` and `src/schemas/builder.py` respectively; they are referenced here for completeness.
+**Note:** `ContactDetailsResponse` is in `src/schemas/contact.py`; `ExperienceCardResponse` and `CardFamilyResponse` in `src/schemas/builder.py`; `BioResponse` in `src/schemas/bio.py`. They are referenced here for completeness.
 
 ---
 
@@ -768,7 +771,7 @@ run_search
   → If no query_vec: create Search, deduct 1, return empty people
   → SQL: experience_cards + MUST/EXCLUDE + PersonProfile join when open_to_work or offer salary, order by distance, limit 50
   → SQL: experience_card_children min distance per person_id (same MUST/EXCLUDE on parent)
-  → Group by person, add should bonus, merge parent + child score, sort, top 20
+  → Group by person, add should bonus, merge parent + child score, sort, top 5
   → Downrank: by stated salary (if offer set), by date overlap (if time range set)
   → Create Search + SearchResult rows, deduct 1 credit
   → Load Person, PersonProfile; for child-only persons load up to 3 cards

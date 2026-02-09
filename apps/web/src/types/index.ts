@@ -155,6 +155,7 @@ export type ExperienceCardPatch = {
 
 export type ContactDetails = {
   email_visible: boolean;
+  email?: string | null;
   phone: string | null;
   linkedin_url: string | null;
   other: string | null;
@@ -168,6 +169,10 @@ export type PersonProfile = {
   work_preferred_locations: string[];
   work_preferred_salary_min: number | null;
   experience_cards: ExperienceCard[];
+  /** Full experience card families (parent + children) for search profile view. */
+  card_families?: { parent: ExperienceCard; children: ExperienceCardChild[] }[];
+  /** Bio when viewing from search (same as public profile). */
+  bio?: BioResponse | null;
   contact: ContactDetails | null;
 };
 
