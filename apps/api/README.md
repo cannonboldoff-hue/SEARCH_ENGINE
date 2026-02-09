@@ -1,4 +1,4 @@
-# Search Engine — Backend (API)
+# CONXA — Backend (API)
 
 Step-by-step documentation of the FastAPI backend: every module and function, in order of use.
 
@@ -46,7 +46,7 @@ Tech: **PostgreSQL** (async via asyncpg), **pgvector** for embeddings, **Alembic
 | 2 | **`FastAPI(...)`** — App created with title, description, version, lifespan. |
 | 3 | **`app.state.limiter = limiter`** — Attach SlowAPI limiter for rate-limited routes. |
 | 4 | **`app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)`** — Return 429 when rate limit exceeded. |
-| 5 | **CORS** — `get_settings().cors_origins` is split by comma; if empty, `["*"]`. Middleware allows credentials, all methods/headers. **Production:** set `CORS_ORIGINS` to your web app URL(s), e.g. `https://search-engine-web-3aqy.onrender.com` — browsers reject `*` when credentials are used. |
+| 5 | **CORS** — `get_settings().cors_origins` is split by comma; if empty, `["*"]`. Middleware allows credentials, all methods/headers. **Production:** set `CORS_ORIGINS` to your web app URL(s), e.g. `https://conxa-web.onrender.com` — browsers reject `*` when credentials are used. |
 | 6 | **Routers** — `auth_router`, `profile_router`, `contact_router`, `builder_router`, `search_router` are included. |
 | 7 | **`GET /health`** — Returns `{"status": "ok"}` (no auth). |
 

@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cipher - Find people by what they've done",
+  title: "CONXA - Find people by what they've done",
   description: "Trust-weighted, AI-structured search. Find people by real experience.",
 };
 

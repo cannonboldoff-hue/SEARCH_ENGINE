@@ -344,7 +344,7 @@ export default function OnboardingBioPage() {
                 size="lg"
                 disabled={putBio.isPending || patchVisibility.isPending}
               >
-                {putBio.isPending || patchVisibility.isPending ? "Saving..." : "Save & continue to Cipher"}
+                {putBio.isPending || patchVisibility.isPending ? "Saving..." : "Save & continue to CONXA"}
               </Button>
               <p className="text-xs text-muted-foreground self-center leading-relaxed">
                 Next: add experience in the builder, or start searching.

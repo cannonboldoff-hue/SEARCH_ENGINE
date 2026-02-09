@@ -179,7 +179,7 @@ export default function PersonProfilePage() {
         <PageError
           message={error instanceof Error ? error.message : "Failed to load profile"}
           backHref="/home"
-          backLabel="Back to Cipher"
+          backLabel="Back to CONXA"
         />
       );
     }
@@ -320,7 +320,7 @@ export default function PersonProfilePage() {
       <PageError
         message={error instanceof Error ? error.message : "Failed to load profile"}
         backHref="/home"
-        backLabel="Back to Cipher"
+        backLabel="Back to CONXA"
       />
     );
   }
@@ -337,7 +337,7 @@ export default function PersonProfilePage() {
         className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5 group"
       >
         <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
-        Back to Cipher
+        Back to CONXA
       </Link>
 
       <Card>

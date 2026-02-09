@@ -54,7 +54,7 @@ export default function SignupPage() {
 
   return (
     <AuthLayout
-      title="Cipher"
+      title="CONXA"
       subtitle="Start with 1,000 credits. Build your experience and get discovered."
     >
       <motion.div

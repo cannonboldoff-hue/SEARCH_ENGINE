@@ -21,7 +21,7 @@ User query:
 """
 
 PROMPT_SEARCH_EXTRACT_FILTERS = """
-You are a structured search-query parser for an intent-based people search engine.
+You are a structured search-query parser for CONXA (intent-based people search).
 
 Your job: Convert a messy recruiter query into JSON filters + an embedding text.
 
@@ -169,7 +169,7 @@ def get_validate_prompt(query_original: str, query_cleaned: str, extracted_json:
 # Maps directly to DB columns: company_norm, team_norm, intent_primary, domain, etc. + person_profiles
 # ---------------------------------------------------------------------------
 
-PROMPT_SEARCH_SINGLE_EXTRACT = """You are a structured search-query parser for an intent-based people search engine.
+PROMPT_SEARCH_SINGLE_EXTRACT = """You are a structured search-query parser for CONXA (intent-based people search).
 
 Convert the user query into JSON constraints that map to our DB.
 

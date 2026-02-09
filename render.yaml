@@ -1,10 +1,10 @@
 databases:
-  - name: search-engine-db
+  - name: conxa-db
     plan: free
 
 services:
   - type: web
-    name: search-engine-api
+    name: conxa-api
     runtime: docker
     plan: free
     dockerfilePath: ./apps/api/Dockerfile
@@ -12,7 +12,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: search-engine-db
+          name: conxa-db
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
@@ -31,7 +31,7 @@ services:
     healthCheckPath: /health
 
   - type: web
-    name: search-engine-web
+    name: conxa-web
     runtime: docker
     plan: free
     dockerfilePath: ./apps/web/Dockerfile
@@ -40,5 +40,5 @@ services:
       - key: NEXT_PUBLIC_API_BASE_URL
         fromService:
           type: web
-          name: search-engine-api
+          name: conxa-api
           envVarKey: RENDER_EXTERNAL_URL

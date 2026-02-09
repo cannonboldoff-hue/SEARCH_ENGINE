@@ -15,7 +15,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Search Engine API",
+    title="CONXA API",
     description="Trust-weighted, AI-structured search for people by experience.",
     version="0.1.0",
     lifespan=lifespan,

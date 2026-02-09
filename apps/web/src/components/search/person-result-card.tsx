@@ -25,7 +25,7 @@ export function PersonResultCard({ person, searchId, index = 0 }: PersonResultCa
         <div className="flex items-center gap-3 min-w-0">
           <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
             <span className="text-xs font-medium text-muted-foreground">
-              {(person.display_name || "A").charAt(0).toUpperCase()}
+              {(person.name || "A").charAt(0).toUpperCase()}
             </span>
           </div>
           <div className="min-w-0">

@@ -10,7 +10,7 @@ _env_file = Path(__file__).resolve().parent.parent.parent / ".env"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
 
-    database_url: str = "postgresql://localhost/search_engine"
+    database_url: str = "postgresql://localhost/conxa"
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 days

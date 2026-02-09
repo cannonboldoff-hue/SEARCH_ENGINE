@@ -46,7 +46,7 @@ export function AppNav() {
           href="/home"
           className="font-semibold text-sm text-foreground transition-colors flex items-center gap-2 flex-shrink-0"
         >
-          Cipher
+          CONXA
         </Link>
 
         {isDiscover && (

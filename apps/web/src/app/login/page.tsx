@@ -53,7 +53,7 @@ export default function LoginPage() {
 
   return (
     <AuthLayout
-      title="Cipher"
+      title="CONXA"
       subtitle="Find people by what they've actually done. Trust-weighted, credit-governed search."
     >
       <motion.div
