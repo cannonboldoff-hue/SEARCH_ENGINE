@@ -58,7 +58,7 @@ def _search_expired(search_rec: Search) -> bool:
 
 
 OVERFETCH_CARDS = 50
-TOP_PEOPLE = 20
+TOP_PEOPLE = 5
 MATCHED_CARDS_PER_PERSON = 3
 
 
