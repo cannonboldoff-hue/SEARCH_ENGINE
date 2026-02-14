@@ -35,6 +35,22 @@ class DraftSetV1Response(BaseModel):
     card_families: list[CardFamilyV1Response]
 
 
+class FillFromTextRequest(BaseModel):
+    """Request for fill-missing-from-text: rewrite + fill only missing fields. Optionally persist to DB."""
+
+    raw_text: str
+    card_type: str = "parent"  # "parent" | "child"
+    current_card: dict = {}  # current form/card state (frontend shape)
+    card_id: Optional[str] = None  # if set, merge and PATCH this parent card (persist to DB)
+    child_id: Optional[str] = None  # if set, merge and PATCH this child card (persist to DB)
+
+
+class FillFromTextResponse(BaseModel):
+    """Response: only the fields the LLM filled (merge into form on frontend)."""
+
+    filled: dict = {}  # key -> value for fields that were extracted
+
+
 class CommitDraftSetRequest(BaseModel):
     """Optional body for commit: approve only selected card ids, or all if omitted."""
 
@@ -133,6 +149,7 @@ class ExperienceCardChildResponse(BaseModel):
     """Response DTO for ExperienceCardChild."""
 
     id: str
+    relation_type: Optional[str] = None
     title: str = ""
     context: str = ""
     tags: list[str] = []

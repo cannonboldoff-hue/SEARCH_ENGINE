@@ -207,6 +207,7 @@ export type ExperienceCardChildPatch = {
 /** Response DTO for child cards (draft-v1 compatible). Matches backend `ExperienceCardChildResponse`. */
 export type ExperienceCardChild = {
   id: string;
+  relation_type?: string | null;
   title: string;
   context: string;
   tags: string[];

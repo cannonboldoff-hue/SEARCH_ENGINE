@@ -26,30 +26,132 @@ import type {
   ExperienceCardChild,
 } from "@/types";
 
+type DetailRow = {
+  label: string;
+  value: string | number | boolean | null | undefined;
+};
+
+function detailValueToText(value: DetailRow["value"]): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function DetailGrid({ rows, columns = 2 }: { rows: DetailRow[]; columns?: 1 | 2 }) {
+  const visibleRows = rows
+    .map((row) => ({ ...row, text: detailValueToText(row.value) }))
+    .filter((row) => row.text);
+
+  if (visibleRows.length === 0) return null;
+
+  return (
+    <dl className={`grid gap-3 ${columns === 2 ? "sm:grid-cols-2" : ""}`}>
+      {visibleRows.map((row) => (
+        <div key={row.label} className="space-y-1">
+          <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{row.label}</dt>
+          <dd className="text-sm text-foreground whitespace-pre-wrap break-words">{row.text}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function ExperienceCardDetails({ card }: { card: ExperienceCard }) {
+  const rows: DetailRow[] = [
+    { label: "Title", value: card.title },
+    { label: "Normalized role", value: card.normalized_role },
+    { label: "Domain", value: card.domain },
+    { label: "Sub domain", value: card.sub_domain },
+    { label: "Company name", value: card.company_name },
+    { label: "Company type", value: card.company_type },
+    { label: "Employment type", value: card.employment_type },
+    { label: "Location", value: card.location },
+    { label: "Start date", value: card.start_date },
+    { label: "End date", value: card.end_date },
+    { label: "Current role", value: card.is_current },
+    { label: "Summary", value: card.summary },
+    { label: "Intent primary", value: card.intent_primary },
+    {
+      label: "Intent secondary",
+      value:
+        card.intent_secondary && card.intent_secondary.length > 0
+          ? card.intent_secondary.join(", ")
+          : null,
+    },
+    { label: "Seniority", value: card.seniority_level },
+    { label: "Confidence score", value: card.confidence_score },
+    { label: "Visible in search", value: card.experience_card_visibility },
+    { label: "Created at", value: card.created_at },
+    { label: "Updated at", value: card.updated_at },
+  ];
+
+  return <DetailGrid rows={rows} />;
+}
+
+function ExperienceCardChildDetails({ child }: { child: ExperienceCardChild }) {
+  const topicLabels =
+    child.topics && child.topics.length > 0
+      ? child.topics
+          .map((topic) => topic?.label)
+          .filter((label): label is string => !!label && label.trim().length > 0)
+      : [];
+
+  const rows: DetailRow[] = [
+    { label: "Relation type", value: child.relation_type },
+    { label: "Title", value: child.title },
+    { label: "Headline", value: child.headline },
+    { label: "Summary", value: child.summary },
+    { label: "Time range", value: child.time_range },
+    { label: "Role title", value: child.role_title },
+    { label: "Company", value: child.company },
+    { label: "Location", value: child.location },
+    { label: "Tags", value: child.tags?.length ? child.tags.join(", ") : null },
+    { label: "Topics", value: topicLabels.length ? topicLabels.join(", ") : null },
+  ];
+
+  return <DetailGrid rows={rows} />;
+}
+
 function BioSection({ bio }: { bio: NonNullable<PersonPublicProfile["bio"]> }) {
-  const parts: string[] = [];
-  if (bio.first_name || bio.last_name) {
-    parts.push([bio.first_name, bio.last_name].filter(Boolean).join(" "));
-  }
-  if (bio.current_city) parts.push(bio.current_city);
-  if (bio.school) parts.push(`School: ${bio.school}`);
-  if (bio.college) parts.push(`College: ${bio.college}`);
-  if (bio.current_company) parts.push(`Current: ${bio.current_company}`);
-  if (bio.past_companies?.length) {
-    parts.push(
-      "Past: " +
-        bio.past_companies.map((p) => p.company_name + (p.role ? ` (${p.role})` : "")).join(", ")
-    );
-  }
-  const text = parts.join(" · ");
-  if (!text.trim()) return null;
+  const pastCompanies = bio.past_companies?.length
+    ? bio.past_companies
+        .map((company) =>
+          [
+            company.company_name,
+            company.role ? `Role: ${company.role}` : null,
+            company.years ? `Years: ${company.years}` : null,
+          ]
+            .filter(Boolean)
+            .join(" | ")
+        )
+        .join("\n")
+    : null;
+
+  const rows: DetailRow[] = [
+    { label: "First name", value: bio.first_name },
+    { label: "Last name", value: bio.last_name },
+    { label: "Date of birth", value: bio.date_of_birth },
+    { label: "Current city", value: bio.current_city },
+    { label: "School", value: bio.school },
+    { label: "College", value: bio.college },
+    { label: "Current company", value: bio.current_company },
+    { label: "Past companies", value: pastCompanies },
+  ];
+
+  const hasAnyValue = rows.some((row) => detailValueToText(row.value));
+  if (!hasAnyValue) return null;
+
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Bio</CardTitle>
       </CardHeader>
-      <CardContent className="text-sm text-muted-foreground whitespace-pre-wrap">
-        {text}
+      <CardContent>
+        <DetailGrid rows={rows} />
       </CardContent>
     </Card>
   );
@@ -65,7 +167,7 @@ function CardFamilyBlock({
   index: number;
 }) {
   const title = parent.title || parent.company_name || parent.normalized_role || "Untitled";
-  const meta = [parent.company_name, parent.normalized_role, parent.location, parent.start_date, parent.end_date]
+  const meta = [parent.company_name, parent.normalized_role, parent.location]
     .filter(Boolean)
     .join(" / ");
 
@@ -76,24 +178,18 @@ function CardFamilyBlock({
       transition={{ delay: index * 0.04, duration: 0.25 }}
       className="space-y-2"
     >
-      {/* Parent card */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium flex items-center gap-1.5">
             <ChevronRight className="h-4 w-4 text-muted-foreground" />
             {title}
           </CardTitle>
-          {meta && (
-            <p className="text-xs text-muted-foreground pl-6">{meta}</p>
-          )}
+          {meta && <p className="text-xs text-muted-foreground pl-6">{meta}</p>}
         </CardHeader>
-        {parent.summary && (
-          <CardContent className="pt-0 text-sm text-muted-foreground">
-            {parent.summary}
-          </CardContent>
-        )}
+        <CardContent className="pt-0">
+          <ExperienceCardDetails card={parent} />
+        </CardContent>
       </Card>
-      {/* Child cards (indented hierarchy) */}
       {children.length > 0 && (
         <ul className="space-y-2 pl-4 border-l-2 border-border ml-2">
           {children.map((child) => (
@@ -101,21 +197,12 @@ function CardFamilyBlock({
               <Card className="bg-muted/30">
                 <CardHeader className="py-2 px-3">
                   <CardTitle className="text-xs font-medium">
-                    {child.title || child.headline || "—"}
+                    {child.title || child.headline || "Child card"}
                   </CardTitle>
-                  {(child.summary || child.context) && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {child.summary || child.context}
-                    </p>
-                  )}
-                  {(child.time_range || child.company || child.location) && (
-                    <p className="text-xs text-muted-foreground/80 mt-0.5">
-                      {[child.time_range, child.company, child.location]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
-                  )}
                 </CardHeader>
+                <CardContent className="px-3 pb-3 pt-0">
+                  <ExperienceCardChildDetails child={child} />
+                </CardContent>
               </Card>
             </li>
           ))}
@@ -249,14 +336,9 @@ export default function PersonProfilePage() {
                       <CardTitle className="text-sm font-medium">
                         {card.title || card.company_name || "Untitled"}
                       </CardTitle>
-                      <p className="text-xs text-muted-foreground">
-                        {[card.company_name, card.normalized_role, card.location, card.start_date, card.end_date]
-                          .filter(Boolean)
-                          .join(" / ")}
-                      </p>
                     </CardHeader>
-                    <CardContent className="text-sm">
-                      {card.summary && <p className="text-muted-foreground">{card.summary}</p>}
+                    <CardContent className="pt-0">
+                      <ExperienceCardDetails card={card} />
                     </CardContent>
                   </Card>
                 </motion.li>

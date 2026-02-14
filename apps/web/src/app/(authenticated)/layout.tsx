@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
+import { getPostAuthPath, isPathAllowedForStep } from "@/lib/auth-flow";
 import { SearchProvider } from "@/contexts/search-context";
 import { AppNav } from "@/components/app-nav";
 
@@ -11,18 +12,24 @@ export default function AuthenticatedLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { token } = useAuth();
+  const { isAuthenticated, onboardingStep, isAuthLoading } = useAuth();
   const router = useRouter();
-  const [hasToken, setHasToken] = useState<boolean | null>(null);
+  const pathname = usePathname();
+  const requiredPath = getPostAuthPath(onboardingStep);
+  const routeAllowed = isPathAllowedForStep(pathname, onboardingStep);
 
   useEffect(() => {
-    const stored = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    const resolved = Boolean(token || stored);
-    setHasToken(resolved);
-    if (!resolved) router.replace("/login");
-  }, [token, router]);
+    if (isAuthLoading) return;
+    if (!isAuthenticated) {
+      router.replace("/login");
+      return;
+    }
+    if (onboardingStep != null && !routeAllowed) {
+      router.replace(requiredPath);
+    }
+  }, [isAuthLoading, isAuthenticated, onboardingStep, requiredPath, routeAllowed, router]);
 
-  if (hasToken !== true) {
+  if (isAuthLoading || !isAuthenticated || !routeAllowed) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3">
         <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />

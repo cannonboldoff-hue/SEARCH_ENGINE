@@ -18,6 +18,7 @@ import { api, type ApiOptions } from "@/lib/api";
 import { bioSchema, bioFormDefaultValues, type BioForm } from "@/lib/bio-schema";
 import type { PatchVisibilityRequest, VisibilitySettingsResponse } from "@/types";
 import { useBio, useVisibility, BIO_QUERY_KEY, VISIBILITY_QUERY_KEY } from "@/hooks";
+import { useAuth } from "@/contexts/auth-context";
 
 type PutBioBody = {
   first_name?: string;
@@ -36,6 +37,7 @@ type PutBioBody = {
 
 export default function OnboardingBioPage() {
   const router = useRouter();
+  const { setOnboardingStep } = useAuth();
   const queryClient = useQueryClient();
   const [serverError, setServerError] = useState<string | null>(null);
   const [visibilityMode, setVisibilityMode] = useState<VisibilityMode>("hide_contact");
@@ -162,7 +164,8 @@ export default function OnboardingBioPage() {
       });
       queryClient.invalidateQueries({ queryKey: BIO_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: VISIBILITY_QUERY_KEY });
-      router.push("/home");
+      setOnboardingStep("builder");
+      router.push("/builder");
     } catch (e) {
       setServerError(e instanceof Error ? e.message : "Failed to save");
     }
@@ -344,10 +347,10 @@ export default function OnboardingBioPage() {
                 size="lg"
                 disabled={putBio.isPending || patchVisibility.isPending}
               >
-                {putBio.isPending || patchVisibility.isPending ? "Saving..." : "Save & continue to CONXA"}
+                {putBio.isPending || patchVisibility.isPending ? "Saving..." : "Save & continue to Experience Builder"}
               </Button>
               <p className="text-xs text-muted-foreground self-center leading-relaxed">
-                Next: add experience in the builder, or start searching.
+                Next: you'll add your experience in the builder.
               </p>
             </div>
           </form>

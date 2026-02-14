@@ -20,6 +20,7 @@ from .experience_card import (
     PROMPT_REWRITE,
     PROMPT_EXTRACT_ALL_CARDS,
     PROMPT_VALIDATE_ALL_CARDS,
+    PROMPT_FILL_MISSING_FIELDS,
     fill_prompt,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "PROMPT_REWRITE",
     "PROMPT_EXTRACT_ALL_CARDS",
     "PROMPT_VALIDATE_ALL_CARDS",
+    "PROMPT_FILL_MISSING_FIELDS",
     "fill_prompt",
 ]

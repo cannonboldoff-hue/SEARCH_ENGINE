@@ -24,6 +24,9 @@ interface DraftCardFamilyProps {
   onSubmitEditChild: () => void;
   onDeleteParentCard: (id: string) => void;
   onDeleteChildCard: (id: string) => void;
+  onUpdateParentFromMessyText?: (text: string) => Promise<void>;
+  onUpdateChildFromMessyText?: (text: string) => Promise<void>;
+  isUpdatingFromMessyText?: boolean;
   isCardSubmitting: boolean;
   isCardDeleting: boolean;
   isChildSubmitting: boolean;
@@ -44,6 +47,9 @@ export function DraftCardFamily({
   onSubmitEditChild,
   onDeleteParentCard,
   onDeleteChildCard,
+  onUpdateParentFromMessyText,
+  onUpdateChildFromMessyText,
+  isUpdatingFromMessyText = false,
   isCardSubmitting,
   isCardDeleting,
   isChildSubmitting,
@@ -54,6 +60,8 @@ export function DraftCardFamily({
   const parentId = String(parent?.id ?? (parent as Record<string, unknown>)?.card_id ?? "").trim();
   const tags = parent ? v1CardTopics(parent) : [];
   const isEditingParent = editingKind === "parent" && editingCardId === parentId;
+  const parentRelationType = (parent?.relation_type ?? "").toString().trim();
+  const relationDisplay = (rt: string) => (rt ? String(rt).replace(/_/g, " ").toUpperCase() : "");
 
   return (
     <motion.div
@@ -76,13 +84,20 @@ export function DraftCardFamily({
         )}
       >
         <div className="p-4 sm:p-5 min-w-0">
+          {parentRelationType && (
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+              {relationDisplay(parentRelationType)}
+            </p>
+          )}
           <div className="flex items-start justify-between gap-2 w-full min-w-0">
             <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
               <span className="text-muted-foreground flex-shrink-0">
                 <CardTypeIcon tags={tags} title={(parent as { title?: string })?.title ?? parent?.headline ?? null} />
               </span>
               <span className="font-semibold text-sm truncate text-foreground">
-                {(parent as { title?: string })?.title || parent?.headline || "Untitled"}
+                {isEditingParent
+                  ? "Editing experience"
+                  : (parent as { title?: string })?.title || parent?.headline || "Untitled"}
               </span>
               {children.length > 0 && (
                 <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
@@ -91,15 +106,7 @@ export function DraftCardFamily({
               )}
             </span>
             {isEditingParent ? (
-              <ParentCardEditForm
-                form={editForm}
-                onChange={onEditFormChange}
-                onSubmit={onSubmitEditCard}
-                isSubmitting={isCardSubmitting}
-                isDeleting={isCardDeleting}
-                checkboxIdPrefix="edit-parent"
-                showDeleteButton={false}
-              />
+              <span className="flex-shrink-0" />
             ) : (
               <div className="relative z-10 flex gap-0.5 flex-shrink-0" style={{ pointerEvents: "auto" }}>
                 <Button
@@ -132,7 +139,19 @@ export function DraftCardFamily({
               </div>
             )}
           </div>
-          {!isEditingParent && (
+          {isEditingParent ? (
+            <ParentCardEditForm
+              form={editForm}
+              onChange={onEditFormChange}
+              onSubmit={onSubmitEditCard}
+              isSubmitting={isCardSubmitting}
+              isDeleting={isCardDeleting}
+              checkboxIdPrefix="edit-parent"
+              showDeleteButton={false}
+              onUpdateFromMessyText={onUpdateParentFromMessyText}
+              isUpdatingFromMessyText={isUpdatingFromMessyText}
+            />
+          ) : (
             <>
               {tags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-2">
@@ -164,7 +183,7 @@ export function DraftCardFamily({
           <ul className="relative space-y-0">
             {children.map((child, childIdx) => {
               const childId = child?.id ?? "";
-              const childRelation = child?.relation_type ?? "";
+              const childRelationType = (child?.relation_type ?? "").toString().trim();
               const childTitle = (child as { title?: string })?.title ?? child?.headline ?? "Untitled";
               const isEditingThisChild = editingKind === "child" && editingCardId === childId;
 
@@ -191,22 +210,17 @@ export function DraftCardFamily({
                   <div className="ml-5 rounded-lg border border-border/40 bg-accent/30 px-3 py-2.5 transition-colors hover:bg-accent/50">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        {childRelation && (
-                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mr-2">
-                            {String(childRelation).replace(/_/g, " ")}
-                          </span>
+                        {childRelationType && (
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
+                            {relationDisplay(childRelationType)}
+                          </p>
                         )}
-                        <p className="font-medium text-sm text-foreground">{childTitle}</p>
+                        <p className="font-medium text-sm text-foreground">
+                          {isEditingThisChild ? "Editing detail" : childTitle}
+                        </p>
                       </div>
                       {isEditingThisChild ? (
-                        <ChildCardEditForm
-                          form={childEditForm}
-                          onChange={onChildEditFormChange}
-                          onSubmit={onSubmitEditChild}
-                          isSubmitting={isChildSubmitting}
-                          isDeleting={isChildDeleting}
-                          showDeleteButton={false}
-                        />
+                        <span className="flex-shrink-0" />
                       ) : (
                         <div className="flex gap-0.5 flex-shrink-0">
                           <Button
@@ -229,7 +243,20 @@ export function DraftCardFamily({
                         </div>
                       )}
                     </div>
-                    {!isEditingThisChild && <V1CardDetails card={child as any} compact />}
+                    {isEditingThisChild ? (
+                      <ChildCardEditForm
+                        form={childEditForm}
+                        onChange={onChildEditFormChange}
+                        onSubmit={onSubmitEditChild}
+                        isSubmitting={isChildSubmitting}
+                        isDeleting={isChildDeleting}
+                        showDeleteButton={false}
+                        onUpdateFromMessyText={onUpdateChildFromMessyText}
+                        isUpdatingFromMessyText={isUpdatingFromMessyText}
+                      />
+                    ) : (
+                      <V1CardDetails card={child as any} compact />
+                    )}
                   </div>
                 </motion.li>
               );

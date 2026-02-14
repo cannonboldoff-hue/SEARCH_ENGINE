@@ -1,4 +1,5 @@
 import { API_BASE } from "./constants";
+import { AUTH_TOKEN_KEY } from "./auth-flow";
 
 function normalizeErrorDetail(detail: unknown): string | null {
   if (typeof detail === "string") return detail;
@@ -13,7 +14,7 @@ function normalizeErrorDetail(detail: unknown): string | null {
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("token");
+  return localStorage.getItem(AUTH_TOKEN_KEY);
 }
 
 export type ApiOptions = Omit<RequestInit, "body"> & { body?: unknown };

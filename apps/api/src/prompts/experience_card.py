@@ -273,6 +273,37 @@ OUTPUT (JSON only)
 """
 
 # -----------------------------------------------------------------------------
+# 4. Fill missing fields only (no full extract; for edit-form "Update from messy text")
+# -----------------------------------------------------------------------------
+
+PROMPT_FILL_MISSING_FIELDS = """You are a fill-missing-fields extractor. You do NOT create full cards.
+
+Input:
+1) Cleaned text (user-provided snippet).
+2) Current card as JSON. Some fields are empty ("" or null). Only those are "missing".
+
+Task: From the cleaned text, extract values ONLY for fields that are currently missing or empty in the current card. Do NOT overwrite or change fields that already have a value.
+
+Allowed keys for this card type (return ONLY these keys when you have a value; omit any key you cannot infer):
+{{ALLOWED_KEYS}}
+
+Rules:
+- Return a single JSON object. No markdown, no commentary, no array wrapper.
+- Include only keys you can fill from the text. Omit keys that are already set in current_card or that you cannot infer.
+- For dates use YYYY-MM-DD or YYYY-MM when possible.
+- For intent_secondary use a comma-separated string or array of strings.
+- For tags use a comma-separated string.
+
+Current card (missing/empty fields should be filled from text below):
+{{CURRENT_CARD_JSON}}
+
+Cleaned text:
+{{CLEANED_TEXT}}
+
+Return valid JSON only:
+"""
+
+# -----------------------------------------------------------------------------
 # Helper
 # -----------------------------------------------------------------------------
 
@@ -284,6 +315,9 @@ def fill_prompt(
     parent_and_children_json: str | None = None,
     raw_text_original: str | None = None,
     raw_text_cleaned: str | None = None,
+    cleaned_text: str | None = None,
+    current_card_json: str | None = None,
+    allowed_keys: str | None = None,
 ) -> str:
     out = template
     out = out.replace("{{INTENT_ENUM}}", INTENT_ENUM)
@@ -301,5 +335,11 @@ def fill_prompt(
         out = out.replace("{{RAW_TEXT_ORIGINAL}}", raw_text_original)
     if raw_text_cleaned is not None:
         out = out.replace("{{RAW_TEXT_CLEANED}}", raw_text_cleaned)
+    if cleaned_text is not None:
+        out = out.replace("{{CLEANED_TEXT}}", cleaned_text)
+    if current_card_json is not None:
+        out = out.replace("{{CURRENT_CARD_JSON}}", current_card_json)
+    if allowed_keys is not None:
+        out = out.replace("{{ALLOWED_KEYS}}", allowed_keys)
 
     return out

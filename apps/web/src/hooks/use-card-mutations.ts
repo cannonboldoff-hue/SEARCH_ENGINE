@@ -57,10 +57,11 @@ export function useCardMutations(
       api<ExperienceCard>(`/experience-cards/${cardId}`, { method: "PATCH", body }),
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
       setEditingSavedCardId(null);
       const timeRange =
         updated.start_date || updated.end_date
-          ? [updated.start_date, updated.end_date].filter(Boolean).join(" – ")
+          ? [updated.start_date, updated.end_date].filter(Boolean).join(" - ")
           : updated.is_current
             ? "Ongoing"
             : null;
@@ -76,13 +77,18 @@ export function useCardMutations(
                   headline: updated.title ?? fam.parent.headline,
                   context: updated.summary ?? undefined,
                   summary: updated.summary ?? fam.parent.summary,
+                  normalized_role: updated.normalized_role ?? undefined,
                   role_title: updated.normalized_role ?? undefined,
+                  company_name: updated.company_name ?? undefined,
                   company: updated.company_name ?? undefined,
                   location: updated.location ?? undefined,
                   domain: updated.domain ?? undefined,
                   sub_domain: updated.sub_domain ?? undefined,
                   company_type: updated.company_type ?? undefined,
                   employment_type: updated.employment_type ?? undefined,
+                  start_date: updated.start_date ?? undefined,
+                  end_date: updated.end_date ?? undefined,
+                  is_current: updated.is_current ?? undefined,
                   intent_primary: updated.intent_primary ?? undefined,
                   intent_secondary: updated.intent_secondary ?? [],
                   seniority_level: updated.seniority_level ?? undefined,

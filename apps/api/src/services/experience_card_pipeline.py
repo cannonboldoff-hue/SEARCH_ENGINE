@@ -12,12 +12,13 @@ Key improvements:
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone, date
 from typing import Optional, Any
 from enum import Enum
 
-from pydantic import BaseModel, Field, validator, ValidationError
+from pydantic import BaseModel, Field, validator, root_validator, ValidationError
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -35,6 +36,7 @@ from src.prompts.experience_card import (
     PROMPT_REWRITE,
     PROMPT_EXTRACT_ALL_CARDS,
     PROMPT_VALIDATE_ALL_CARDS,
+    PROMPT_FILL_MISSING_FIELDS,
     fill_prompt,
 )
 from src.services.experience_card import _experience_card_search_document
@@ -84,15 +86,82 @@ class IndexInfo(BaseModel):
     search_phrases: list[str] = Field(default_factory=list)
 
 
+def _normalize_roles(raw: Any) -> list[dict]:
+    """Accept role items as dicts or strings; return RoleInfo-compatible dicts."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("title") or "").strip()
+            seniority = str(item.get("seniority") or "").strip() or None
+            if label or seniority:
+                out.append({"label": label or None, "seniority": seniority})
+        elif isinstance(item, str) and item.strip():
+            out.append({"label": item.strip(), "seniority": None})
+    return out
+
+
+def _normalize_topics(raw: Any) -> list[dict]:
+    """Accept topic items as dicts or strings; return TopicInfo-compatible dicts."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("name") or item.get("text") or "").strip()
+            if label:
+                out.append({"label": label})
+        elif isinstance(item, str) and item.strip():
+            out.append({"label": item.strip()})
+    return out
+
+
+def _normalize_entities(raw: Any) -> list[dict]:
+    """Accept entity items as dicts or strings; return EntityInfo-compatible dicts."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("label") or item.get("text") or "").strip()
+            etype = str(item.get("type") or "organization").strip().lower()
+            if name:
+                out.append({"type": etype or "organization", "name": name})
+        elif isinstance(item, str) and item.strip():
+            out.append({"type": "organization", "name": item.strip()})
+    return out
+
+
+def _normalize_event_like_list(raw: Any) -> list[dict]:
+    """Accept action/outcome/evidence items as dicts or strings."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, dict):
+            out.append(item)
+        elif isinstance(item, str) and item.strip():
+            out.append({"text": item.strip()})
+    return out
+
+
 class V1Card(BaseModel):
     """Base card structure returned by LLM."""
     id: Optional[str] = None
     headline: Optional[str] = None
     title: Optional[str] = None
+    label: Optional[str] = None
     summary: Optional[str] = None
     raw_text: Optional[str] = None
     time: Optional[TimeInfo | str] = None
     location: Optional[LocationInfo | str] = None
+    time_text: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    is_current: Optional[bool] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
     roles: list[RoleInfo] = Field(default_factory=list)
     topics: list[TopicInfo] = Field(default_factory=list)
     entities: list[EntityInfo] = Field(default_factory=list)
@@ -101,10 +170,22 @@ class V1Card(BaseModel):
     evidence: list[dict] = Field(default_factory=list)
     tooling: Optional[Any] = None
     company: Optional[str] = None
+    company_name: Optional[str] = None
     organization: Optional[str] = None
     team: Optional[str] = None
+    normalized_role: Optional[str] = None
+    seniority_level: Optional[str] = None
+    domain: Optional[str] = None
+    sub_domain: Optional[str] = None
+    company_type: Optional[str] = None
+    employment_type: Optional[str] = None
     index: Optional[IndexInfo] = None
+    search_phrases: list[str] = Field(default_factory=list)
+    search_document: Optional[str] = None
     intent: Optional[str] = None
+    intent_primary: Optional[str] = None
+    intent_secondary: list[str] = Field(default_factory=list)
+    confidence_score: Optional[float] = None
     
     # Metadata fields
     person_id: Optional[str] = None
@@ -115,6 +196,68 @@ class V1Card(BaseModel):
     depth: Optional[int] = None
     relation_type: Optional[str] = None
     child_type: Optional[str] = None
+
+    @root_validator(pre=True)
+    def normalize_prompt_style_fields(cls, values):
+        """Accept both prompt-style parent keys and legacy V1 keys."""
+        if not isinstance(values, dict):
+            return values
+
+        data = dict(values)
+
+        # Parent intent fields from prompt schema.
+        if not data.get("intent") and data.get("intent_primary"):
+            data["intent"] = data.get("intent_primary")
+
+        # Parent company/role fields from prompt schema.
+        if not data.get("company") and data.get("company_name"):
+            data["company"] = data.get("company_name")
+
+        if not data.get("roles") and data.get("normalized_role"):
+            data["roles"] = [{
+                "label": data.get("normalized_role"),
+                "seniority": data.get("seniority_level"),
+            }]
+
+        # Convert parent date fields into the shared time container.
+        if not data.get("time"):
+            start = data.get("start_date")
+            end = data.get("end_date")
+            text = data.get("time_text")
+            ongoing = data.get("is_current")
+            if start or end or text or isinstance(ongoing, bool):
+                data["time"] = {
+                    "start": start,
+                    "end": end,
+                    "text": text,
+                    "ongoing": ongoing if isinstance(ongoing, bool) else None,
+                }
+
+        # Parent search_phrases may be provided at top-level.
+        if not data.get("index") and isinstance(data.get("search_phrases"), list):
+            data["index"] = {"search_phrases": data.get("search_phrases", [])}
+
+        if isinstance(data.get("intent_secondary"), str):
+            data["intent_secondary"] = [s.strip() for s in data["intent_secondary"].split(",") if s.strip()]
+
+        if isinstance(data.get("search_phrases"), str):
+            data["search_phrases"] = [s.strip() for s in data["search_phrases"].split(",") if s.strip()]
+
+        # Coerce frequently malformed LLM list fields into schema-compatible objects.
+        if data.get("roles") is not None:
+            data["roles"] = _normalize_roles(data.get("roles"))
+
+        if data.get("topics") is not None:
+            data["topics"] = _normalize_topics(data.get("topics"))
+
+        if data.get("entities") is not None:
+            data["entities"] = _normalize_entities(data.get("entities"))
+
+        for key in ("actions", "outcomes", "evidence"):
+            if data.get(key) is not None:
+                data[key] = _normalize_event_like_list(data.get(key))
+
+        return data
 
     @validator('time', pre=True)
     def normalize_time(cls, v):
@@ -239,6 +382,36 @@ def _normalize_child_dict_for_v1_card(child_dict: dict) -> dict:
             out["summary"] = value.get("summary")
         if not out.get("raw_text") and value.get("raw_text"):
             out["raw_text"] = value.get("raw_text")
+        if not out.get("time") and isinstance(value.get("time"), dict):
+            out["time"] = value.get("time")
+        if not out.get("location") and isinstance(value.get("location"), dict):
+            out["location"] = value.get("location")
+        if not out.get("roles") and isinstance(value.get("roles"), list):
+            out["roles"] = value.get("roles")
+        if not out.get("actions") and isinstance(value.get("actions"), list):
+            out["actions"] = value.get("actions")
+        if not out.get("topics") and isinstance(value.get("topics"), list):
+            out["topics"] = value.get("topics")
+        if not out.get("entities") and isinstance(value.get("entities"), list):
+            out["entities"] = value.get("entities")
+        if not out.get("tooling") and value.get("tooling") is not None:
+            out["tooling"] = value.get("tooling")
+        if not out.get("outcomes") and isinstance(value.get("outcomes"), list):
+            out["outcomes"] = value.get("outcomes")
+        if not out.get("evidence") and isinstance(value.get("evidence"), list):
+            out["evidence"] = value.get("evidence")
+        if not out.get("company") and value.get("company"):
+            out["company"] = value.get("company")
+        if not out.get("team") and value.get("team"):
+            out["team"] = value.get("team")
+        if not out.get("intent") and value.get("intent"):
+            out["intent"] = value.get("intent")
+        if not out.get("relation_type") and value.get("relation_type"):
+            out["relation_type"] = value.get("relation_type")
+        if out.get("depth") is None and value.get("depth") is not None:
+            out["depth"] = value.get("depth")
+        if not out.get("index") and isinstance(value.get("index"), dict):
+            out["index"] = value.get("index")
     if label and not out.get("headline") and not out.get("title"):
         out["headline"] = label
         out["title"] = label
@@ -395,39 +568,198 @@ def inject_metadata_into_family(
 # FIELD EXTRACTION & NORMALIZATION
 # =============================================================================
 
+_MONTH_LOOKUP = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+
+
+def _month_name_to_number(text: str) -> Optional[int]:
+    key = (text or "").strip().lower()
+    return _MONTH_LOOKUP.get(key)
+
+
 def parse_date_field(value: Optional[str]) -> Optional[date]:
-    """Parse ISO date string, returning None on failure."""
+    """Parse common date strings into a date. Returns None on failure."""
     if not value:
         return None
-    
-    text = value.strip()
-    
-    # Handle YYYY-MM format
-    if len(text) == 7 and text[4] == "-":
-        text = f"{text}-01"
-    
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Normalize common separators
+    normalized = (
+        text.replace("/", "-")
+        .replace(".", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+        .strip()
+    )
+    normalized = re.sub(r"[,\s]+", " ", normalized).strip()
+
+    # Handle ISO YYYY-MM or YYYY-MM-DD
+    if re.fullmatch(r"\d{4}-\d{2}", normalized):
+        normalized = f"{normalized}-01"
+    elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized):
+        pass
+    else:
+        # Month name + year (e.g., "Jan 2024" or "January 2024")
+        match = re.fullmatch(r"([A-Za-z]{3,9})\s+(\d{4})", normalized)
+        if match:
+            month = _month_name_to_number(match.group(1))
+            if month:
+                return date(int(match.group(2)), month, 1)
+
+        # Year + month name (e.g., "2024 Jan")
+        match = re.fullmatch(r"(\d{4})\s+([A-Za-z]{3,9})", normalized)
+        if match:
+            month = _month_name_to_number(match.group(2))
+            if month:
+                return date(int(match.group(1)), month, 1)
+
+        # Month name - year (e.g., "Apr-2024")
+        match = re.fullmatch(r"([A-Za-z]{3,9})-(\d{4})", normalized)
+        if match:
+            month = _month_name_to_number(match.group(1))
+            if month:
+                return date(int(match.group(2)), month, 1)
+
+        # Year - month name (e.g., "2024-Apr")
+        match = re.fullmatch(r"(\d{4})-([A-Za-z]{3,9})", normalized)
+        if match:
+            month = _month_name_to_number(match.group(2))
+            if month:
+                return date(int(match.group(1)), month, 1)
+
+        # Numeric month/year (e.g., "01-2024")
+        match = re.fullmatch(r"(\d{1,2})-(\d{4})", normalized)
+        if match:
+            month = int(match.group(1))
+            if 1 <= month <= 12:
+                return date(int(match.group(2)), month, 1)
+
+        # Year-only fallback (e.g., "2024")
+        if re.fullmatch(r"\d{4}", normalized):
+            return date(int(normalized), 1, 1)
+
     try:
-        return date.fromisoformat(text)
+        return date.fromisoformat(normalized)
     except ValueError as e:
         logger.warning(f"Failed to parse date '{value}': {e}")
         return None
 
 
+def _extract_dates_from_text(text: str) -> tuple[Optional[date], Optional[date]]:
+    """Best-effort extract up to two dates from a free-form time range string."""
+    if not text:
+        return None, None
+    haystack = str(text).replace("–", "-").replace("—", "-")
+
+    # Example: "2024 Apr-Dec" (single year shared by both months)
+    shared_year_month_range = re.search(
+        r"\b(\d{4})\s+([A-Za-z]{3,9})\s*-\s*([A-Za-z]{3,9})\b",
+        haystack,
+        re.IGNORECASE,
+    )
+    if shared_year_month_range:
+        year, start_mon, end_mon = shared_year_month_range.groups()
+        start_date = parse_date_field(f"{year} {start_mon}")
+        end_date = parse_date_field(f"{year} {end_mon}")
+        if start_date or end_date:
+            return start_date, end_date
+
+    pattern = re.compile(
+        r"(\d{4}-\d{2}-\d{2}|\d{4}-\d{2}|"
+        r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{4}|"
+        r"\d{4}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|"
+        r"\d{1,2}[/-]\d{4})",
+        re.IGNORECASE,
+    )
+    matches = pattern.findall(haystack)
+    parsed = [parse_date_field(m) for m in matches if m]
+    parsed = [d for d in parsed if d is not None]
+    if not parsed:
+        return None, None
+    if len(parsed) == 1:
+        return parsed[0], None
+    return parsed[0], parsed[1]
+
+
 def extract_time_fields(card: V1Card) -> tuple[Optional[str], Optional[date], Optional[date], Optional[bool]]:
     """Extract time fields from card."""
     time_obj = card.time
-    
+
+    # Prefer explicit prompt-style parent fields when available.
+    explicit_start = parse_date_field(card.start_date)
+    explicit_end = parse_date_field(card.end_date)
+    explicit_text = (card.time_text or "").strip() or None
+    explicit_ongoing = card.is_current if isinstance(card.is_current, bool) else None
+
     if isinstance(time_obj, str):
-        return time_obj, None, None, None
-    
+        start_date, end_date = _extract_dates_from_text(time_obj)
+        if start_date is None:
+            start_date = explicit_start
+        if end_date is None:
+            end_date = explicit_end
+        ongoing = explicit_ongoing
+        if ongoing is None and re.search(r"\b(present|current|ongoing|now)\b", time_obj, re.IGNORECASE):
+            ongoing = True
+        return time_obj, start_date, end_date, ongoing
+
     if not isinstance(time_obj, TimeInfo):
-        return None, None, None, None
-    
+        if (explicit_start is None or explicit_end is None) and explicit_text:
+            parsed_start, parsed_end = _extract_dates_from_text(explicit_text)
+            if explicit_start is None:
+                explicit_start = parsed_start
+            if explicit_end is None:
+                explicit_end = parsed_end
+        return explicit_text, explicit_start, explicit_end, explicit_ongoing
+
+    time_text = (time_obj.text or "").strip() or explicit_text
+    start_date = parse_date_field(time_obj.start)
+    end_date = parse_date_field(time_obj.end)
+    if start_date is None:
+        start_date = explicit_start
+    if end_date is None:
+        end_date = explicit_end
+    if (start_date is None or end_date is None) and time_text:
+        parsed_start, parsed_end = _extract_dates_from_text(time_text)
+        if start_date is None:
+            start_date = parsed_start
+        if end_date is None:
+            end_date = parsed_end
+    ongoing = time_obj.ongoing if isinstance(time_obj.ongoing, bool) else explicit_ongoing
+    if ongoing is None and time_text and re.search(r"\b(present|current|ongoing|now)\b", time_text, re.IGNORECASE):
+        ongoing = True
+
     return (
-        time_obj.text,
-        parse_date_field(time_obj.start),
-        parse_date_field(time_obj.end),
-        time_obj.ongoing,
+        time_text,
+        start_date,
+        end_date,
+        ongoing,
     )
 
 
@@ -446,7 +778,7 @@ def extract_location_fields(card: V1Card) -> tuple[Optional[str], Optional[str],
 
 def extract_company(card: V1Card) -> Optional[str]:
     """Extract company name from card."""
-    company = card.company or card.organization
+    company = card.company or card.company_name or card.organization
     
     if not company:
         # Check entities
@@ -474,22 +806,37 @@ def extract_team(card: V1Card) -> Optional[str]:
 
 def extract_role_info(card: V1Card) -> tuple[Optional[str], Optional[str]]:
     """Extract role title and seniority."""
-    if not card.roles:
-        return None, None
-    
-    first_role = card.roles[0]
-    title = first_role.label[:255].strip() if first_role.label else None
-    seniority = first_role.seniority[:255].strip() if first_role.seniority else None
-    
+    if card.roles:
+        first_role = card.roles[0]
+        title = first_role.label[:255].strip() if first_role.label else None
+        seniority = first_role.seniority[:255].strip() if first_role.seniority else None
+        if title or seniority:
+            return title, seniority
+
+    title = (card.normalized_role or "").strip()[:255] or None
+    seniority = (card.seniority_level or "").strip()[:255] or None
     return title, seniority
 
 
 def extract_search_phrases(card: V1Card) -> list[str]:
     """Extract search phrases from card index."""
-    if not card.index:
-        return []
-    
-    return [p.strip() for p in card.index.search_phrases if p.strip()][:50]
+    phrases: list[str] = []
+    if card.index and isinstance(card.index.search_phrases, list):
+        phrases.extend(card.index.search_phrases)
+    if isinstance(card.search_phrases, list):
+        phrases.extend(card.search_phrases)
+    seen: set[str] = set()
+    out: list[str] = []
+    for phrase in phrases:
+        p = str(phrase).strip()
+        key = p.lower()
+        if not p or key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+        if len(out) >= 50:
+            break
+    return out
 
 
 def normalize_card_title(card: V1Card, fallback_text: Optional[str] = None) -> str:
@@ -573,23 +920,23 @@ def card_to_experience_card_fields(
         "raw_text": raw_text,
         "title": title[:500],
         "normalized_role": role_title,
-        "domain": None,
-        "sub_domain": None,
+        "domain": (card.domain or "").strip()[:100] or None,
+        "sub_domain": (card.sub_domain or "").strip()[:100] or None,
         "company_name": company,
-        "company_type": None,
+        "company_type": (card.company_type or "").strip()[:100] or None,
         "start_date": start_date,
         "end_date": end_date,
         "is_current": is_ongoing if isinstance(is_ongoing, bool) else None,
         "location": location_text[:255] if location_text else None,
-        "employment_type": None,
+        "employment_type": (card.employment_type or "").strip()[:100] or None,
         "summary": summary,
-        "intent_primary": card.intent,
-        "intent_secondary": [],
+        "intent_primary": card.intent or card.intent_primary,
+        "intent_secondary": [s for s in card.intent_secondary if isinstance(s, str) and s.strip()][:20],
         "seniority_level": role_seniority,
-        "confidence_score": None,
+        "confidence_score": card.confidence_score,
         "experience_card_visibility": True,
         "search_phrases": search_phrases,
-        "search_document": search_document,
+        "search_document": (card.search_document or "").strip() or search_document,
     }
 
 
@@ -847,6 +1194,13 @@ def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> d
             "location": location_obj.get("text") if isinstance(location_obj, dict) else None,
         }
     else:
+        start_date = card.start_date.isoformat() if card.start_date else None
+        end_date = card.end_date.isoformat() if card.end_date else None
+        time_range = None
+        if start_date or end_date:
+            time_range = " - ".join([d for d in (start_date, end_date) if d])
+        elif card.is_current:
+            time_range = "Ongoing"
         return {
             "id": card.id,
             "title": card.title,
@@ -855,7 +1209,10 @@ def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> d
             "headline": card.title,
             "summary": card.summary,
             "topics": [],
-            "time_range": None,
+            "time_range": time_range,
+            "start_date": start_date,
+            "end_date": end_date,
+            "is_current": card.is_current,
             "role_title": card.normalized_role,
             "company": card.company_name,
             "location": card.location,
@@ -865,6 +1222,80 @@ def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> d
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
+# Allowed keys for fill-missing-fields (edit form). Must match frontend form keys.
+FILL_MISSING_PARENT_KEYS = (
+    "title, summary, normalized_role, domain, sub_domain, company_name, company_type, "
+    "location, employment_type, start_date, end_date, is_current, intent_primary, "
+    "intent_secondary_str, seniority_level, confidence_score"
+)
+FILL_MISSING_CHILD_KEYS = "title, summary, tagsStr, time_range, company, location"
+
+
+async def fill_missing_fields_from_text(
+    raw_text: str,
+    current_card: dict,
+    card_type: str,
+) -> dict:
+    """
+    Pipeline: Rewrite -> Fill missing fields only. No DB writes.
+    Returns a dict of only the fields the LLM extracted (to merge into form).
+    """
+    if not raw_text or not raw_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="raw_text is required and cannot be empty",
+        )
+    card_type = (card_type or "parent").strip().lower()
+    if card_type not in ("parent", "child"):
+        card_type = "parent"
+    allowed_keys = FILL_MISSING_PARENT_KEYS if card_type == "parent" else FILL_MISSING_CHILD_KEYS
+
+    cleaned_text = await rewrite_raw_text(raw_text)
+    prompt = fill_prompt(
+        PROMPT_FILL_MISSING_FIELDS,
+        cleaned_text=cleaned_text,
+        current_card_json=json.dumps(current_card, indent=2),
+        allowed_keys=allowed_keys,
+    )
+    chat = get_chat_provider()
+    try:
+        response = await chat.chat(prompt, max_tokens=2048)
+    except ChatServiceError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+    if not response or not response.strip():
+        return {}
+
+    try:
+        json_str = _extract_json_from_text(response)
+        data = json.loads(json_str)
+        if not isinstance(data, dict):
+            return {}
+        # Normalize keys to match frontend form: intent_secondary -> intent_secondary_str, tags -> tagsStr
+        if "intent_secondary" in data and "intent_secondary_str" not in data:
+            val = data.pop("intent_secondary")
+            if isinstance(val, list):
+                data["intent_secondary_str"] = ", ".join(str(x) for x in val)
+            else:
+                data["intent_secondary_str"] = str(val) if val is not None else ""
+        if "tags" in data and "tagsStr" not in data:
+            val = data.pop("tags")
+            if isinstance(val, list):
+                data["tagsStr"] = ", ".join(str(x) for x in val)
+            else:
+                data["tagsStr"] = str(val) if val is not None else ""
+        # Normalize date strings to ISO for frontend date inputs.
+        for key in ("start_date", "end_date"):
+            if key in data:
+                parsed = parse_date_field(str(data[key])) if data[key] is not None else None
+                if parsed:
+                    data[key] = parsed.isoformat()
+        return data
+    except (ValueError, json.JSONDecodeError):
+        logger.warning("fill_missing_fields: could not parse LLM response as JSON")
+        return {}
+
 
 async def rewrite_raw_text(raw_text: str) -> str:
     """

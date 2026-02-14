@@ -66,6 +66,7 @@ def experience_card_child_to_response(child: ExperienceCardChild) -> ExperienceC
 
     return ExperienceCardChildResponse(
         id=child.id,
+        relation_type=getattr(child, "child_type", None),
         title=title,
         context=summary,
         tags=[str(t) for t in tags if str(t).strip()],

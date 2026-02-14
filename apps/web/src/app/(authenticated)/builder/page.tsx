@@ -11,6 +11,7 @@ import { BackLink } from "@/components/back-link";
 import { SaveCardsModal } from "@/components/builder/save-cards-modal";
 import { DraftCardFamily } from "@/components/builder/draft-card-family";
 import { SavedCardFamily } from "@/components/builder/saved-card-family";
+import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
 import {
   useExperienceCards,
@@ -54,8 +55,46 @@ function normalizeDraftFamilies(families: CardFamilyV1Response[]): CardFamilyV1R
   });
 }
 
+const PARENT_FORM_STRING_KEYS = [
+  "title", "summary", "normalized_role", "domain", "sub_domain", "company_name", "company_type",
+  "location", "employment_type", "start_date", "end_date", "intent_primary", "intent_secondary_str",
+  "seniority_level", "confidence_score",
+] as const;
+
+/** Merge parsed form into current: only set string fields that are currently empty (never overwrite checkboxes). */
+function mergeParentForm(
+  current: { [k: string]: string | boolean },
+  parsed: { [k: string]: string | boolean }
+): Partial<{ [k: string]: string | boolean }> {
+  const updates: Partial<{ [k: string]: string | boolean }> = {};
+  for (const key of PARENT_FORM_STRING_KEYS) {
+    const cur = current[key];
+    const val = parsed[key];
+    const isEmpty = cur === undefined || cur === null || (typeof cur === "string" && String(cur).trim() === "");
+    const hasValue = val !== undefined && val !== null && (typeof val !== "string" || String(val).trim() !== "");
+    if (isEmpty && hasValue) updates[key] = val;
+  }
+  return updates;
+}
+
+function mergeChildForm(
+  current: { [k: string]: string },
+  parsed: { [k: string]: string }
+): Partial<{ [k: string]: string }> {
+  const updates: Partial<{ [k: string]: string }> = {};
+  for (const key of Object.keys(parsed)) {
+    const cur = current[key];
+    const val = parsed[key];
+    const isEmpty = cur == null || String(cur).trim() === "";
+    const hasValue = val != null && String(val).trim() !== "";
+    if (isEmpty && hasValue) updates[key] = val;
+  }
+  return updates;
+}
+
 export default function BuilderPage() {
   const router = useRouter();
+  const { setOnboardingStep } = useAuth();
   const queryClient = useQueryClient();
   const [rawText, setRawText] = useState("");
   const [draftSetId, setDraftSetId] = useState<string | null>(null);
@@ -70,6 +109,7 @@ export default function BuilderPage() {
   const [editingKind, setEditingKind] = useState<"parent" | "child" | null>(null);
   const [editingSavedCardId, setEditingSavedCardId] = useState<string | null>(null);
   const [editingSavedChildId, setEditingSavedChildId] = useState<string | null>(null);
+  const [isUpdatingFromMessyText, setIsUpdatingFromMessyText] = useState(false);
 
   const { data: savedCards = [], isLoading: loadingCards } = useExperienceCards();
   const { data: savedFamilies = [], isLoading: loadingFamilies } = useExperienceCardFamilies();
@@ -250,6 +290,88 @@ export default function BuilderPage() {
     [deleteChildMutation]
   );
 
+  const handleUpdateParentFromMessyText = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return;
+      setIsUpdatingFromMessyText(true);
+      try {
+        const cardId = editingSavedCardId ?? (editingKind === "parent" ? editingCardId : null);
+        const result = await api<{ filled: Record<string, unknown> }>(
+          "/experience-cards/fill-missing-from-text",
+          {
+            method: "POST",
+            body: {
+              raw_text: text.trim(),
+              card_type: "parent",
+              current_card: editForm,
+              ...(cardId ? { card_id: cardId } : {}),
+            },
+          }
+        );
+        const filled = result?.filled ?? {};
+        if (Object.keys(filled).length > 0) {
+          setEditForm((prev) => {
+            const updates = mergeParentForm(
+              prev as unknown as { [k: string]: string | boolean },
+              filled as { [k: string]: string | boolean }
+            );
+            return Object.keys(updates).length ? { ...prev, ...updates } : prev;
+          });
+        }
+        if (cardId) {
+          queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
+          queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
+        }
+      } catch (e) {
+        console.error("Update from messy text failed", e);
+      } finally {
+        setIsUpdatingFromMessyText(false);
+      }
+    },
+    [editForm, setEditForm, editingCardId, editingKind, editingSavedCardId, queryClient]
+  );
+
+  const handleUpdateChildFromMessyText = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return;
+      setIsUpdatingFromMessyText(true);
+      try {
+        const childId = editingSavedChildId ?? (editingKind === "child" ? editingCardId : null);
+        const result = await api<{ filled: Record<string, unknown> }>(
+          "/experience-cards/fill-missing-from-text",
+          {
+            method: "POST",
+            body: {
+              raw_text: text.trim(),
+              card_type: "child",
+              current_card: childEditForm,
+              ...(childId ? { child_id: childId } : {}),
+            },
+          }
+        );
+        const filled = result?.filled ?? {};
+        if (Object.keys(filled).length > 0) {
+          setChildEditForm((prev) => {
+            const updates = mergeChildForm(
+              prev as unknown as { [k: string]: string },
+              filled as { [k: string]: string }
+            );
+            return Object.keys(updates).length ? { ...prev, ...updates } : prev;
+          });
+        }
+        if (childId) {
+          queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
+          queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
+        }
+      } catch (e) {
+        console.error("Update from messy text failed", e);
+      } finally {
+        setIsUpdatingFromMessyText(false);
+      }
+    },
+    [childEditForm, setChildEditForm, editingCardId, editingKind, editingSavedChildId, queryClient]
+  );
+
   const handleSaveCards = useCallback(async () => {
     setSaveError(null);
     setIsSavingAll(true);
@@ -259,6 +381,7 @@ export default function BuilderPage() {
       setCardFamilies(null);
       queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
+      setOnboardingStep(null);
       router.push("/home");
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to save cards");
@@ -267,52 +390,55 @@ export default function BuilderPage() {
     } finally {
       setIsSavingAll(false);
     }
-  }, [draftSetId, queryClient, router]);
+  }, [draftSetId, queryClient, router, setOnboardingStep]);
 
   const hasV1Families = (cardFamilies?.length ?? 0) > 0;
   const hasCards = hasV1Families || (draftSetId == null && savedFamilies.length > 0);
 
   return (
     <motion.div
-      className="flex flex-col h-[calc(100vh-6.5rem)] overflow-hidden"
+      className="flex flex-col min-h-0 lg:h-[calc(100vh-7rem)] lg:max-h-[calc(100vh-6.5rem)] lg:overflow-hidden"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.2 }}
     >
-      <div className="flex items-center justify-between mb-4">
-        <BackLink href="/profile" />
-        <h1 className="text-lg font-semibold tracking-tight text-foreground">Experience Builder</h1>
-        <div className="w-24" />
+      <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4 flex-shrink-0 px-1">
+        <BackLink href="/profile" className="min-w-0 flex-shrink-0" />
+        <h1 className="text-base sm:text-lg font-semibold tracking-tight text-foreground truncate text-center flex-1 min-w-0">
+          Experience Builder
+        </h1>
+        <div className="w-[4.5rem] sm:w-24 flex-shrink-0" aria-hidden />
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 flex-1 min-h-0 overflow-hidden">
         {/* Left: Raw input */}
-        <div className="flex flex-col min-h-0 border border-border rounded-xl p-4 bg-card">
-          <div className="flex items-start justify-between gap-2 mb-1">
-            <h2 className="text-base font-medium text-foreground">Raw experience</h2>
+        <div className="flex flex-col min-h-[280px] lg:min-h-0 border border-border rounded-xl p-3 sm:p-4 bg-card overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-1 flex-shrink-0">
+            <h2 className="text-sm sm:text-base font-medium text-foreground">Raw experience</h2>
             <Button
               variant="outline"
               size="sm"
               onClick={rewriteText}
               disabled={!rawText.trim() || isRewriting}
-              className="flex-shrink-0"
+              className="flex-shrink-0 self-start sm:self-auto min-h-[2.75rem] touch-manipulation"
             >
               <PenLine className="h-3.5 w-3.5 mr-1.5" />
               {isRewriting ? "Rewriting..." : "Rewrite"}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground mb-3">
+          <p className="text-xs text-muted-foreground mb-2 sm:mb-3 flex-shrink-0">
             {"Write freely. Add one experience at a time or multiple. We'll structure it into cards."}
           </p>
           <Textarea
             placeholder="Paste or type your experience. e.g. I worked at Razorpay in the backend team for 2 years..."
-            className="min-h-[240px] resize-y flex-1 font-mono text-sm"
+            className="min-h-[140px] sm:min-h-[200px] lg:min-h-[240px] resize-y flex-1 font-mono text-sm touch-manipulation"
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
           />
-          <div className="mt-3 space-y-1">
+          <div className="mt-2 sm:mt-3 space-y-1 flex-shrink-0">
             <Button
               onClick={extractDraftV1}
               disabled={!rawText.trim() || isUpdating}
+              className="w-full sm:w-auto min-h-[2.75rem] touch-manipulation"
             >
               {isUpdating ? "Structuring..." : "Update"}
             </Button>
@@ -323,8 +449,8 @@ export default function BuilderPage() {
         </div>
 
         {/* Right: Experience cards */}
-        <div className="flex flex-col min-h-0 border border-border rounded-xl p-4 bg-card flex-1">
-          <h2 className="text-base font-medium text-foreground mb-3 flex-shrink-0">Experience cards</h2>
+        <div className="flex flex-col min-h-[260px] lg:min-h-0 border border-border rounded-xl p-3 sm:p-4 bg-card flex-1 overflow-hidden">
+          <h2 className="text-sm sm:text-base font-medium text-foreground mb-2 sm:mb-3 flex-shrink-0">Experience cards</h2>
           {(deleteCardMutation.isError || deleteChildMutation.isError) && (
             <p className="text-sm text-destructive mb-2">
               {deleteCardMutation.error?.message ?? deleteChildMutation.error?.message ?? "Delete failed"}
@@ -406,6 +532,9 @@ export default function BuilderPage() {
                       onSubmitEditChild={submitEditChild}
                       onDeleteParentCard={handleDeleteParentCard}
                       onDeleteChildCard={handleDeleteChildCard}
+                      onUpdateParentFromMessyText={handleUpdateParentFromMessyText}
+                      onUpdateChildFromMessyText={handleUpdateChildFromMessyText}
+                      isUpdatingFromMessyText={isUpdatingFromMessyText}
                       isCardSubmitting={patchCardMutation.isPending}
                       isCardDeleting={deleteCardMutation.isPending}
                       isChildSubmitting={patchChildMutation.isPending}
@@ -452,6 +581,9 @@ export default function BuilderPage() {
                           setTimeout(() => setDeletedId(null), 5000);
                         }}
                         isSubmitting={patchCardMutation.isPending || patchChildMutation.isPending}
+                        onUpdateParentFromMessyText={handleUpdateParentFromMessyText}
+                        onUpdateChildFromMessyText={handleUpdateChildFromMessyText}
+                        isUpdatingFromMessyText={isUpdatingFromMessyText}
                       />
                     ))}
                   </motion.div>
@@ -459,13 +591,14 @@ export default function BuilderPage() {
               </>
             )}
           </div>
-          <div className="flex-shrink-0 pt-4 pb-1 flex justify-end border-t border-border/50 mt-2">
+          <div className="flex-shrink-0 pt-3 sm:pt-4 pb-1 flex justify-end border-t border-border/50 mt-2">
             <Button
               onClick={() => {
                 setSaveError(null);
                 setSaveModalOpen(true);
               }}
               disabled={!hasV1Families}
+              className="w-full sm:w-auto min-h-[2.75rem] touch-manipulation"
             >
               Save Cards
             </Button>

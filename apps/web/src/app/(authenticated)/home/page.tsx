@@ -61,7 +61,7 @@ export default function HomePage() {
   if (isLoading) {
     return (
       <div className="relative min-h-[calc(100vh-3.5rem)]">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 py-4">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <Card key={i} className="h-full animate-pulse">
               <CardHeader className="pb-2">
@@ -104,7 +104,7 @@ export default function HomePage() {
           <SearchResults searchId={searchId} people={searchPeople} />
         </div>
       )}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 py-4">
         {people.length === 0 ? (
           <div className="col-span-full text-center py-16 text-muted-foreground text-sm">
             No people to show yet.

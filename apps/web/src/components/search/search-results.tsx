@@ -29,7 +29,7 @@ export function SearchResults({ searchId, people }: SearchResultsProps) {
               {'No matches. Try a different query or clear "Open to work only".'}
             </p>
           ) : (
-            <ul className="grid gap-2">
+            <ul className="grid grid-cols-1 gap-3 md:grid-cols-3">
               {people.map((person, i) => (
                 <PersonResultCard
                   key={person.id}

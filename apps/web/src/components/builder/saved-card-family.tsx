@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { TiltCard } from "@/components/tilt-card";
 import { ParentCardEditForm } from "@/components/builder/parent-card-edit-form";
 import { ChildCardEditForm } from "@/components/builder/child-card-edit-form";
+import { V1CardDetails } from "@/components/builder/v1-card-details";
 import { PenLine, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ExperienceCard, ExperienceCardChild } from "@/types";
@@ -27,6 +28,9 @@ interface SavedCardFamilyProps {
   onDelete: (id: string) => void;
   onDeleteChild: (id: string) => void;
   isSubmitting: boolean;
+  onUpdateParentFromMessyText?: (text: string) => Promise<void>;
+  onUpdateChildFromMessyText?: (text: string) => Promise<void>;
+  isUpdatingFromMessyText?: boolean;
 }
 
 export function SavedCardFamily({
@@ -48,6 +52,9 @@ export function SavedCardFamily({
   onDelete,
   onDeleteChild,
   isSubmitting,
+  onUpdateParentFromMessyText,
+  onUpdateChildFromMessyText,
+  isUpdatingFromMessyText = false,
 }: SavedCardFamilyProps) {
   const parentId = String(
     (parent as { id?: string })?.id ?? (parent as Record<string, unknown>)?.card_id ?? ""
@@ -77,7 +84,7 @@ export function SavedCardFamily({
           <div className="flex items-start justify-between gap-2 w-full min-w-0">
             <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
               <span className="font-semibold text-sm truncate text-foreground">
-                {parent.title || parent.company_name || "Untitled"}
+                {isEditingParent ? "Editing experience" : parent.title || parent.company_name || "Untitled"}
               </span>
               {children.length > 0 && (
                 <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
@@ -128,18 +135,11 @@ export function SavedCardFamily({
                 isSubmitting={isSubmitting}
                 checkboxIdPrefix={`edit-saved-${parentId}`}
                 showDeleteButton={false}
+                onUpdateFromMessyText={onUpdateParentFromMessyText}
+                isUpdatingFromMessyText={isUpdatingFromMessyText}
               />
             ) : (
-            <div className="mt-3 pt-3 border-t border-border/40 space-y-1.5">
-              {parent.summary && (
-                <p className="text-sm text-muted-foreground line-clamp-3">{parent.summary}</p>
-              )}
-              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-                {parent.company_name && <span>{parent.company_name}</span>}
-                {parent.domain && <span>{parent.domain}</span>}
-                {parent.normalized_role && <span>{parent.normalized_role}</span>}
-              </div>
-            </div>
+            <V1CardDetails card={parent as unknown as Record<string, unknown>} summaryFullWidth />
           )}
         </div>
       </TiltCard>
@@ -156,6 +156,8 @@ export function SavedCardFamily({
           <ul className="relative space-y-0">
             {children.map((child, childIdx) => {
               const isEditingThisChild = editingSavedChildId === child.id;
+              const relationType = (child.relation_type ?? "").toString().trim();
+              const relationDisplay = relationType ? relationType.replace(/_/g, " ").toUpperCase() : "";
 
               return (
                 <motion.li
@@ -182,8 +184,13 @@ export function SavedCardFamily({
                   <div className="ml-5 rounded-lg border border-border/40 bg-accent/30 px-3 py-2.5 transition-colors hover:bg-accent/50">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
+                        {relationDisplay && (
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
+                            {relationDisplay}
+                          </p>
+                        )}
                         <p className="font-medium text-sm text-foreground">
-                          {child.title || child.summary || "Detail"}
+                          {isEditingThisChild ? "Editing detail" : child.title || child.summary || "Detail"}
                         </p>
                       </div>
                       {isEditingThisChild ? (
@@ -217,6 +224,8 @@ export function SavedCardFamily({
                         onCancel={onCancelEditingChild}
                         isSubmitting={isSubmitting}
                         showDeleteButton={false}
+                        onUpdateFromMessyText={onUpdateChildFromMessyText}
+                        isUpdatingFromMessyText={isUpdatingFromMessyText}
                       />
                     ) : (
                       (child.summary || child.company || child.time_range) && (

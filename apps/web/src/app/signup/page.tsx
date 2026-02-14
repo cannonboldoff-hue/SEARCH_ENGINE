@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/auth-context";
+import { getPostAuthPath } from "@/lib/auth-flow";
 import { AuthLayout } from "@/components/auth";
 import { LoadingScreen, ErrorMessage } from "@/components/feedback";
 
@@ -24,7 +25,7 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 export default function SignupPage() {
-  const { signup, token } = useAuth();
+  const { signup, isAuthenticated, isAuthLoading, onboardingStep } = useAuth();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const {
@@ -33,13 +34,13 @@ export default function SignupPage() {
     formState: { errors, isSubmitting },
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
-  const hasToken = token ?? (typeof window !== "undefined" && !!localStorage.getItem("token"));
+  const redirectTo = getPostAuthPath(onboardingStep);
 
   useEffect(() => {
-    if (hasToken) router.replace("/home");
-  }, [token, router]);
+    if (!isAuthLoading && isAuthenticated) router.replace(redirectTo);
+  }, [isAuthLoading, isAuthenticated, redirectTo, router]);
 
-  if (hasToken) {
+  if (isAuthLoading || isAuthenticated) {
     return <LoadingScreen message="Loading..." />;
   }
 

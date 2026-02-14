@@ -1,58 +1,103 @@
 "use client";
 
-import React, { createContext, useContext, useCallback, useEffect, useState } from "react";
+import { createContext, useContext, useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import {
+  AUTH_TOKEN_KEY,
+  ONBOARDING_STEP_KEY,
+  type OnboardingStep,
+} from "@/lib/auth-flow";
 
 type User = { id: string; email: string; display_name: string | null };
 
 const AuthContext = createContext<{
   user: User | null;
-  token: string | null;
+  onboardingStep: OnboardingStep | null;
+  isAuthLoading: boolean;
+  isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, displayName?: string) => Promise<void>;
   logout: () => void;
-  setToken: (t: string | null) => void;
-  refetchUser: (overrideToken?: string) => Promise<void>;
+  setOnboardingStep: (step: OnboardingStep | null) => void;
 } | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setTokenState] = useState<string | null>(() =>
-    typeof window !== "undefined" ? localStorage.getItem("token") : null
-  );
+function readToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+function readOnboardingStep(): OnboardingStep | null {
+  if (typeof window === "undefined") return null;
+  const step = localStorage.getItem(ONBOARDING_STEP_KEY);
+  return step === "bio" || step === "builder" ? step : null;
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [token, setToken] = useState<string | null>(() => readToken());
   const [user, setUser] = useState<User | null>(null);
+  const [onboardingStep, setOnboardingStepState] = useState<OnboardingStep | null>(() =>
+    readOnboardingStep()
+  );
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(() => !!readToken());
   const router = useRouter();
 
-  const setToken = useCallback((t: string | null) => {
+  const clearSession = useCallback(() => {
     if (typeof window !== "undefined") {
-      if (t) localStorage.setItem("token", t);
-      else localStorage.removeItem("token");
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem(ONBOARDING_STEP_KEY);
     }
-    setTokenState(t);
+    setToken(null);
     setUser(null);
+    setOnboardingStepState(null);
+    setIsAuthLoading(false);
   }, []);
 
-  const refetchUser = useCallback(async (overrideToken?: string) => {
-    const t = overrideToken ?? token;
-    if (!t) return;
-    try {
-      const me = await api<{ id: string; email: string; display_name: string | null }>("/me");
-      setUser(me);
-    } catch {
-      if (!overrideToken) setToken(null);
+  const startSession = useCallback((nextToken: string, step: OnboardingStep | null) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(AUTH_TOKEN_KEY, nextToken);
+      if (step) localStorage.setItem(ONBOARDING_STEP_KEY, step);
+      else localStorage.removeItem(ONBOARDING_STEP_KEY);
     }
-  }, [token, setToken]);
+    setToken(nextToken);
+    setUser(null);
+    setOnboardingStepState(step);
+    setIsAuthLoading(true);
+  }, []);
+
+  const setOnboardingStep = useCallback((step: OnboardingStep | null) => {
+    if (typeof window !== "undefined") {
+      if (step) localStorage.setItem(ONBOARDING_STEP_KEY, step);
+      else localStorage.removeItem(ONBOARDING_STEP_KEY);
+    }
+    setOnboardingStepState(step);
+  }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const t = localStorage.getItem("token");
-    setTokenState(t);
-    if (t) {
-      api<{ id: string; email: string; display_name: string | null }>("/me")
-        .then(setUser)
-        .catch(() => setToken(null));
+    if (!token) {
+      setUser(null);
+      setIsAuthLoading(false);
+      return;
     }
-  }, [setToken]);
+    let isMounted = true;
+    setIsAuthLoading(true);
+    api<{ id: string; email: string; display_name: string | null }>("/me")
+      .then((me) => {
+        if (!isMounted) return;
+        setUser(me);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        clearSession();
+      })
+      .finally(() => {
+        if (!isMounted) return;
+        setIsAuthLoading(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [token, clearSession]);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -60,15 +105,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         body: { email, password },
       });
-      setToken(access_token);
-      // Run /me and /me/bio in parallel to reduce wait before redirect
-      const [_, bioResult] = await Promise.all([
-        refetchUser(access_token),
-        api<{ complete: boolean }>("/me/bio").catch(() => ({ complete: false })),
-      ]);
-      router.replace(bioResult.complete ? "/home" : "/onboarding/bio");
+      startSession(access_token, null);
+      router.replace("/home");
     },
-    [router, setToken, refetchUser]
+    [router, startSession]
   );
 
   const signup = useCallback(
@@ -77,24 +117,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         body: { email, password, display_name: displayName ?? null },
       });
-      setToken(access_token);
-      const [_, bioResult] = await Promise.all([
-        refetchUser(access_token),
-        api<{ complete: boolean }>("/me/bio").catch(() => ({ complete: false })),
-      ]);
-      router.replace(bioResult.complete ? "/home" : "/onboarding/bio");
+      startSession(access_token, "bio");
+      router.replace("/onboarding/bio");
     },
-    [router, setToken, refetchUser]
+    [router, startSession]
   );
 
   const logout = useCallback(() => {
-    setToken(null);
+    clearSession();
     router.push("/login");
-  }, [router, setToken]);
+  }, [router, clearSession]);
 
   return (
     <AuthContext.Provider
-      value={{ user, token, login, signup, logout, setToken, refetchUser }}
+      value={{
+        user,
+        onboardingStep,
+        isAuthLoading,
+        isAuthenticated: Boolean(user),
+        login,
+        signup,
+        logout,
+        setOnboardingStep,
+      }}
     >
       {children}
     </AuthContext.Provider>
