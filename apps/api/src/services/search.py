@@ -393,6 +393,8 @@ def _build_search_people_list(
     vis_map: dict[str, PersonProfile],
     person_cards: dict[str, list[tuple[ExperienceCard, float]]],
     child_only_cards: dict[str, list[ExperienceCard]],
+    similarity_by_person: dict[str, int],
+    why_matched_by_person: dict[str, list[str]],
 ) -> list[PersonSearchResult]:
     """Build PersonSearchResult list for search response from top-ranked persons and their best cards."""
     people_list = []
@@ -422,6 +424,8 @@ def _build_search_people_list(
                 name=person.display_name if person else None,
                 headline=headline,
                 bio=bio,
+                similarity_percent=similarity_by_person.get(pid),
+                why_matched=why_matched_by_person.get(pid, []),
                 open_to_work=vis.open_to_work if vis else False,
                 open_to_contact=vis.open_to_contact if vis else False,
                 work_preferred_locations=vis.work_preferred_locations or [] if vis else [],
@@ -430,6 +434,12 @@ def _build_search_people_list(
             )
         )
     return people_list
+
+
+def _score_to_similarity_percent(score: float) -> int:
+    """Convert blended score to UI-friendly similarity percentage."""
+    normalized = max(0.0, min(1.0, float(score)))
+    return int(round(normalized * 100))
 
 
 def _collapse_and_rank_persons(
@@ -781,6 +791,8 @@ async def run_search(
     if not await deduct_credits(db, searcher_id, 1, "search", "search_id", search_rec.id):
         raise HTTPException(status_code=402, detail="Insufficient credits")
 
+    similarity_by_person: dict[str, int] = {}
+    why_matched_by_person: dict[str, list[str]] = {}
     for rank, (person_id, score) in enumerate(top_20, 1):
         parent_list = person_cards.get(person_id, [])
         child_list = child_sims_by_person.get(person_id, [])
@@ -804,6 +816,8 @@ async def run_search(
             (children_by_id[cid], pid, s) for pid, cid, s in child_list[:3] if cid and cid in children_by_id
         ]
         why_matched = _build_why_matched_bullets(parent_cards_for_bullets, child_evidence_for_bullets, 6)
+        similarity_by_person[person_id] = _score_to_similarity_percent(score)
+        why_matched_by_person[person_id] = why_matched
         sr = SearchResult(
             search_id=search_rec.id,
             person_id=person_id,
@@ -863,7 +877,13 @@ async def run_search(
                     child_only_cards.setdefault(pid, []).append(c)
 
     people_list = _build_search_people_list(
-        top_20, people_map, vis_map, person_cards, child_only_cards
+        top_20,
+        people_map,
+        vis_map,
+        person_cards,
+        child_only_cards,
+        similarity_by_person,
+        why_matched_by_person,
     )
     resp = SearchResponse(search_id=search_rec.id, people=people_list)
     if idempotency_key:

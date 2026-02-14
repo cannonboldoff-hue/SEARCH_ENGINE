@@ -51,6 +51,8 @@ export type PersonSearchResult = {
   name: string | null;
   headline: string | null;
   bio: string | null;
+  similarity_percent?: number | null;
+  why_matched?: string[];
   open_to_work: boolean;
   open_to_contact: boolean;
   work_preferred_locations: string[];
