@@ -64,10 +64,12 @@ function ExperienceCardDetails({
   card,
   hideVisibilityField = false,
   hideConfidenceScore = false,
+  hideTimestamps = false,
 }: {
   card: ExperienceCard;
   hideVisibilityField?: boolean;
   hideConfidenceScore?: boolean;
+  hideTimestamps?: boolean;
 }) {
   const rows: DetailRow[] = [
     { label: "Title", value: card.title },
@@ -95,8 +97,12 @@ function ExperienceCardDetails({
     ...(hideVisibilityField
       ? []
       : [{ label: "Visible in search", value: card.experience_card_visibility }]),
-    { label: "Created at", value: card.created_at },
-    { label: "Updated at", value: card.updated_at },
+    ...(hideTimestamps
+      ? []
+      : [
+          { label: "Created at", value: card.created_at },
+          { label: "Updated at", value: card.updated_at },
+        ]),
   ];
 
   return <DetailGrid rows={rows} />;
@@ -212,6 +218,7 @@ function CardFamilyBlock({
             card={parent}
             hideVisibilityField={isSearchResultView}
             hideConfidenceScore={isSearchResultView}
+            hideTimestamps={isSearchResultView}
           />
         </CardContent>
       </Card>
@@ -369,7 +376,12 @@ export default function PersonProfilePage() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-0">
-                      <ExperienceCardDetails card={card} hideVisibilityField hideConfidenceScore />
+                      <ExperienceCardDetails
+                        card={card}
+                        hideVisibilityField
+                        hideConfidenceScore
+                        hideTimestamps
+                      />
                     </CardContent>
                   </Card>
                 </motion.li>

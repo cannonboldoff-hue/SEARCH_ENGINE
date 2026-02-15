@@ -28,6 +28,9 @@ MAX_MUST_TEAM_NORM = 3
 MAX_MUST_DOMAIN = 2
 # Confidence below this: demote softer MUST lists (domain, sub_domain) to SHOULD
 WEAK_CONFIDENCE_THRESHOLD = 0.5
+MIN_ALLOWED_YEAR = 1900
+# Allow near-future dates to avoid dropping valid in-progress ranges.
+MAX_ALLOWED_YEAR_OFFSET = 1
 
 _VALID_INTENT_PRIMARY = frozenset(get_args(Intent))
 
@@ -62,14 +65,20 @@ def _normalize_date(s: Optional[str]) -> Optional[str]:
     if not s or not isinstance(s, str):
         return None
     s = s.strip()
+    max_year = datetime.utcnow().year + MAX_ALLOWED_YEAR_OFFSET
     for fmt in ("%Y-%m-%d", "%Y-%m"):
         try:
             dt = datetime.strptime(s, fmt)
+            if dt.year < MIN_ALLOWED_YEAR or dt.year > max_year:
+                return None
             return dt.strftime("%Y-%m-%d")
         except ValueError:
             continue
     # Try year only
     if re.match(r"^\d{4}$", s):
+        year = int(s)
+        if year < MIN_ALLOWED_YEAR or year > max_year:
+            return None
         return f"{s}-01-01"
     return None
 

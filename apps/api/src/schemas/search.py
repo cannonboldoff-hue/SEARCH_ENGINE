@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, field_serializer, model_validator
 
 from src.schemas.contact import ContactDetailsResponse
 from src.schemas.builder import ExperienceCardResponse, CardFamilyResponse
@@ -16,7 +16,7 @@ def _list(d: dict, key: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Search.parsed_constraints_json shape (single extraction → execute on columns + person_profiles)
+# Search.parsed_constraints_json shape (single extraction -> execute on columns + person_profiles)
 # ---------------------------------------------------------------------------
 
 class ParsedConstraintsMust(BaseModel):
@@ -118,9 +118,14 @@ class SearchRequest(BaseModel):
     query: str
     open_to_work_only: Optional[bool] = None
     preferred_locations: Optional[list[str]] = None  # preferred_locations_any when open_to_work_only
-    salary_min: Optional[Decimal] = None  # recruiter min (₹/year), for display only
-    salary_max: Optional[Decimal] = None  # recruiter offer budget ₹/year; candidates matched where work_preferred_salary_min <= salary_max (NULL = keep but downrank)
+    salary_min: Optional[Decimal] = None  # recruiter min (INR/year), for display only
+    salary_max: Optional[Decimal] = None  # recruiter offer budget INR/year; candidates matched where work_preferred_salary_min <= salary_max (NULL = keep but downrank)
 
+    @model_validator(mode="after")
+    def _validate_salary_bounds(self) -> "SearchRequest":
+        if self.salary_min is not None and self.salary_max is not None and self.salary_min > self.salary_max:
+            raise ValueError("salary_min must be <= salary_max")
+        return self
 
 class PersonSearchResult(BaseModel):
     id: str
@@ -153,7 +158,7 @@ class PersonProfileResponse(BaseModel):
     open_to_work: bool
     open_to_contact: bool
     work_preferred_locations: list[str]
-    work_preferred_salary_min: Optional[Decimal] = None  # minimum salary needed (₹/year)
+    work_preferred_salary_min: Optional[Decimal] = None  # minimum salary needed (INR/year)
     experience_cards: list[ExperienceCardResponse]  # kept for backward compatibility
     card_families: list[CardFamilyResponse] = []  # parent + children for full experience view
     bio: Optional[BioResponse] = None

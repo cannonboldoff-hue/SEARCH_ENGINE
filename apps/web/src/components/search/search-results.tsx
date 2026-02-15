@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PersonResultCard } from "./person-result-card";
 import type { PersonSearchResult } from "@/types";
@@ -10,6 +11,20 @@ type SearchResultsProps = {
 };
 
 export function SearchResults({ searchId, people }: SearchResultsProps) {
+  const sortedPeople = useMemo(() => {
+    return people
+      .map((person, index) => ({ person, index }))
+      .sort((a, b) => {
+        const aSimilarity =
+          typeof a.person.similarity_percent === "number" ? a.person.similarity_percent : -1;
+        const bSimilarity =
+          typeof b.person.similarity_percent === "number" ? b.person.similarity_percent : -1;
+        if (bSimilarity !== aSimilarity) return bSimilarity - aSimilarity;
+        return a.index - b.index;
+      })
+      .map(({ person }) => person);
+  }, [people]);
+
   return (
     <AnimatePresence mode="wait">
       {searchId && (
@@ -30,7 +45,7 @@ export function SearchResults({ searchId, people }: SearchResultsProps) {
             </p>
           ) : (
             <ul className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              {people.map((person, i) => (
+              {sortedPeople.map((person, i) => (
                 <PersonResultCard
                   key={person.id}
                   person={person}
