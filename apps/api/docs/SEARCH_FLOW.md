@@ -319,18 +319,414 @@ Default expiry window:
 - no search session required
 - returns `id`, `display_name`, `bio`, `card_families`
 
-## 7) Active Prompting
+## 7) Prompt Contracts (Input -> Output)
 
-Active in current search runtime:
+### 7.1 Cleanup Prompt (`PROMPT_SEARCH_CLEANUP`)
 
-- cleanup: `PROMPT_SEARCH_CLEANUP`
-- extraction: `PROMPT_SEARCH_SINGLE_EXTRACT`
-- explainability: `get_why_matched_prompt`
+Used by `parse_search_filters(...)` in `apps/api/src/providers/chat.py`.
 
-Present in prompt file but not used in current runtime path:
+Input:
+
+```text
+{{USER_TEXT}} = raw user query string
+```
+
+Expected LLM output:
+
+- Plain text only (cleaned query)
+- No JSON
+- No markdown/code fences
+
+Runtime fallback:
+
+- If cleanup output is empty, code falls back to raw query text.
+
+### 7.2 Constraint Extraction Prompt (`PROMPT_SEARCH_SINGLE_EXTRACT`)
+
+Used by `parse_search_filters(...)` after cleanup.
+
+Input placeholders:
+
+```text
+{{INTENT_ENUM}} = allowed intent_primary enum values
+{{QUERY_ORIGINAL}} = raw user query
+{{QUERY_CLEANED}} = cleanup output
+```
+
+Expected LLM output (strict JSON object):
+
+```json
+{
+  "query_original": "string",
+  "query_cleaned": "string",
+  "must": {
+    "company_norm": ["string"],
+    "team_norm": ["string"],
+    "intent_primary": ["string"],
+    "domain": ["string"],
+    "sub_domain": ["string"],
+    "employment_type": ["string"],
+    "seniority_level": ["string"],
+    "location_text": "string|null",
+    "city": "string|null",
+    "country": "string|null",
+    "time_start": "string|null",
+    "time_end": "string|null",
+    "is_current": "boolean|null",
+    "open_to_work_only": "boolean|null",
+    "offer_salary_inr_per_year": "number|null"
+  },
+  "should": {
+    "skills_or_tools": ["string"],
+    "keywords": ["string"],
+    "intent_secondary": ["string"]
+  },
+  "exclude": {
+    "company_norm": ["string"],
+    "keywords": ["string"]
+  },
+  "search_phrases": ["string"],
+  "query_embedding_text": "string",
+  "confidence_score": "number"
+}
+```
+
+Runtime handling:
+
+- Provider strips code fences and parses JSON (`_chat_json`).
+- `run_search(...)` then maps to `ParsedConstraintsPayload.from_llm_dict(...)` and applies `validate_and_normalize(...)`.
+
+### 7.3 Explainability Prompt (`get_why_matched_prompt`)
+
+Used by `_generate_llm_why_matched(...)` in `apps/api/src/services/search_logic.py`.
+
+Input payload passed into prompt:
+
+```json
+{
+  "query_original": "string",
+  "query_cleaned": "string",
+  "must": { "...": "parsed MUST object" },
+  "should": { "...": "parsed SHOULD object" },
+  "people": [
+    {
+      "person_id": "uuid",
+      "open_to_work": "boolean",
+      "open_to_contact": "boolean",
+      "matched_parent_cards": [
+        {
+          "title": "string|null",
+          "company_name": "string|null",
+          "location": "string|null",
+          "summary": "string|null",
+          "search_phrases": ["string"],
+          "similarity": "number",
+          "start_date": "YYYY-MM-DD|null",
+          "end_date": "YYYY-MM-DD|null"
+        }
+      ],
+      "matched_child_cards": [
+        {
+          "title": "string|null",
+          "headline": "string|null",
+          "summary": "string|null",
+          "context": "string|null",
+          "tags": ["string"],
+          "search_phrases": ["string"],
+          "similarity": "number"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Expected LLM output:
+
+```json
+{
+  "people": [
+    {
+      "person_id": "uuid",
+      "why_matched": ["string", "string", "string"]
+    }
+  ]
+}
+```
+
+Runtime sanitization and fallback:
+
+- Per person: keep max 3 lines, dedupe, compact whitespace, max 120 chars per line.
+- If call/parse/sanitization fails for a person, deterministic bullets are used.
+
+### 7.4 Prompt Text (Active Runtime)
+
+`PROMPT_SEARCH_CLEANUP` (from `apps/api/src/prompts/search_filters.py`):
+
+```text
+You are a search query cleanup engine.
+
+Goal: Clean the user's search query for reliable structured extraction.
+
+RULES:
+1) Do NOT add facts or interpret beyond the text.
+2) Keep names, companies, tools, numbers EXACTLY as written.
+3) Fix typos/spacing. Preserve meaning.
+4) Output ONLY cleaned text. No commentary. No JSON.
+
+User query:
+{{USER_TEXT}}
+```
+
+`PROMPT_SEARCH_SINGLE_EXTRACT` (from `apps/api/src/prompts/search_filters.py`):
+
+```text
+You are a structured search-query parser for CONXA (intent-based people search).
+
+Convert the user query into JSON constraints that map to our DB.
+
+IMPORTANT:
+- Return ONLY valid JSON.
+- NEVER omit any key from the output schema.
+- Do NOT hallucinate; only extract what is explicitly present.
+- If not present, use null or [].
+- Normalize company/team for exact match: lowercase + trim -> company_norm / team_norm.
+
+Allowed values for intent_primary are:
+{{INTENT_ENUM}}
+
+OUTPUT SCHEMA (MUST match exactly):
+{
+  "query_original": "",
+  "query_cleaned": "",
+  "must": {
+    "company_norm": [],
+    "team_norm": [],
+    "intent_primary": [],
+    "domain": [],
+    "sub_domain": [],
+    "employment_type": [],
+    "seniority_level": [],
+    "location_text": null,
+    "city": null,
+    "country": null,
+    "time_start": null,
+    "time_end": null,
+    "is_current": null,
+    "open_to_work_only": null,
+    "offer_salary_inr_per_year": null
+  },
+  "should": {
+    "skills_or_tools": [],
+    "keywords": [],
+    "intent_secondary": []
+  },
+  "exclude": {
+    "company_norm": [],
+    "keywords": []
+  },
+  "search_phrases": [],
+  "query_embedding_text": "",
+  "confidence_score": 0.0
+}
+
+RULES:
+1) MUST vs SHOULD
+- MUST only if the query clearly requires it (e.g., "only", "must", exact city, exact company, salary, explicit open to work).
+- Otherwise put it in SHOULD.
+
+2) Salary
+- If query contains "RsX/month", set offer_salary_inr_per_year = X*12
+- If "RsX LPA" or "RsX/year", convert to per year
+- If salary text is unclear, add it to should.keywords and leave offer_salary_inr_per_year null
+
+3) Time
+- If explicit years/dates exist, fill time_start/time_end as YYYY-MM-DD when possible (YYYY-01-01/ YYYY-12-31 ok).
+- If relative ("last 2 years"), keep in should.keywords and leave dates null.
+
+4) Location
+- If city/country explicit, fill city/country and also location_text.
+- Otherwise only location_text if present.
+
+5) Query embedding text
+Create query_embedding_text as a concise text blob for semantic search including:
+must constraints + should terms + key nouns/verbs from query.
+Do not add new facts.
+
+6) search_phrases
+Generate 5-15 concise phrases combining the key constraints.
+
+INPUT:
+query_original:
+{{QUERY_ORIGINAL}}
+
+query_cleaned:
+{{QUERY_CLEANED}}
+```
+
+`get_why_matched_prompt(...)` template (from `apps/api/src/prompts/search_why_matched.py`):
+
+```text
+You are a search result explanation engine.
+
+Task:
+- Explain why each person was shown for the query.
+- Use only the provided evidence.
+
+Return ONLY valid JSON with this exact schema:
+{
+  "people": [
+    {
+      "person_id": "string",
+      "why_matched": ["string", "string", "string"]
+    }
+  ]
+}
+
+Rules:
+1) Keep each reason short (max 120 chars).
+2) Return 1-3 reasons per person.
+3) Mention concrete overlap with query constraints when possible (skills, domain, company, time, location, availability).
+4) Do not invent facts not present in input.
+5) Do not include markdown, bullets, or prose outside JSON.
+
+Input JSON:
+{{PAYLOAD_JSON}}
+```
+
+### 7.5 Present But Inactive Prompt Text
+
+Prompts present in file but not used in current runtime path:
 
 - `PROMPT_SEARCH_EXTRACT_FILTERS`
 - `PROMPT_SEARCH_VALIDATE_FILTERS`
+
+`PROMPT_SEARCH_EXTRACT_FILTERS`:
+
+```text
+You are a structured search-query parser for CONXA (intent-based people search).
+
+Your job: Convert a messy recruiter query into JSON filters + an embedding text.
+
+NON-NEGOTIABLE:
+- Return ONLY valid JSON.
+- NEVER omit any keys from the output schema.
+- Do NOT hallucinate. Only extract constraints explicitly present.
+- If a field is not present, set it to null or [].
+
+Allowed intent values (reuse experience intents):
+{{INTENT_ENUM}}
+
+OUTPUT SCHEMA (must match exactly):
+{
+  "query_original": "...",
+  "query_cleaned": "...",
+
+  "must": {
+    "intents": [],
+    "domains": [],
+    "sub_domains": [],
+    "company_names": [],
+    "company_types": [],
+    "employment_types": [],
+    "seniority_levels": [],
+    "skills": [],
+    "tools": [],
+    "keywords": [],
+    "location": { "city": null, "country": null, "location_text": null },
+    "time": { "start_date": null, "end_date": null, "is_ongoing": null, "time_text": null },
+    "min_years_experience": null,
+    "max_salary_inr_per_month": null,
+    "open_to_work_only": null
+  },
+
+  "should": {
+    "intents": [],
+    "domains": [],
+    "skills": [],
+    "tools": [],
+    "keywords": []
+  },
+
+  "exclude": {
+    "company_names": [],
+    "skills": [],
+    "tools": [],
+    "keywords": []
+  },
+
+  "search_phrases": [],
+  "query_embedding_text": "",
+  "confidence_score": 0.0
+}
+
+EXTRACTION RULES:
+1) MUST (strict filters - only these; embeddings do candidate generation):
+   - Put in must ONLY: explicit company/team names, explicit city (location), explicit time window (dates), explicit open_to_work_only, explicit salary cap/offer.
+   - must.company_names: only when user names specific company/team.
+   - must.location: only when user names specific city/country/place.
+   - must.time (start_date/end_date): only when user gives explicit date range.
+   - must.open_to_work_only: only when user explicitly says open to work / seeking / ready for job.
+   - must.max_salary_inr_per_month: only when user gives explicit salary/offer (e.g. "Rs20,000/month").
+2) SHOULD (rerank bonus only - everything else):
+   - Put in should: skills, tools, keywords, intents, domains, sub_domains, company_types, employment_types, seniority_levels, and any "X years experience" or similar. These do NOT filter out candidates; they boost ranking when present.
+   - min_years_experience -> put in should.keywords or leave null; do NOT use must.min_years_experience.
+3) TIME:
+   - If explicit dates: fill must.time start_date/end_date (YYYY-MM-DD best; else YYYY-MM).
+   - If relative only: put in time.time_text and keep dates null; do not put in must.
+   - Backend: cards with both dates must overlap query range; cards with missing start/end are kept but downranked.
+4) LOCATION:
+   - If explicit city/country: fill must.location.
+   - If vague: put in should.keywords, not must.location.
+5) SALARY (recruiter offer budget):
+   - If "Rs20,000/month" -> must.max_salary_inr_per_month = 20000. Interpreted as offer_salary_inr_per_year = 20000*12.
+   - If salary mentioned but unit unclear, put in should.keywords and leave salary null.
+6) OPEN TO WORK:
+   - Set must.open_to_work_only=true ONLY when explicit (e.g. "open to work", "seeking").
+7) KEYWORDS (in should):
+   - Put leftover meaningful terms into should.keywords (e.g. "fund managers", "research-heavy", "3 years experience").
+
+SEARCH PHRASES:
+- Generate 5-15 concise phrases combining the main constraints.
+
+QUERY EMBEDDING TEXT:
+- Make a single text string optimized for semantic search:
+  include must + should constraints + key context words,
+  but do not add new facts.
+
+INPUT:
+Original query:
+{{USER_TEXT}}
+
+Cleaned query:
+{{CLEANED_TEXT}}
+```
+
+`PROMPT_SEARCH_VALIDATE_FILTERS`:
+
+```text
+You are a strict validator for search filter JSON.
+
+INPUTS:
+query_original:
+{{QUERY_ORIGINAL}}
+
+query_cleaned:
+{{QUERY_CLEANED}}
+
+extracted_json:
+{{EXTRACTED_JSON}}
+
+RULES:
+- Return ONLY valid JSON in the same schema.
+- NEVER omit keys.
+- Remove hallucinated constraints not grounded in query_cleaned.
+- De-duplicate arrays, lowercase-normalize skills/tools where safe (keep original casing for company names).
+- confidence_score must be float in [0.0, 1.0].
+- Ensure query_embedding_text exists and includes all must/should terms.
+
+OUTPUT: same JSON schema as extraction.
+```
 
 ## 8) Schema Snapshots
 
@@ -427,6 +823,119 @@ Validation:
   "matched_parent_ids": ["uuid"],
   "matched_child_ids": ["uuid"],
   "why_matched": ["string"]
+}
+```
+
+### 8.5 Endpoint Input/Output Schemas
+
+`POST /search`
+
+Input:
+
+```json
+{
+  "query": "string",
+  "open_to_work_only": "boolean|null",
+  "preferred_locations": ["string"],
+  "salary_min": "number|null",
+  "salary_max": "number|null"
+}
+```
+
+Output:
+
+```json
+{
+  "search_id": "uuid",
+  "people": [
+    {
+      "id": "uuid",
+      "name": "string|null",
+      "headline": "string|null",
+      "bio": "string|null",
+      "similarity_percent": "integer|null",
+      "why_matched": ["string"],
+      "open_to_work": "boolean",
+      "open_to_contact": "boolean",
+      "work_preferred_locations": ["string"],
+      "work_preferred_salary_min": "number|null",
+      "matched_cards": ["ExperienceCardResponse"]
+    }
+  ]
+}
+```
+
+`POST /people/{person_id}/unlock-contact`
+
+Input:
+
+```json
+{
+  "search_id": "uuid"
+}
+```
+
+Output:
+
+```json
+{
+  "unlocked": "boolean",
+  "contact": {
+    "email_visible": "boolean",
+    "email": "string|null",
+    "phone": "string|null",
+    "linkedin_url": "string|null",
+    "other": "string|null"
+  }
+}
+```
+
+`GET /people/{person_id}?search_id=...`
+
+Output:
+
+```json
+{
+  "id": "uuid",
+  "display_name": "string|null",
+  "open_to_work": "boolean",
+  "open_to_contact": "boolean",
+  "work_preferred_locations": ["string"],
+  "work_preferred_salary_min": "number|null",
+  "experience_cards": ["ExperienceCardResponse"],
+  "card_families": ["CardFamilyResponse"],
+  "bio": "BioResponse|null",
+  "contact": "ContactDetailsResponse|null"
+}
+```
+
+`GET /people`
+
+Output:
+
+```json
+{
+  "people": [
+    {
+      "id": "uuid",
+      "display_name": "string|null",
+      "current_location": "string|null",
+      "experience_summaries": ["string"]
+    }
+  ]
+}
+```
+
+`GET /people/{person_id}/profile`
+
+Output:
+
+```json
+{
+  "id": "uuid",
+  "display_name": "string|null",
+  "bio": "BioResponse|null",
+  "card_families": ["CardFamilyResponse"]
 }
 ```
 
