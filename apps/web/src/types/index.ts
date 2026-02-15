@@ -196,6 +196,12 @@ export type RewriteTextResponse = {
   rewritten_text: string;
 };
 
+/** Result of POST /experiences/translate. Matches backend TranslateTextResponse. */
+export type TranslateTextResponse = {
+  translated_text: string;
+  source_language_code?: string | null;
+};
+
 /** Patch body for PATCH `/experience-card-children/:child_id`. Matches backend `ExperienceCardChildPatch`. */
 export type ExperienceCardChildPatch = {
   title?: string | null;

@@ -20,6 +20,13 @@ class RewriteTextResponse(BaseModel):
     rewritten_text: str
 
 
+class TranslateTextResponse(BaseModel):
+    """Result of POST /experiences/translate: translated English text."""
+
+    translated_text: str
+    source_language_code: Optional[str] = None
+
+
 class CardFamilyV1Response(BaseModel):
     """One parent Experience Card v1 + its child cards (validated)."""
 

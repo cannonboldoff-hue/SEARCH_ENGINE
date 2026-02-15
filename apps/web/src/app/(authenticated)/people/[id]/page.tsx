@@ -62,9 +62,9 @@ function DetailGrid({ rows, columns = 2 }: { rows: DetailRow[]; columns?: 1 | 2 
 
 function ExperienceCardDetails({
   card,
-  hideVisibilityField = false,
-  hideConfidenceScore = false,
-  hideTimestamps = false,
+  hideVisibilityField = true,
+  hideConfidenceScore = true,
+  hideTimestamps = true,
 }: {
   card: ExperienceCard;
   hideVisibilityField?: boolean;
@@ -216,9 +216,9 @@ function CardFamilyBlock({
         <CardContent className="pt-0">
           <ExperienceCardDetails
             card={parent}
-            hideVisibilityField={isSearchResultView}
-            hideConfidenceScore={isSearchResultView}
-            hideTimestamps={isSearchResultView}
+            hideVisibilityField={true}
+            hideConfidenceScore={true}
+            hideTimestamps={true}
           />
         </CardContent>
       </Card>

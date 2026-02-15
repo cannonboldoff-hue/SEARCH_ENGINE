@@ -28,6 +28,23 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
 
+    # Sarvam streaming speech-to-text
+    sarvam_api_key: str | None = None
+    sarvam_stt_ws_url: str = "wss://api.sarvam.ai/speech-to-text/ws"
+    sarvam_stt_model: str = "saarika:v2.5"
+    sarvam_stt_language_code: str = "en-IN"
+    sarvam_stt_sample_rate: int = 16000
+    sarvam_stt_input_audio_codec: str = "pcm_s16le"
+
+    # Sarvam text translation (for multilingual-to-English normalization)
+    sarvam_translate_url: str = "https://api.sarvam.ai/translate"
+    sarvam_text_lid_url: str = "https://api.sarvam.ai/text-lid"
+    sarvam_translate_model: str = "mayura:v1"
+    sarvam_translate_source_language_code: str = "auto"
+    sarvam_translate_target_language_code: str = "en-IN"
+    sarvam_translate_mode: str | None = None
+    sarvam_translate_max_chars: int = 900
+
     # Rate limiting (per-user when key_func uses user id; multi-instance needs Redis later)
     search_rate_limit: str = "10/minute"
     unlock_rate_limit: str = "30/minute"

@@ -1,5 +1,7 @@
 from .chat import ChatServiceError, ChatRateLimitError, get_chat_provider
 from .embedding import EmbeddingServiceError, get_embedding_provider
+from .speech import SpeechServiceError, SpeechConfigError, get_speech_provider
+from .translation import TranslationServiceError, TranslationConfigError, get_translation_provider
 
 __all__ = [
     "ChatServiceError",
@@ -7,4 +9,10 @@ __all__ = [
     "get_chat_provider",
     "EmbeddingServiceError",
     "get_embedding_provider",
+    "SpeechServiceError",
+    "SpeechConfigError",
+    "get_speech_provider",
+    "TranslationServiceError",
+    "TranslationConfigError",
+    "get_translation_provider",
 ]
