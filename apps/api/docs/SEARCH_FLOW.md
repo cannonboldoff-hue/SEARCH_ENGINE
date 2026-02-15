@@ -1,628 +1,340 @@
 # Search Flow Documentation (Code-Accurate)
 
-This document describes the current implementation in `apps/api` as of February 15, 2026.
+This document reflects the current implementation in `apps/api` as of February 15, 2026.
 
-Scope:
-- `POST /search` end-to-end pipeline
-- ranking, fallback, and explainability behavior
-- persistence and credit charging rules
-- related endpoints: profile view, unlock contact, discover, public profile
+## 1) Key Updates
 
-## 1) Quick Navigation
+- Search orchestration now lives in `apps/api/src/services/search_logic.py`; `apps/api/src/services/search.py` is a facade only.
+- `TOP_PEOPLE` is now `6`.
+- Search idempotency is replay-only (no reservation row, no explicit 409 "in progress" path).
+- Empty search responses are still charged 1 credit.
+- `similarity_percent` is derived from final blended ranking score (clamped to 0-100), not pure vector similarity.
 
-| Area | File | Key functions |
+## 2) Quick Navigation
+
+| Area | File | Key Functions |
 |---|---|---|
 | Search routes | `apps/api/src/routers/search.py` | `search`, `get_person`, `unlock_contact`, `list_people`, `get_person_public_profile` |
-| Search service | `apps/api/src/services/search.py` | `run_search`, `_apply_card_filters`, `_collapse_and_rank_persons`, `_generate_llm_why_matched` |
+| Search facade | `apps/api/src/services/search.py` | `SearchService.search/get_profile/unlock/list_people/get_public_profile` |
+| Search pipeline | `apps/api/src/services/search_logic.py` | `run_search`, `_apply_card_filters`, `_collapse_and_rank_persons`, `_generate_llm_why_matched` |
+| Profile view flows | `apps/api/src/services/search_profile_view.py` | `get_person_profile`, `list_people_for_discover`, `get_public_profile_impl` |
+| Unlock flow | `apps/api/src/services/search_contact_unlock.py` | `unlock_contact` |
 | Chat parsing | `apps/api/src/providers/chat.py` | `parse_search_filters`, `_chat_json`, `_chat` |
-| Filter post-processing | `apps/api/src/services/filter_validator.py` | `validate_and_normalize` |
-| Search prompts | `apps/api/src/prompts/search_filters.py` | `PROMPT_SEARCH_CLEANUP`, `PROMPT_SEARCH_SINGLE_EXTRACT` |
-| Explainability prompt | `apps/api/src/prompts/search_why_matched.py` | `get_why_matched_prompt` |
+| Filter normalization | `apps/api/src/services/filter_validator.py` | `validate_and_normalize` |
 | Schemas | `apps/api/src/schemas/search.py` | `SearchRequest`, `ParsedConstraintsPayload`, `SearchResponse` |
-| DB models | `apps/api/src/db/models.py` | `Search`, `SearchResult`, `IdempotencyKey`, `UnlockContact`, `PersonProfile` |
-| Credits + idempotency helpers | `apps/api/src/services/credits.py` | `get_balance`, `deduct_credits`, `get_idempotent_response`, `save_idempotent_response` |
-| Constants/config | `apps/api/src/core/constants.py`, `apps/api/src/core/config.py` | `SEARCH_RESULT_EXPIRY_HOURS`, rate limits, model config |
-| Frontend consumption | `apps/web/src/components/search/person-result-card.tsx` | `why_matched` display + fallback text |
+| Credits + idempotency | `apps/api/src/services/credits.py` | `get_balance`, `deduct_credits`, `get_idempotent_response`, `save_idempotent_response` |
+| Models | `apps/api/src/db/models.py` | `Search`, `SearchResult`, `IdempotencyKey`, `UnlockContact`, `PersonProfile` |
+| Frontend result card | `apps/web/src/components/search/person-result-card.tsx` | consumes `similarity_percent`, `why_matched`, `matched_cards` |
 
-## 2) API Surface
+## 3) API Surface
 
-### 2.1 `POST /search`
+### 3.1 `POST /search`
 
-- Route: `POST /search`
-- Auth: required (`current_user` dependency)
+- Auth: required
 - Rate limit: `search_rate_limit` (default `10/minute`)
 - Optional header: `Idempotency-Key`
-- Body: `SearchRequest`
+- Request: `SearchRequest`
 - Response: `SearchResponse`
 
-### 2.2 Related endpoints
+### 3.2 Related endpoints
 
 - `GET /people/{person_id}?search_id=...`
-  - search-session-gated profile for a person in that search result set
+  - search-session-gated profile view
 - `POST /people/{person_id}/unlock-contact`
-  - unlocks contact details for a person in that search session
+  - unlock contact for a person within a valid search session
 - `GET /people`
   - discover list (people with at least one visible parent card)
 - `GET /people/{person_id}/profile`
-  - public-profile style data (bio + card families), no search session needed
+  - public-profile style response (still auth-protected by router)
 
-## 3) End-to-End: `run_search`
+## 4) End-to-End `run_search`
 
-File: `apps/api/src/services/search.py`
+File: `apps/api/src/services/search_logic.py`
 
-High-level sequence:
+Execution order:
 
-1. Reserve/read idempotency key
-2. Balance pre-check
-3. Parse query into constraints (LLM) with deterministic fallback
-4. Normalize constraints
-5. Apply request-level overrides
-6. Embed query text
-7. Build lexical bonus map
-8. Retrieve vector candidates with fallback tiers
-9. Collapse card-level matches to person-level scores
-10. Rerank ties (salary/date preference)
-11. Build explainability (`why_matched`)
-12. Build response list
-13. Persist search + results + idempotency response + debit credit
+1. Optional idempotency replay check
+2. Credit pre-check (`balance >= 1`)
+3. Parse query via LLM and deterministic normalize/validate
+4. Resolve request overrides (`open_to_work_only`, `salary_max`)
+5. Embed query text
+6. If embedding is empty: create empty search response (charged)
+7. Build lexical query and lexical bonus map
+8. Build normalized constraint term context
+9. Fetch vector candidates with fallback tiers
+10. Collapse card-level results to person-level blended scores
+11. Keep top `TOP_PEOPLE` (`6`)
+12. If empty ranked list: create empty search response (charged)
+13. Load people/profiles/child evidence objects
+14. Apply post-rank tiebreak sorting
+15. Create `Search` row and deduct 1 credit
+16. Prepare pending `SearchResult` rows and LLM evidence payload
+17. Generate `why_matched` via one batched LLM call (fallback to deterministic bullets)
+18. Insert `SearchResult` rows
+19. Fill child-only matched-card display fallback
+20. Build API response payload
+21. Persist idempotency response payload when key exists
 
-### 3.1 Step 0: Idempotency reservation (`_reserve_idempotency_key_or_return`)
+### 4.1 Idempotency behavior (`POST /search`)
 
-Behavior when `Idempotency-Key` is provided:
+Current behavior is replay-only:
 
-- If session currently has an open transaction, commit first.
-- Insert `IdempotencyKey(key, person_id, endpoint, response_status=None, response_body=None)` inside its own transaction.
-- If insert hits unique constraint (`IntegrityError`):
-  - Load existing row via `get_idempotent_response(...)`.
-  - If `response_body` is already stored, return it immediately as `SearchResponse`.
-  - If row exists but response is not yet written, return `409 Request in progress`.
+- On request start, code checks `idempotency_keys` for `(key, person_id, endpoint)`.
+- If a row exists and has `response_body`, response is returned immediately.
+- There is no "reservation" write before work starts.
+- There is no explicit "request in progress" response path.
 
-If no key is provided, search proceeds normally with no idempotency short-circuit.
+Implementation note:
+- `save_idempotent_response(...)` inserts a new row at the end of successful processing.
+- Because rows are inserted, not updated, concurrent same-key first requests can race on unique index `(key, person_id, endpoint)`.
 
-### 3.2 Step 1: Credit pre-check
+### 4.2 Parse and normalize
 
-- `balance = await get_balance(db, searcher_id)`
-- If `balance < 1`, throw `HTTP 402 Insufficient credits`.
+- Parser call: `chat.parse_search_filters(body.query)`
+- On `ChatServiceError`, fallback payload is built from raw query:
+  - `query_original`, `query_cleaned`, `query_embedding_text`
+- Parsed payload is normalized by `validate_and_normalize(...)`
 
-Note: this is a pre-check only. Actual debit is done later during persistence.
-
-### 3.3 Step 2: Parse query with chat provider
-
-- Provider: `chat = get_chat_provider()`
-- Parse: `filters_raw = await chat.parse_search_filters(body.query)`
-
-`parse_search_filters` runs:
-
-1. `PROMPT_SEARCH_CLEANUP` (plain text cleanup)
-2. `PROMPT_SEARCH_SINGLE_EXTRACT` (strict JSON schema extraction)
-
-If parser fails (`ChatServiceError`), the service falls back to:
-
-```json
-{
-  "query_original": "<raw query>",
-  "query_cleaned": "<raw query>",
-  "query_embedding_text": "<raw query>"
-}
-```
-
-Search still continues.
-
-### 3.4 Step 3: Deterministic normalize/validate
-
-- `payload = ParsedConstraintsPayload.from_llm_dict(filters_raw)`
-- `payload = validate_and_normalize(payload)`
-- `filters_dict = payload.model_dump(mode="json")`
-
-`validate_and_normalize` currently enforces:
-
-- list dedupe and token cleanup
-- valid `intent_primary` only (must be in `Intent` enum)
-- recall protection demotions from MUST to SHOULD:
-  - cap MUST counts (intent/company/team/domain)
-  - push overflow into SHOULD (`intent_secondary` or `keywords`)
-- low-confidence handling:
-  - if `confidence_score < 0.5`, demote `sub_domain` and extra `domain` into SHOULD keywords
-- date normalization to `YYYY-MM-DD` (accepts `YYYY-MM-DD`, `YYYY-MM`, `YYYY`)
+Normalization includes:
+- dedupe and cleanup of lists/tokens
+- enum validation for `intent_primary`
+- MUST caps and demotions to SHOULD (recall protection)
+- confidence-based demotion for weaker constraints
+- date normalization (`YYYY-MM-DD`, `YYYY-MM`, `YYYY` accepted)
 - date swap if start > end
 - salary normalization to INR/year
-  - heuristic: values under `200000` treated as monthly and multiplied by 12
-- exclude + search phrase dedupe/normalization
 
-Validation pseudocode (date parsing + bounds checking):
-
-```python
-MIN_YEAR = 1900
-MAX_YEAR = utc_today().year + 1
-
-def parse_date_ymd(s: str | None) -> date | None:
-    if not s:
-        return None
-    s = s.strip()
-    if matches(s, r"^\d{4}-\d{2}-\d{2}$"):
-        d = date_from_format(s, "%Y-%m-%d")
-    elif matches(s, r"^\d{4}-\d{2}$"):
-        d = date_from_format(s, "%Y-%m")      # normalize to first day of month
-    elif matches(s, r"^\d{4}$"):
-        d = date(int(s), 1, 1)                # normalize to Jan 1
-    else:
-        raise ValidationError("Invalid date format")
-    if d.year < MIN_YEAR or d.year > MAX_YEAR:
-        raise ValidationError("Date out of bounds")
-    return d
-
-time_start = parse_date_ymd(must.time_start)
-time_end = parse_date_ymd(must.time_end)
-if time_start and time_end and time_start > time_end:
-    time_start, time_end = time_end, time_start
-```
-
-Code note:
-- Current code enforces format parse + start/end swap.
-- Explicit year bounds are a recommended hardening check (not currently enforced in code).
-
-### 3.5 Step 4: Request-body overrides
+### 4.3 Request overrides
 
 - `open_to_work_only`:
-  - uses `body.open_to_work_only` if provided
-  - otherwise uses parsed `must.open_to_work_only` (default false)
-- `offer_salary_inr_per_year`:
-  - uses `body.salary_max` first (assumed INR/year)
-  - else uses parsed `must.offer_salary_inr_per_year`
+  - use `body.open_to_work_only` when provided
+  - else use parsed `must.open_to_work_only`
+- offer salary (`offer_salary_inr_per_year`):
+  - use `body.salary_max` when provided
+  - else use parsed `must.offer_salary_inr_per_year`
+
+`salary_min`:
+- validated in schema (`salary_min <= salary_max`)
+- not used in SQL filtering or ranking
+
+### 4.4 Embedding and empty-vector path
+
+- Embedding text priority:
+  1. `payload.query_embedding_text`
+  2. `payload.query_original`
+  3. `body.query`
+- Embedding provider failures raise `HTTP 503`.
+- If embedded vector list is empty after normalization, `_create_empty_search_response(...)` is used.
 
 Important:
-- `salary_min` from `SearchRequest` is not used in SQL filtering/ranking in this flow.
+- `_create_empty_search_response(...)` creates a `Search` row, deducts 1 credit, and returns `people=[]`.
 
-Validation pseudocode (salary range `min <= max`):
+### 4.5 Lexical bonus map
 
-```python
-if body.salary_min is not None and body.salary_max is not None:
-    if body.salary_min > body.salary_max:
-        raise HTTPException(422, detail="salary_min must be <= salary_max")
-```
+`_lexical_candidates(...)`:
 
-Code note:
-- `salary_max` is used as `offer_salary_inr_per_year` when present.
-- `salary_min` is currently accepted but not used in retrieval/ranking SQL.
+- Runs Postgres FTS (`plainto_tsquery`) on:
+  - `experience_cards.search_document` (visible parents)
+  - `experience_card_children.search_document` joined to visible parents
+- Query text built from:
+  - all `search_phrases`
+  - up to first 5 SHOULD keywords
+  - fallback to cleaned/raw query (trimmed to 200 chars)
+- Per-person lexical score is normalized and capped to `[0, LEXICAL_BONUS_MAX]`.
+- On failure, lexical bonus is skipped.
 
-### 3.6 Step 5: Embed query text
+### 4.6 Candidate retrieval with fallback tiers
 
-Embedding text priority:
-
-1. `payload.query_embedding_text`
-2. `payload.query_original`
-3. `body.query`
-
-Execution:
-
-- `embed_provider = get_embedding_provider()`
-- `vecs = await embed_provider.embed([embedding_text])`
-- `query_vec = normalize_embedding(vecs[0], embed_provider.dimension)`
-
-Failure handling:
-
-- Embedding provider/config/runtime failure -> `HTTP 503`.
-- Empty normalized vector -> `_create_empty_search_response(...)`.
-
-`_create_empty_search_response` behavior:
-
-- creates `Search` row (with parsed filters + expiry)
-- writes idempotency response if key was provided
-- returns `SearchResponse(search_id=..., people=[])`
-- does not deduct credits
-
-### 3.7 Step 6: Lexical bonus map (`_lexical_candidates`)
-
-Builds a text query (`query_ts`) from:
-
-- all `payload.search_phrases`
-- up to first 5 `payload.should.keywords`
-- fallback to cleaned/raw query (trimmed to 200 chars) if needed
-
-FTS queries:
-
-- parents: `experience_cards.search_document` (visible cards only)
-- children: `experience_card_children.search_document` joined to visible parent cards
-
-Scoring:
-
-- per source uses `ts_rank_cd(...)`
-- per person keeps max rank observed
-- normalize by global max rank
-- map to bonus in `[0, LEXICAL_BONUS_MAX]`
-
-If lexical query fails, search continues without lexical bonus.
-
-### 3.8 Step 7: Candidate retrieval + fallback tiers
-
-The service loops from `fallback_tier = 0` until:
+The search loop increases fallback tier until either:
 
 - unique matched people >= `MIN_RESULTS` (`15`), or
 - tier reaches `FALLBACK_TIER_COMPANY_TEAM_SOFT` (`3`)
 
-Per iteration it runs three queries:
+Per tier, three queries run:
 
-1. Parent vector candidates
-  - `ExperienceCard.embedding.cosine_distance(query_vec)` as `dist`
-  - visible + embedding not null
-  - ordered by distance, limited by `OVERFETCH_CARDS` (`50`)
-2. Child min-distance per person
-  - min child distance grouped by child person
-3. Child evidence rows
-  - row_number window per person ordered by child distance
-  - keeps top `MATCHED_CARDS_PER_PERSON` (`3`) child rows per person
+1. Parent candidates (`ExperienceCard.embedding.cosine_distance(query_vec)`), `limit OVERFETCH_CARDS`
+2. Child best distance per person (`min(...)`)
+3. Child evidence rows with `row_number` window; keep top `MATCHED_CARDS_PER_PERSON` (`3`) per person
 
-All three queries reuse `_apply_card_filters(...)`.
+### 4.7 `_apply_card_filters` semantics
 
-### 3.9 Filter semantics (`_apply_card_filters`)
-
-Always-eligible fields when present:
-
+Always-applied when present:
 - `intent_primary`, `domain`, `sub_domain`, `employment_type`, `seniority_level`, `is_current`
 
-Tier-dependent fields:
+Tier-controlled:
+- `company_norm`, `team_norm` -> only when `apply_company_team`
+- location (`city`, `country`, `location_text`) -> only when `apply_location`
+- time overlap -> only when `apply_time`
 
-- company/team filters only when `apply_company_team == True`
-- location filters only when `apply_location == True`
-- time overlap filters only when `apply_time == True`
+Time filter details:
+- only applied when both `time_start` and `time_end` are present
+- requires card has at least one date bound (`start_date` or `end_date`)
+- overlap logic allows null on one side but still requires overlap against query window
 
-Location filter:
+Exclude filters (never relaxed by tier logic):
+- `NOT company_norm IN (...)`
+- `NOT search_phrases && exclude_keywords`
 
-- if any of `city`, `country`, `location_text` is set:
-  - OR-combined `ExperienceCard.location ILIKE '%term%'`
+PersonProfile join:
+- applied only when `open_to_work_only` or salary offer filter exists
+- `open_to_work_only` enforces `PersonProfile.open_to_work = true`
+- optional preferred location overlap uses `PersonProfile.work_preferred_locations`
+- salary offer filter keeps rows where:
+  - `work_preferred_salary_min IS NULL`, or
+  - `work_preferred_salary_min <= offer_salary_inr_per_year`
 
-Location normalization details:
+### 4.8 Tier relaxation policy
 
-- Current behavior:
-  - case-insensitive substring match via `ILIKE`
-  - no accent/diacritic normalization
-  - no fuzzy threshold (exact substring only)
-- If accent-insensitive matching is enabled (recommended):
-  - normalize both query/card strings with Unicode NFKD + diacritic strip, or DB-side `unaccent(lower(...))`
-- If fuzzy matching is enabled (optional):
-  - use trigram/phonetic similarity in addition to substring
-  - recommended threshold: `similarity >= 0.35`
+- Tier 0: strict (company/team + location + time all active)
+- Tier 1: time relaxed
+- Tier 2: time + location relaxed
+- Tier 3: time + location + company/team relaxed
 
-Time filter:
+Not tier-relaxed:
+- `intent_primary`, `domain`, `sub_domain`, `employment_type`, `seniority_level`, `is_current`, exclude filters
 
-- requires at least one card date bound (`start_date` or `end_date`)
-- overlap logic with nullable bounds:
-  - if query has `time_end`: card start must be null or <= query end
-  - if query has `time_start`: card end must be null or >= query start
+### 4.9 Person scoring and ranking
 
-Exclude filter (never relaxed):
-
-- company exclusion: `NOT company_norm IN (...)`
-- keyword exclusion: `NOT search_phrases && exclude_keywords`
-
-PersonProfile join is added only when needed:
-
-- if `open_to_work_only` OR salary filter exists:
-  - join `PersonProfile` on `ExperienceCard.person_id == PersonProfile.person_id`
-
-Join-side constraints:
-
-- if `open_to_work_only == True`:
-  - `PersonProfile.open_to_work == True`
-  - if request has `preferred_locations`, require overlap with `PersonProfile.work_preferred_locations`
-- if salary filter exists:
-  - keep rows where `work_preferred_salary_min IS NULL` OR `<= offer_salary_inr_per_year`
-
-### 3.10 Tier relaxation policy
-
-- Tier 0 (`strict`): apply company/team + time + location
-- Tier 1 (`time soft`): drop time filter
-- Tier 2 (`location soft`): drop time + location filters
-- Tier 3 (`company/team soft`): drop time + location + company/team filters
-
-Intent/domain/employment/seniority/exclude are not tier-relaxed by this mechanism.
-
-### 3.11 Step 8: Collapse and score persons (`_collapse_and_rank_persons`)
-
-Similarity conversion:
-
+Core similarity transform:
 - `sim = 1 / (1 + distance)`
 
-Validation pseudocode (distance/similarity NaN/inf handling):
-
-```python
-import math
-
-def safe_distance(raw_dist: object) -> float:
-    if raw_dist is None:
-        return 1.0
-    try:
-        d = float(raw_dist)
-    except (TypeError, ValueError):
-        return 1.0
-    if not math.isfinite(d):
-        return 1.0
-    return max(0.0, d)
-
-def safe_similarity(raw_dist: object) -> float:
-    d = safe_distance(raw_dist)
-    sim = 1.0 / (1.0 + d)
-    return sim if math.isfinite(sim) else 0.0
-```
-
-Code note:
-- Current code handles `None` distances.
-- Explicit `NaN`/`inf` guards are a recommended hardening step.
-
-Inputs used:
-
-- parent rows with distance
-- child rows (best distance per person)
-- child evidence rows
-- lexical bonus map
-- parsed SHOULD signals
-- fallback tier + query_has_time/query_has_location
-
-Scoring components per person:
-
-- `parent_best`
-- `child_best`
-- `avg_top3` across top similarities from parent+child evidence
-- `lex_bonus` from lexical map
-- SHOULD bonus (two places):
-  - card-level boost is added into each parent sim before aggregation
-  - person-level aggregate bonus from summed should-hits, capped at `SHOULD_BONUS_MAX`
-- penalties (tier-aware):
-  - missing-date penalty when query has time and tier has relaxed time
-  - location-mismatch penalty when query has location and tier has relaxed location
-
-Formula:
-
+Per-person blended score:
 - `base = 0.65*parent_best + 0.25*child_best + 0.10*avg_top3`
-- `final = max(0, base + lex_bonus + should_bonus - penalties)`
+- `final = max(0, base + lexical_bonus + should_bonus - penalties)`
 
-Output:
+Where:
+- SHOULD boosts are applied in two places:
+  - card-level: `sim + should_hits * SHOULD_BOOST`
+  - person-level aggregate: `min(total_should_hits * SHOULD_BOOST, SHOULD_BONUS_MAX)`
+- penalties are tier-aware:
+  - missing date penalty when query has time and time got relaxed
+  - location mismatch penalty when query has location and location got relaxed
 
-- parent cards with per-card score by person
-- child best similarity by person
-- child evidence tuples by person
-- ordered best parent ids inferred from child evidence
-- sorted person list `(person_id, final_score desc)`
+### 4.10 Post-rank tiebreakers
 
-Then `top_20 = person_best[:TOP_PEOPLE]` where `TOP_PEOPLE = 5`.
+After initial ranking, optional deterministic sorts run:
 
-### 3.12 Step 9: Post-rank reordering (tie-aware keys)
+- salary-aware sort if offer salary exists:
+  - key: `(-score, has_stated_salary_min_first)`
+- date-overlap-aware sort if query has full time range:
+  - key: `(-score, has_full_date_overlap_first)`
 
-After loading `Person` + `PersonProfile` for top candidates:
+### 4.11 Similarity and explainability
 
-- If salary filter is active:
-  - sorting key: `(-score, has_stated_salary_min_first)`
-- If query has explicit time bounds:
-  - sorting key: `(-score, has_date_overlap_first)`
+`similarity_percent`:
+- computed by `_score_to_similarity_percent(score)`
+- clamps final blended score to `[0,1]`, then maps to `0-100`
 
-`-score` remains first key, so score ordering is preserved.
+`why_matched` pipeline:
+- deterministic fallback bullets are generated first (up to 6 lines)
+- one batched LLM call attempts higher-quality reasons
+- LLM reasons are sanitized:
+  - max 3 lines per person
+  - dedupe
+  - compacted and length-bounded
+- if LLM fails or output is unusable, fallback bullets are used
 
-Tie-breaking epsilon definition:
+### 4.12 Persistence order
 
-- Recommended absolute epsilon: `SCORE_EPSILON_ABS = 1e-6`
-- Treat two scores as equal when `abs(score_a - score_b) <= SCORE_EPSILON_ABS`
-- Apply secondary keys (salary/date) only within those equal-score groups
+On non-empty ranked results:
 
-Code note:
-- Current implementation uses exact float ordering (`-score`) with no explicit epsilon bucket.
+1. Insert `Search` (`query_text`, parsed filters, `extra.fallback_tier`, `expires_at`)
+2. Deduct 1 credit (`reason="search"`, `reference_type="search_id"`)
+3. Insert `SearchResult` rows with:
+  - `rank`, rounded `score`
+  - `extra.matched_parent_ids`, `extra.matched_child_ids`, `extra.why_matched`
+4. Save idempotency response row if key provided
 
-### 3.13 Step 10: Build matched IDs, explainability, and UI similarity
+On empty results (`_create_empty_search_response`):
 
-For each ranked person:
+1. Insert `Search`
+2. Deduct 1 credit
+3. Return `SearchResponse(search_id=..., people=[])`
+4. Save idempotency response row if key provided
 
-- decide `matched_parent_ids` (favor parent inferred from best child evidence when present)
-- collect top `matched_child_ids`
-- build deterministic fallback bullets from parent/child `search_phrases` and snippets
-- build compact LLM evidence payload via `_build_person_why_evidence`
-- compute `similarity_percent` from pure semantic similarity only (`_semantic_similarity_by_person`)
+Transaction semantics:
+- `get_db()` commits once at request end and rolls back on exception.
+- `run_search` itself does not start explicit nested transactions.
 
-Important:
-
-- UI similarity is based on vector similarity only.
-- Final ranking score includes lexical/should/penalty adjustments.
-
-### 3.14 Step 11: LLM explainability (`_generate_llm_why_matched`)
-
-Single batched LLM call for all top people:
-
-- prompt: `get_why_matched_prompt(...)`
-- call: `chat.chat(prompt, max_tokens=1200, temperature=0.1)`
-- expected JSON:
-
-```json
-{
-  "people": [
-    {
-      "person_id": "uuid",
-      "why_matched": ["reason 1", "reason 2", "reason 3"]
-    }
-  ]
-}
-```
-
-Sanitization:
-
-- max 3 lines/person
-- case-insensitive dedupe
-- trim + normalize whitespace
-- max 120 chars/line
-
-Fallback behavior:
-
-- if LLM call or parse fails, deterministic bullets are used.
-
-Failure modes (explicit):
-
-- Timeout / network / provider HTTP errors:
-  - surfaced as `ChatServiceError` from chat provider
-  - behavior: deterministic fallback bullets
-  - log expectation: warning with error class and provider status if available
-- Invalid JSON:
-  - `json.loads(...)` failure after fence stripping
-  - behavior: deterministic fallback bullets
-  - log expectation: warning with parse error type
-- Sanitization failure (schema-like but unusable lines):
-  - response JSON may parse, but all lines may be dropped by sanitization (empty/dup/too noisy)
-  - behavior: per-person fallback to deterministic bullets where sanitized output is empty
-  - log/metrics expectation: counter for sanitized-empty persons
-
-Metrics/logging expectations (recommended):
-
-- Counters:
-  - `search.llm.parse.timeout_or_http_error`
-  - `search.llm.parse.invalid_json`
-  - `search.llm.why.timeout_or_http_error`
-  - `search.llm.why.invalid_json`
-  - `search.llm.why.sanitized_empty_person`
-- Include tags: `endpoint`, `model`, `provider`, `fallback_used`.
-
-### 3.15 Step 12: Child-only matched card handling
-
-If a person is ranked via child embeddings but has no parent card in `person_cards`:
-
-- try to load parent cards inferred from child evidence (ordered, up to 3)
-- if still none, fallback to latest visible parent cards for that person
-
-This guarantees stable `matched_cards` output where possible.
-
-### 3.16 Step 13: Build response list (`_build_search_people_list`)
-
-For each top person:
-
-- `id`, `name`, `headline`, `bio`
-- `similarity_percent`
-- `why_matched`
-- `open_to_work`, `open_to_contact`
-- `work_preferred_locations`, `work_preferred_salary_min`
-- up to 3 `matched_cards`
-
-Response:
-
-- `SearchResponse(search_id=<search_rec.id>, people=[...])`
-
-### 3.17 Step 14: Persist search, debit credits, write idempotency response
-
-Persistence transaction:
-
-1. Create `Search`:
-  - `query_text = body.query`
-  - `parsed_constraints_json = filters_dict`
-  - `filters = filters_dict`
-  - `extra = {"fallback_tier": fallback_tier}`
-  - `expires_at = now + SEARCH_RESULT_EXPIRY_HOURS`
-2. Debit 1 credit:
-  - `deduct_credits(..., reason="search", reference_type="search_id", reference_id=search_rec.id)`
-3. Insert one `SearchResult` per ranked person:
-  - `rank`, rounded `score`, and `extra` (`matched_parent_ids`, `matched_child_ids`, `why_matched`)
-4. Update reserved idempotency row with final HTTP 200 response payload.
-
-If credit debit fails at this stage, request fails with `402`.
-
-Credit rule summary:
-
-- charged only when non-empty ranked results reach this persistence stage
-- not charged for empty-vector path or empty-result path that returns through `_create_empty_search_response`
-
-Transaction semantics clarification:
-
-- Credit deduction happens in this persistence transaction (post-fetch/post-rank), not at Step 1.
-- Step 1 is a pre-check only (`get_balance`) and does not lock or deduct.
-- Credit deduction does not happen in Step 10 (`Build matched IDs...`); it happens here in Step 14.
-- If concurrent spend reduces balance between Step 1 and Step 14, `deduct_credits(...)` returns false and this transaction fails with `402`.
-
-Rollback behavior:
-
-- Any exception inside Step 14 transaction rolls back all writes in that block:
-  - `Search` insert
-  - credit debit + ledger write
-  - all `SearchResult` inserts
-  - idempotency response update
-- If a reserved idempotency key exists and the request fails, `run_search(...)` calls `_release_idempotency_key_on_failure(...)` to delete unfinished reservation rows (`response_body IS NULL`) so retries can proceed.
-
-## 4) Session Validation and Expiry
+## 5) Session Validation and Expiry
 
 Used by profile/unlock flows (`_validate_search_session`):
 
-- `search_id` must exist and belong to caller
+- search must exist and belong to caller
 - search must not be expired
-- optional `person_id` must exist in `SearchResult` for that `search_id`
+- when `person_id` supplied, person must be present in `search_results`
 
-Expiry check (`_search_expired`):
-
-- primary: compare `search.expires_at` with current UTC time
-- fallback (legacy safety): compare `created_at` with `SEARCH_RESULT_EXPIRY_HOURS`
+Expiry logic (`_search_expired`):
+- primary: `search.expires_at < now_utc`
+- fallback: `created_at + SEARCH_RESULT_EXPIRY_HOURS`
 
 Default expiry window:
-
 - `SEARCH_RESULT_EXPIRY_HOURS = 24`
 
-## 5) Related Endpoint Flows
+## 6) Related Endpoint Flows
 
-### 5.1 `GET /people/{person_id}?search_id=...`
+### 6.1 `GET /people/{person_id}?search_id=...`
 
-Function: `get_person_profile(...)`
+`get_person_profile(...)`:
 
-- rejects missing `search_id` with `400`
-- validates search session + membership
-- loads person/profile/visible cards/unlock row in parallel
-- contact visibility:
-  - returned only when target is open (`open_to_work` or `open_to_contact`)
-  - and requester has unlocked contact for that search
-- salary/location visibility:
-  - returned only when target is `open_to_work`
-  - otherwise returns masked values (`[]`, `null`)
+- requires `search_id`
+- validates search session and person membership
+- loads person/profile/visible parent cards/unlock row in parallel
+- contact returned only if:
+  - person is open (`open_to_work` or `open_to_contact`), and
+  - searcher has unlocked this person for this search
+- `work_preferred_locations` and `work_preferred_salary_min` are shown only when target is `open_to_work`
 - returns both legacy `experience_cards` and structured `card_families`, plus `bio`
 
-### 5.2 `POST /people/{person_id}/unlock-contact`
+### 6.2 `POST /people/{person_id}/unlock-contact`
 
-Function: `unlock_contact(...)`
+`unlock_contact(...)`:
 
-- endpoint-specific idempotency key namespace:
-  - `POST /people/{person_id}/unlock-contact`
+- endpoint-scoped idempotency key: `POST /people/{person_id}/unlock-contact`
+- idempotency replay check at start (same replay-only behavior)
 - validates search session + person membership
 - rejects target if neither `open_to_work` nor `open_to_contact` (`403`)
-- if already unlocked for `(searcher, target, search_id)`, returns success without charging
-- else:
-  - pre-check balance
-  - create `UnlockContact` row
+- if already unlocked for `(searcher, target, search_id)`, returns success without charge
+- otherwise:
+  - pre-check credits
+  - create `UnlockContact`
   - deduct 1 credit (`reason="unlock_contact"`)
-- stores idempotent response payload if idempotency key was provided
+- saves idempotency response only when this request reaches the save call
 
-### 5.3 `GET /people`
+### 6.3 `GET /people`
 
-Function: `list_people_for_discover(...)`
+`list_people_for_discover(...)`:
 
-- includes people with at least one visible parent card
+- includes only people with at least one visible parent card
 - returns:
   - `id`, `display_name`
   - `current_location` from `PersonProfile.current_city`
   - up to 5 latest non-empty parent `summary` values
 
-### 5.4 `GET /people/{person_id}/profile`
+### 6.4 `GET /people/{person_id}/profile`
 
-Function: `get_public_profile_impl(...)`
+`get_public_profile_impl(...)`:
 
-- auth is currently required by router dependency
-- no `search_id` session check
-- returns public-profile style payload:
-  - `id`, `display_name`, `bio`, `card_families`
+- router currently requires auth
+- no search session required
+- returns `id`, `display_name`, `bio`, `card_families`
 
-## 6) Active Prompting in Search
+## 7) Active Prompting
 
-Active in runtime search path:
+Active in current search runtime:
 
-- cleanup prompt: `PROMPT_SEARCH_CLEANUP`
-- single extract prompt: `PROMPT_SEARCH_SINGLE_EXTRACT`
-- explainability prompt: `get_why_matched_prompt`
+- cleanup: `PROMPT_SEARCH_CLEANUP`
+- extraction: `PROMPT_SEARCH_SINGLE_EXTRACT`
+- explainability: `get_why_matched_prompt`
 
-Present but not used in current `parse_search_filters` runtime path:
+Present in prompt file but not used in current runtime path:
 
 - `PROMPT_SEARCH_EXTRACT_FILTERS`
 - `PROMPT_SEARCH_VALIDATE_FILTERS`
 
-## 7) Schema Snapshots
+## 8) Schema Snapshots
 
-### 7.1 `SearchRequest`
+### 8.1 `SearchRequest`
 
 ```json
 {
@@ -634,7 +346,10 @@ Present but not used in current `parse_search_filters` runtime path:
 }
 ```
 
-### 7.2 Parsed constraints (`ParsedConstraintsPayload`)
+Validation:
+- if both `salary_min` and `salary_max` exist, `salary_min <= salary_max`
+
+### 8.2 Parsed constraints (`ParsedConstraintsPayload`)
 
 ```json
 {
@@ -672,7 +387,7 @@ Present but not used in current `parse_search_filters` runtime path:
 }
 ```
 
-### 7.3 `SearchResponse`
+### 8.3 `SearchResponse`
 
 ```json
 {
@@ -695,7 +410,7 @@ Present but not used in current `parse_search_filters` runtime path:
 }
 ```
 
-### 7.4 Persisted metadata
+### 8.4 Persisted metadata
 
 `Search.extra`:
 
@@ -715,13 +430,13 @@ Present but not used in current `parse_search_filters` runtime path:
 }
 ```
 
-## 8) Constants (Ranking/Fallback)
+## 9) Constants (Current)
 
-Source: `apps/api/src/services/search.py`
+Source: `apps/api/src/services/search_logic.py`
 
 ```text
 OVERFETCH_CARDS = 50
-TOP_PEOPLE = 5
+TOP_PEOPLE = 6
 MATCHED_CARDS_PER_PERSON = 3
 MIN_RESULTS = 15
 TOP_K_CARDS = 5
@@ -744,54 +459,24 @@ FALLBACK_TIER_LOCATION_SOFT = 2
 FALLBACK_TIER_COMPANY_TEAM_SOFT = 3
 ```
 
-## 9) Failure and Degradation Behavior
+## 10) Failure and Degradation Behavior
 
-- Chat parse failure:
-  - search continues with raw-query fallback constraints
-- Chat parse timeout/network/provider HTTP failure:
-  - captured as `ChatServiceError` and handled via raw-query fallback
-- Chat parse invalid JSON:
-  - captured as `ChatServiceError` and handled via raw-query fallback
-- Explainability LLM failure:
-  - deterministic `why_matched` fallback is used
-- Explainability sanitization-empty case:
-  - person-level fallback to deterministic bullets when sanitized LLM lines are empty
-- Lexical search failure:
-  - search continues without lexical bonus
-- Embedding failure/config issue:
-  - request fails with `503`
-- Idempotency in-progress collision:
-  - returns `409 Request in progress` for same `(key, person, endpoint)` when reserved row has no final response yet
-
-Operational observability expectations:
-
-- Warnings should be emitted for parse failures, explainability call failures, JSON parse failures, and lexical failures.
-- Metrics should distinguish timeout/network, HTTP error, invalid JSON, and sanitization-empty outputs.
-- Fallback-path counters should be monitored to detect silent quality regressions.
-
-## 10) Known Limitations
-
-- Why only top 5 people:
-  - `TOP_PEOPLE = 5` is a latency + payload-size tradeoff.
-  - It bounds DB/profile hydration, explainability prompt size, and response rendering cost.
-  - This may hide near-threshold candidates when many scores are close.
-- Why some MUST constraints cannot be relaxed:
-  - Tier relaxation only softens time, location, and company/team.
-  - Other MUST constraints (`intent_primary`, `domain`, `sub_domain`, `employment_type`, `seniority_level`) and all EXCLUDE constraints are intentionally not relaxed to avoid semantic drift and unsafe recall expansion.
-- Why `salary_min` is not used in filtering:
-  - Current retrieval applies only one-sided offer gating (`candidate.work_preferred_salary_min <= offer_salary_inr_per_year`).
-  - Recruiter `salary_min` has ambiguous retrieval semantics in this model and can remove valid candidates prematurely.
-  - `salary_min` is currently retained for request compatibility and potential future ranking features.
+- Parse failure (`ChatServiceError`): fallback to raw-query payload
+- Explainability LLM failure: deterministic `why_matched` bullets
+- Lexical failure: continue without lexical bonus
+- Embedding provider/config failure: `HTTP 503`
+- Low credits at pre-check or debit point: `HTTP 402`
+- Idempotency replay works only when completed response row already exists
 
 ## 11) Maintenance Checklist
 
-When updating search, verify and update this doc with code:
+When search behavior changes, update this doc with code:
 
-1. `run_search` step order and transaction boundaries.
-2. `_apply_card_filters` semantics and fallback tier effects.
-3. Ranking formula and constants.
-4. `similarity_percent` mapping versus ranking score semantics.
-5. Explainability schema/prompt/sanitization path.
-6. Credit charging points and idempotency behavior.
-7. `SearchRequest` and `SearchResponse` schema changes.
-8. Frontend usage in `apps/web/src/components/search/person-result-card.tsx`.
+1. `run_search` execution order and credit charging points
+2. `_apply_card_filters` semantics and fallback tiers
+3. ranking formula/constants and `TOP_PEOPLE`
+4. `similarity_percent` mapping semantics
+5. explainability prompt/schema/sanitization behavior
+6. idempotency behavior in `search_logic` and `search_contact_unlock`
+7. request/response schema changes in `src/schemas/search.py`
+8. frontend result rendering assumptions in `apps/web/src/components/search/person-result-card.tsx`
