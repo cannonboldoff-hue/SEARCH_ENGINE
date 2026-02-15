@@ -425,6 +425,10 @@ export default function BuilderPage() {
         method: "POST",
         body: { raw_text: trimmed },
       });
+      const sourceLangRaw =
+        typeof result?.source_language_code === "string" ? result.source_language_code.toLowerCase() : "";
+      const isEnglish = sourceLangRaw.startsWith("en");
+      if (!isEnglish && sourceLangRaw) return trimmed;
       const translated = typeof result?.translated_text === "string" ? result.translated_text.trim() : "";
       return translated || trimmed;
     } catch (e) {
@@ -702,7 +706,7 @@ export default function BuilderPage() {
           <h2 className="text-sm sm:text-base font-medium text-foreground mb-1 flex-shrink-0">Your experience</h2>
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-2 sm:mb-3 flex-shrink-0">
             <p className="text-xs text-muted-foreground text-left sm:pr-4">
-              {"Write freely in any language. We auto-translate to English before backend processing and structure it into cards."}
+              {"Write freely in any language. We keep your input language when structuring cards (English stays English too)."}
             </p>
             <div className="flex items-center justify-end gap-2 flex-wrap sm:flex-nowrap">
               <Button
