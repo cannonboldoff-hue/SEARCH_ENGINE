@@ -6,6 +6,7 @@ Pipeline: parse query → embed → hybrid candidates (vector + lexical) → MUS
 """
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
@@ -44,6 +45,7 @@ from src.schemas.search import ParsedConstraintsPayload, ParsedConstraintsShould
 from src.services.credits import get_balance, deduct_credits, get_idempotent_response, save_idempotent_response
 from src.services.filter_validator import validate_and_normalize
 from src.providers import get_chat_provider, get_embedding_provider, ChatServiceError, EmbeddingServiceError
+from src.prompts.search_why_matched import get_why_matched_prompt
 from src.serializers import experience_card_to_response, experience_card_child_to_response
 from src.utils import normalize_embedding
 
@@ -245,6 +247,145 @@ def _build_why_matched_bullets(
         doc = getattr(child_row, "search_document", None) or ""
         add_from_phrases(phrases, doc)
     return bullets[:max_bullets]
+
+
+def _strip_json_from_response(raw: str) -> str:
+    """Strip markdown/code fences from an LLM response and return JSON text."""
+    s = (raw or "").strip()
+    if "```" not in s:
+        return s
+    for part in s.split("```"):
+        p = part.strip()
+        if p.lower().startswith("json"):
+            p = p[4:].strip()
+        if p.startswith("{"):
+            return p
+    return s
+
+
+def _compact_text(value: Any, max_len: int = 180) -> str | None:
+    """Normalize whitespace and trim text for prompt payloads."""
+    if value is None:
+        return None
+    txt = " ".join(str(value).split()).strip()
+    if not txt:
+        return None
+    return txt[:max_len]
+
+
+def _build_person_why_evidence(
+    person_id: str,
+    profile: PersonProfile | None,
+    parent_cards_with_sim: list[tuple[Any, float]],
+    child_evidence: list[tuple[Any, str, float]],
+) -> dict[str, Any]:
+    """Build compact person-level evidence payload for LLM explanation."""
+    parent_cards: list[dict[str, Any]] = []
+    for card, sim in (parent_cards_with_sim or [])[:2]:
+        parent_cards.append({
+            "title": _compact_text(getattr(card, "title", None), 120),
+            "company_name": _compact_text(getattr(card, "company_name", None), 90),
+            "location": _compact_text(getattr(card, "location", None), 80),
+            "summary": _compact_text(getattr(card, "summary", None), 200),
+            "search_phrases": [
+                _compact_text(p, 80)
+                for p in (getattr(card, "search_phrases", None) or [])[:5]
+                if _compact_text(p, 80)
+            ],
+            "similarity": round(float(sim), 4),
+            "start_date": str(getattr(card, "start_date", None)) if getattr(card, "start_date", None) is not None else None,
+            "end_date": str(getattr(card, "end_date", None)) if getattr(card, "end_date", None) is not None else None,
+        })
+
+    child_cards: list[dict[str, Any]] = []
+    for child, _parent_id, sim in (child_evidence or [])[:2]:
+        child_cards.append({
+            "title": _compact_text(getattr(child, "title", None), 120),
+            "headline": _compact_text(getattr(child, "headline", None), 160),
+            "summary": _compact_text(getattr(child, "summary", None), 180),
+            "context": _compact_text(getattr(child, "context", None), 180),
+            "tags": [
+                _compact_text(t, 50)
+                for t in (getattr(child, "tags", None) or [])[:6]
+                if _compact_text(t, 50)
+            ],
+            "search_phrases": [
+                _compact_text(p, 80)
+                for p in (getattr(child, "search_phrases", None) or [])[:5]
+                if _compact_text(p, 80)
+            ],
+            "similarity": round(float(sim), 4),
+        })
+
+    return {
+        "person_id": person_id,
+        "open_to_work": bool(profile.open_to_work) if profile else False,
+        "open_to_contact": bool(profile.open_to_contact) if profile else False,
+        "matched_parent_cards": parent_cards,
+        "matched_child_cards": child_cards,
+    }
+
+
+def _sanitize_why_matched_lines(raw_lines: Any, max_items: int = 3) -> list[str]:
+    """Normalize and bound LLM reason lines."""
+    if not isinstance(raw_lines, (list, tuple)):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in raw_lines:
+        txt = _compact_text(line, 120)
+        if not txt:
+            continue
+        key = txt.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(txt)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+async def _generate_llm_why_matched(
+    chat: Any,
+    payload: ParsedConstraintsPayload,
+    people_evidence: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Generate person-level why_matched lines from LLM in one batched call."""
+    if not people_evidence:
+        return {}
+    prompt = get_why_matched_prompt(
+        query_original=payload.query_original,
+        query_cleaned=payload.query_cleaned,
+        must=payload.must.model_dump(mode="json"),
+        should=payload.should.model_dump(mode="json"),
+        people_evidence=people_evidence,
+    )
+    try:
+        raw = await chat.chat(prompt, max_tokens=1200, temperature=0.1)
+    except ChatServiceError as e:
+        logger.warning("why_matched LLM call failed, using deterministic fallback: %s", e)
+        return {}
+    try:
+        parsed = json.loads(_strip_json_from_response(raw))
+    except (TypeError, ValueError, json.JSONDecodeError) as e:
+        logger.warning("why_matched LLM JSON parse failed, using deterministic fallback: %s", e)
+        return {}
+
+    people = parsed.get("people")
+    if not isinstance(people, list):
+        return {}
+    out: dict[str, list[str]] = {}
+    for item in people:
+        if not isinstance(item, dict):
+            continue
+        person_id = str(item.get("person_id") or "").strip()
+        if not person_id:
+            continue
+        lines = _sanitize_why_matched_lines(item.get("why_matched"))
+        if lines:
+            out[person_id] = lines
+    return out
 
 
 async def _lexical_candidates(
@@ -793,6 +934,8 @@ async def run_search(
 
     similarity_by_person: dict[str, int] = {}
     why_matched_by_person: dict[str, list[str]] = {}
+    pending_search_rows: list[dict[str, Any]] = []
+    llm_people_evidence: list[dict[str, Any]] = []
     for rank, (person_id, score) in enumerate(top_20, 1):
         parent_list = person_cards.get(person_id, [])
         child_list = child_sims_by_person.get(person_id, [])
@@ -815,21 +958,43 @@ async def run_search(
         child_evidence_for_bullets = [
             (children_by_id[cid], pid, s) for pid, cid, s in child_list[:3] if cid and cid in children_by_id
         ]
-        why_matched = _build_why_matched_bullets(parent_cards_for_bullets, child_evidence_for_bullets, 6)
-        similarity_by_person[person_id] = _score_to_similarity_percent(score)
-        why_matched_by_person[person_id] = why_matched
-        sr = SearchResult(
-            search_id=search_rec.id,
-            person_id=person_id,
-            rank=rank,
-            score=Decimal(str(round(score, 6))),
-            extra={
-                "matched_parent_ids": matched_parent_ids,
-                "matched_child_ids": matched_child_ids,
-                "why_matched": why_matched,
-            },
+        fallback_why = _build_why_matched_bullets(parent_cards_for_bullets, child_evidence_for_bullets, 6)
+        llm_people_evidence.append(
+            _build_person_why_evidence(
+                person_id=person_id,
+                profile=vis_map.get(person_id),
+                parent_cards_with_sim=parent_cards_for_bullets,
+                child_evidence=child_evidence_for_bullets,
+            )
         )
-        db.add(sr)
+        similarity_by_person[person_id] = _score_to_similarity_percent(score)
+        pending_search_rows.append({
+            "person_id": person_id,
+            "rank": rank,
+            "score": score,
+            "matched_parent_ids": matched_parent_ids,
+            "matched_child_ids": matched_child_ids,
+            "fallback_why": fallback_why,
+        })
+
+    llm_why_by_person = await _generate_llm_why_matched(chat, payload, llm_people_evidence)
+    for row in pending_search_rows:
+        person_id = row["person_id"]
+        why_matched = llm_why_by_person.get(person_id) or row["fallback_why"]
+        why_matched_by_person[person_id] = why_matched
+        db.add(
+            SearchResult(
+                search_id=search_rec.id,
+                person_id=person_id,
+                rank=row["rank"],
+                score=Decimal(str(round(row["score"], 6))),
+                extra={
+                    "matched_parent_ids": row["matched_parent_ids"],
+                    "matched_child_ids": row["matched_child_ids"],
+                    "why_matched": why_matched,
+                },
+            )
+        )
 
     # Load cards for persons who only matched via child embedding: use the parent(s) that actually matched
     child_only_pids = [p for p in pid_list if p not in person_cards]

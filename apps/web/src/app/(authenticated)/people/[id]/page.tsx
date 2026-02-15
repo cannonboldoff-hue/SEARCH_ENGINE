@@ -60,7 +60,15 @@ function DetailGrid({ rows, columns = 2 }: { rows: DetailRow[]; columns?: 1 | 2 
   );
 }
 
-function ExperienceCardDetails({ card }: { card: ExperienceCard }) {
+function ExperienceCardDetails({
+  card,
+  hideVisibilityField = false,
+  hideConfidenceScore = false,
+}: {
+  card: ExperienceCard;
+  hideVisibilityField?: boolean;
+  hideConfidenceScore?: boolean;
+}) {
   const rows: DetailRow[] = [
     { label: "Title", value: card.title },
     { label: "Normalized role", value: card.normalized_role },
@@ -83,8 +91,10 @@ function ExperienceCardDetails({ card }: { card: ExperienceCard }) {
           : null,
     },
     { label: "Seniority", value: card.seniority_level },
-    { label: "Confidence score", value: card.confidence_score },
-    { label: "Visible in search", value: card.experience_card_visibility },
+    ...(hideConfidenceScore ? [] : [{ label: "Confidence score", value: card.confidence_score }]),
+    ...(hideVisibilityField
+      ? []
+      : [{ label: "Visible in search", value: card.experience_card_visibility }]),
     { label: "Created at", value: card.created_at },
     { label: "Updated at", value: card.updated_at },
   ];
@@ -92,7 +102,13 @@ function ExperienceCardDetails({ card }: { card: ExperienceCard }) {
   return <DetailGrid rows={rows} />;
 }
 
-function ExperienceCardChildDetails({ child }: { child: ExperienceCardChild }) {
+function ExperienceCardChildDetails({
+  child,
+  hideTitleAndHeadline = false,
+}: {
+  child: ExperienceCardChild;
+  hideTitleAndHeadline?: boolean;
+}) {
   const topicLabels =
     child.topics && child.topics.length > 0
       ? child.topics
@@ -102,14 +118,17 @@ function ExperienceCardChildDetails({ child }: { child: ExperienceCardChild }) {
 
   const rows: DetailRow[] = [
     { label: "Relation type", value: child.relation_type },
-    { label: "Title", value: child.title },
-    { label: "Headline", value: child.headline },
+    ...(hideTitleAndHeadline
+      ? []
+      : [
+          { label: "Title", value: child.title },
+          { label: "Headline", value: child.headline },
+        ]),
     { label: "Summary", value: child.summary },
     { label: "Time range", value: child.time_range },
     { label: "Role title", value: child.role_title },
     { label: "Company", value: child.company },
     { label: "Location", value: child.location },
-    { label: "Tags", value: child.tags?.length ? child.tags.join(", ") : null },
     { label: "Topics", value: topicLabels.length ? topicLabels.join(", ") : null },
   ];
 
@@ -161,10 +180,12 @@ function CardFamilyBlock({
   parent,
   children,
   index,
+  isSearchResultView = false,
 }: {
   parent: ExperienceCard;
   children: ExperienceCardChild[];
   index: number;
+  isSearchResultView?: boolean;
 }) {
   const title = parent.title || parent.company_name || parent.normalized_role || "Untitled";
   const meta = [parent.company_name, parent.normalized_role, parent.location]
@@ -187,7 +208,11 @@ function CardFamilyBlock({
           {meta && <p className="text-xs text-muted-foreground pl-6">{meta}</p>}
         </CardHeader>
         <CardContent className="pt-0">
-          <ExperienceCardDetails card={parent} />
+          <ExperienceCardDetails
+            card={parent}
+            hideVisibilityField={isSearchResultView}
+            hideConfidenceScore={isSearchResultView}
+          />
         </CardContent>
       </Card>
       {children.length > 0 && (
@@ -197,11 +222,16 @@ function CardFamilyBlock({
               <Card className="bg-muted/30">
                 <CardHeader className="py-2 px-3">
                   <CardTitle className="text-xs font-medium">
-                    {child.title || child.headline || "Child card"}
+                    {isSearchResultView
+                      ? child.summary || child.relation_type || "Child card"
+                      : child.title || child.headline || child.summary || "Child card"}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="px-3 pb-3 pt-0">
-                  <ExperienceCardChildDetails child={child} />
+                  <ExperienceCardChildDetails
+                    child={child}
+                    hideTitleAndHeadline={isSearchResultView}
+                  />
                 </CardContent>
               </Card>
             </li>
@@ -319,6 +349,7 @@ export default function PersonProfilePage() {
                   parent={family.parent}
                   children={family.children}
                   index={idx}
+                  isSearchResultView
                 />
               ))}
             </div>
@@ -338,7 +369,7 @@ export default function PersonProfilePage() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-0">
-                      <ExperienceCardDetails card={card} />
+                      <ExperienceCardDetails card={card} hideVisibilityField hideConfidenceScore />
                     </CardContent>
                   </Card>
                 </motion.li>

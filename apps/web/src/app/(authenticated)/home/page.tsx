@@ -94,13 +94,13 @@ export default function HomePage() {
 
   return (
     <div className="relative min-h-[calc(100vh-3.5rem)]">
+      {searchError && (
+        <div className="mb-4">
+          <ErrorMessage message={searchError} />
+        </div>
+      )}
       {searchId && (
         <div className="mb-6">
-          {searchError && (
-            <div className="mb-4">
-              <ErrorMessage message={searchError} />
-            </div>
-          )}
           <SearchResults searchId={searchId} people={searchPeople} />
         </div>
       )}

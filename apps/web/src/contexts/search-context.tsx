@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiWithIdempotency } from "@/lib/api";
 import type { PersonSearchResult, SearchResponse } from "@/types";
 
@@ -33,6 +33,7 @@ export function SearchProvider({ children }: { children: ReactNode }) {
   const [searchId, setSearchId] = useState<string | null>(null);
   const [people, setPeople] = useState<PersonSearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const searchMutation = useMutation({
     mutationFn: async (q: string) => {
@@ -42,10 +43,14 @@ export function SearchProvider({ children }: { children: ReactNode }) {
         body: { query: q, open_to_work_only: openToWorkOnly },
       });
     },
+    onMutate: () => {
+      setError(null);
+    },
     onSuccess: (data) => {
       setSearchId(data.search_id);
       setPeople(data.people);
       setError(null);
+      queryClient.invalidateQueries({ queryKey: ["credits"] });
     },
     onError: (e: Error) => {
       setError(e.message);
