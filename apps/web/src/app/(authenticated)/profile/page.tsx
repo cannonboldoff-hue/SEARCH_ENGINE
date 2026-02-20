@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Pencil, Layers, User, Briefcase, GraduationCap, Mail, MapPin } from "lucide-react";
+import { Pencil, User, GraduationCap, Briefcase, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageLoading, PageError } from "@/components/feedback";
-import { ExpandableExperienceCard } from "@/components/profile/expandable-experience-card";
-import { useBio, useExperienceCardFamilies } from "@/hooks";
+import { useBio } from "@/hooks";
 
 function BioField({ label, value }: { label: string; value: string }) {
   return (
@@ -20,7 +19,6 @@ function BioField({ label, value }: { label: string; value: string }) {
 
 export default function ProfilePage() {
   const { data: bio, isLoading: loadingBio, isError: bioError } = useBio();
-  const { data: cardFamilies = [], isLoading: loadingCards, isError: cardsError } = useExperienceCardFamilies();
 
   if (loadingBio) {
     return <PageLoading message="Loading profile..." className="py-8 flex flex-col items-center justify-center gap-3" />;
@@ -47,153 +45,155 @@ export default function ProfilePage() {
       className="max-w-2xl mx-auto space-y-6"
     >
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground tracking-tight">{displayName}</h1>
-          {bio?.current_company && (
-            <p className="text-sm text-muted-foreground mt-0.5">{bio.current_company}</p>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4 min-w-0">
+          {bio?.profile_photo_url ? (
+            <div className="relative h-14 w-14 shrink-0 rounded-full overflow-hidden bg-muted">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={bio.profile_photo_url}
+                alt={displayName}
+                className="h-full w-full object-cover"
+              />
+            </div>
+          ) : (
+            <div className="h-14 w-14 shrink-0 rounded-full bg-muted flex items-center justify-center">
+              <User className="h-7 w-7 text-muted-foreground" />
+            </div>
           )}
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold text-foreground tracking-tight truncate">{displayName}</h1>
+            {bio?.current_company && <p className="text-sm text-muted-foreground mt-0.5 truncate">{bio.current_company}</p>}
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Link href="/onboarding/bio">
-            <Button variant="outline" size="sm">
-              <Pencil className="h-3.5 w-3.5 mr-1.5" />
-              Edit Bio
-            </Button>
-          </Link>
-          <Link href="/builder">
-            <Button variant="outline" size="sm">
-              <Layers className="h-3.5 w-3.5 mr-1.5" />
-              Builder
-            </Button>
-          </Link>
-        </div>
+        <Link href="/onboarding/bio">
+          <Button variant="outline" size="sm">
+            <Pencil className="h-3.5 w-3.5 mr-1.5" />
+            Edit Bio
+          </Button>
+        </Link>
       </div>
 
-      {/* Bio card */}
+      {/* Profile basics */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
               <User className="h-4 w-4 text-muted-foreground" />
             </div>
-            <CardTitle className="text-base">Bio</CardTitle>
+            <CardTitle className="text-base">Profile basics</CardTitle>
           </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
-            {(bio?.first_name || bio?.last_name) && (
-              <BioField label="Name" value={displayName} />
-            )}
+            {(bio?.first_name || bio?.last_name) && <BioField label="Name" value={displayName} />}
             {bio?.date_of_birth && <BioField label="Date of birth" value={bio.date_of_birth} />}
-            {bio?.current_city && <BioField label="City" value={bio.current_city} />}
-            {bio?.email && <BioField label="Email" value={bio.email} />}
-            {bio?.phone && <BioField label="Phone" value={bio.phone} />}
-            {bio?.linkedin_url && (
+            {bio?.current_city && <BioField label="Current city" value={bio.current_city} />}
+            {bio?.profile_photo_url && (
               <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground">LinkedIn</span>
+                <span className="text-xs text-muted-foreground">Profile photo</span>
                 <a
-                  href={bio.linkedin_url}
+                  href={bio.profile_photo_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-sm text-foreground font-medium hover:underline"
+                  className="text-sm text-foreground font-medium hover:underline truncate"
                 >
-                  View profile
+                  View photo
                 </a>
               </div>
             )}
           </div>
           {!bio?.complete && (
             <p className="text-xs text-muted-foreground mt-4 pt-3 border-t border-border">
-              Complete your bio in Edit Bio to improve your Builder context.
+              Complete your bio in Edit Bio.
             </p>
           )}
         </CardContent>
       </Card>
 
-      {/* Education & Work */}
-      {(bio?.school || bio?.college || bio?.current_company || (bio?.past_companies && bio.past_companies.length > 0)) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {(bio?.school || bio?.college) && (
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
-                    <GraduationCap className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <CardTitle className="text-base">Education</CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {bio?.school && <BioField label="School" value={bio.school} />}
-                {bio?.college && <BioField label="College" value={bio.college} />}
-              </CardContent>
-            </Card>
-          )}
-          {(bio?.current_company || (bio?.past_companies && bio.past_companies.length > 0)) && (
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
-                    <Briefcase className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <CardTitle className="text-base">Work</CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {bio?.current_company && <BioField label="Current company" value={bio.current_company} />}
-                {bio?.past_companies && bio.past_companies.length > 0 && (
-                  <div className="flex flex-col">
-                    <span className="text-xs text-muted-foreground mb-1">Past companies</span>
-                    <ul className="space-y-1">
-                      {bio.past_companies.map((p, i) => (
-                        <li key={i} className="text-sm text-foreground">
-                          <span className="font-medium">{p.company_name}</span>
-                          {p.role && <span className="text-muted-foreground">{` - ${p.role}`}</span>}
-                          {p.years && <span className="text-muted-foreground">{` (${p.years})`}</span>}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
+      {/* Education */}
+      {(bio?.school || bio?.college) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+                <GraduationCap className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <CardTitle className="text-base">Education</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+              {bio?.school && <BioField label="School" value={bio.school} />}
+              {bio?.college && <BioField label="College" value={bio.college} />}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
-      {/* Experience cards — loaded progressively so profile appears fast */}
-      <section>
-        <h2 className="text-sm font-medium text-muted-foreground mb-3">Experience cards</h2>
-        {loadingCards ? (
-          <div className="text-center py-12 rounded-lg border border-dashed border-border">
-            <p className="text-sm text-muted-foreground">Loading experience cards...</p>
-          </div>
-        ) : cardsError ? (
-          <div className="text-center py-8 rounded-lg border border-border bg-muted/30">
-            <p className="text-sm text-muted-foreground">Could not load experience cards. You can try again or go to the builder.</p>
-            <Link href="/builder" className="text-foreground font-medium hover:underline text-sm mt-2 inline-block">
-              Open builder
-            </Link>
-          </div>
-        ) : cardFamilies.length === 0 ? (
-          <div className="text-center py-12 rounded-lg border border-dashed border-border">
-            <Layers className="h-8 w-8 text-muted-foreground/40 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">
-              No experience cards yet.{" "}
-              <Link href="/builder" className="text-foreground font-medium hover:underline">
-                Add experience in the builder
-              </Link>
-            </p>
-          </div>
-        ) : (
-          <ul className="space-y-3 max-h-[60vh] overflow-y-auto">
-            {cardFamilies.map((family, idx) => (
-              <ExpandableExperienceCard key={family.parent.id} family={family} index={idx} />
-            ))}
-          </ul>
-        )}
-      </section>
+      {/* Work */}
+      {(bio?.current_company || (bio?.past_companies && bio.past_companies.length > 0)) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+                <Briefcase className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <CardTitle className="text-base">Work</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {bio?.current_company && <BioField label="Current company" value={bio.current_company} />}
+            {bio?.past_companies && bio.past_companies.length > 0 && (
+              <div className="flex flex-col">
+                <span className="text-xs text-muted-foreground mb-1">Past companies</span>
+                <ul className="space-y-1">
+                  {bio.past_companies.map((p, i) => (
+                    <li key={i} className="text-sm text-foreground">
+                      <span className="font-medium">{p.company_name}</span>
+                      {p.role && <span className="text-muted-foreground">{` - ${p.role}`}</span>}
+                      {p.years && <span className="text-muted-foreground">{` (${p.years})`}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Contact */}
+      {(bio?.email || bio?.phone || bio?.linkedin_url) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+                <Mail className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <CardTitle className="text-base">Contact</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+              {bio?.email && <BioField label="Email" value={bio.email} />}
+              {bio?.phone && <BioField label="Phone" value={bio.phone} />}
+              {bio?.linkedin_url && (
+                <div className="flex flex-col">
+                  <span className="text-xs text-muted-foreground">LinkedIn</span>
+                  <a
+                    href={bio.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-foreground font-medium hover:underline"
+                  >
+                    View profile
+                  </a>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </motion.div>
   );
 }

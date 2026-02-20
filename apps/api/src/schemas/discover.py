@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel
@@ -26,3 +27,18 @@ class PersonPublicProfileResponse(BaseModel):
     display_name: Optional[str] = None
     bio: Optional[BioResponse] = None
     card_families: list[CardFamilyResponse] = []
+
+
+class UnlockedCardItem(BaseModel):
+    person_id: str
+    search_id: str
+    display_name: Optional[str] = None
+    current_location: Optional[str] = None
+    open_to_work: bool = False
+    open_to_contact: bool = False
+    experience_summaries: list[str] = []
+    unlocked_at: Optional[datetime] = None
+
+
+class UnlockedCardsResponse(BaseModel):
+    cards: list[UnlockedCardItem]

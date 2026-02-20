@@ -9,8 +9,10 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiWithIdempotency } from "@/lib/api";
+import { api, apiWithIdempotency } from "@/lib/api";
 import type { PersonSearchResult, SearchResponse } from "@/types";
+
+type SearchMoreResponse = { people: PersonSearchResult[] };
 
 type SearchContextValue = {
   query: string;
@@ -22,10 +24,16 @@ type SearchContextValue = {
   error: string | null;
   setError: (m: string | null) => void;
   performSearch: () => void;
+  performSearchWithQuery: (q: string) => void;
+  loadMore: () => Promise<void>;
   isSearching: boolean;
+  isLoadingMore: boolean;
+  hasMore: boolean;
 };
 
 const SearchContext = createContext<SearchContextValue | null>(null);
+
+const LOAD_MORE_LIMIT = 6;
 
 export function SearchProvider({ children }: { children: ReactNode }) {
   const [query, setQuery] = useState("");
@@ -33,6 +41,8 @@ export function SearchProvider({ children }: { children: ReactNode }) {
   const [searchId, setSearchId] = useState<string | null>(null);
   const [people, setPeople] = useState<PersonSearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const queryClient = useQueryClient();
 
   const searchMutation = useMutation({
@@ -50,7 +60,9 @@ export function SearchProvider({ children }: { children: ReactNode }) {
       setSearchId(data.search_id);
       setPeople(data.people);
       setError(null);
+      setHasMore(data.people.length >= LOAD_MORE_LIMIT);
       queryClient.invalidateQueries({ queryKey: ["credits"] });
+      queryClient.invalidateQueries({ queryKey: ["me", "searches"] });
     },
     onError: (e: Error) => {
       setError(e.message);
@@ -63,6 +75,34 @@ export function SearchProvider({ children }: { children: ReactNode }) {
     searchMutation.mutate(q);
   }, [query, searchMutation]);
 
+  const performSearchWithQuery = useCallback(
+    (q: string) => {
+      const trimmed = q.trim();
+      if (!trimmed) return;
+      setQuery(trimmed);
+      searchMutation.mutate(trimmed);
+    },
+    [searchMutation]
+  );
+
+  const loadMore = useCallback(async () => {
+    if (!searchId || isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    setError(null);
+    try {
+      const data = await api<SearchMoreResponse>(
+        `/search/${searchId}/more?offset=${people.length}&limit=${LOAD_MORE_LIMIT}`
+      );
+      setPeople((prev) => [...prev, ...data.people]);
+      setHasMore(data.people.length >= LOAD_MORE_LIMIT);
+      queryClient.invalidateQueries({ queryKey: ["credits"] });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load more profiles");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [searchId, people.length, isLoadingMore, hasMore, queryClient]);
+
   const value = useMemo<SearchContextValue>(
     () => ({
       query,
@@ -74,7 +114,11 @@ export function SearchProvider({ children }: { children: ReactNode }) {
       error,
       setError,
       performSearch,
+      performSearchWithQuery,
+      loadMore,
       isSearching: searchMutation.isPending,
+      isLoadingMore,
+      hasMore,
     }),
     [
       query,
@@ -83,7 +127,11 @@ export function SearchProvider({ children }: { children: ReactNode }) {
       people,
       error,
       performSearch,
+      performSearchWithQuery,
+      loadMore,
       searchMutation.isPending,
+      isLoadingMore,
+      hasMore,
     ]
   );
 
@@ -107,7 +155,11 @@ export function useSearch(): SearchContextValue {
       error: null,
       setError: () => {},
       performSearch: () => {},
+      performSearchWithQuery: () => {},
+      loadMore: async () => {},
       isSearching: false,
+      isLoadingMore: false,
+      hasMore: false,
     };
   }
   return ctx;

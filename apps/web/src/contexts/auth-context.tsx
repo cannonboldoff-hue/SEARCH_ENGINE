@@ -6,18 +6,20 @@ import { api } from "@/lib/api";
 import {
   AUTH_TOKEN_KEY,
   ONBOARDING_STEP_KEY,
+  PENDING_ONBOARDING_STEP_KEY,
+  readPendingOnboardingStep,
+  setPendingOnboardingStep,
   type OnboardingStep,
 } from "@/lib/auth-flow";
 
 type User = { id: string; email: string; display_name: string | null };
-
 const AuthContext = createContext<{
   user: User | null;
   onboardingStep: OnboardingStep | null;
   isAuthLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, displayName?: string) => Promise<void>;
+  signup: (payload: { email: string; password: string; displayName?: string }) => Promise<void>;
   logout: () => void;
   setOnboardingStep: (step: OnboardingStep | null) => void;
 } | null>(null);
@@ -46,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       localStorage.removeItem(AUTH_TOKEN_KEY);
       localStorage.removeItem(ONBOARDING_STEP_KEY);
+      localStorage.removeItem(PENDING_ONBOARDING_STEP_KEY);
     }
     setToken(null);
     setUser(null);
@@ -105,22 +108,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: "POST",
         body: { email, password },
       });
-      startSession(access_token, null);
+      const pendingStep = readPendingOnboardingStep();
+      startSession(access_token, pendingStep ?? null);
+      setPendingOnboardingStep(null);
       router.replace("/home");
     },
     [router, startSession]
   );
 
   const signup = useCallback(
-    async (email: string, password: string, displayName?: string) => {
-      const { access_token } = await api<{ access_token: string }>("/auth/signup", {
+    async (payload: { email: string; password: string; displayName?: string }) => {
+      await api<{ access_token?: string | null; email_verification_required: boolean }>("/auth/signup", {
         method: "POST",
-        body: { email, password, display_name: displayName ?? null },
+        body: {
+          email: payload.email,
+          password: payload.password,
+          display_name: payload.displayName ?? null,
+        },
       });
-      startSession(access_token, "bio");
-      router.replace("/onboarding/bio");
+      setPendingOnboardingStep("bio");
     },
-    [router, startSession]
+    []
   );
 
   const logout = useCallback(() => {

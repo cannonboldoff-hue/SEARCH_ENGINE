@@ -32,7 +32,7 @@ type PutBioBody = {
   past_companies?: { company_name: string; role?: string; years?: string }[];
   email?: string;
   linkedin_url?: string;
-  phone?: string;
+  phone: string;
 };
 
 export default function OnboardingBioPage() {
@@ -160,7 +160,7 @@ export default function OnboardingBioPage() {
           : undefined,
         email: data.email,
         linkedin_url: data.linkedin_url?.trim() || undefined,
-        phone: data.phone?.trim() || undefined,
+        phone: data.phone.trim(),
       });
       queryClient.invalidateQueries({ queryKey: BIO_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: VISIBILITY_QUERY_KEY });
@@ -325,8 +325,9 @@ export default function OnboardingBioPage() {
               />
               <FormField
                 id="phone"
-                label="Phone number (optional)"
+                label="Phone number (required)"
                 placeholder="+1 234 567 8900"
+                error={errors.phone?.message}
                 {...register("phone")}
               />
             </section>

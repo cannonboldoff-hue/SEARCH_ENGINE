@@ -96,16 +96,16 @@ apps/web/
   1. If user already has token (from context or `localStorage`), redirect to `/home` and show loading.
   2. Otherwise show login form inside **AuthLayout** (title, subtitle, hero background).
   3. Form uses **react-hook-form** with **Zod** schema: `email` (valid email), `password` (required).
-  4. On submit → `login(email, password)` from auth context; on success auth context redirects to `/home` or `/onboarding/bio`; on error, `setError` and show **ErrorMessage**.
+  4. On submit → `login(email, password)` from auth context; on success auth context redirects to `/home`; on error, `setError` and show **ErrorMessage**.
 - **Functions:**
   - **onSubmit(data):** Clears error, calls `login(data.email, data.password)`, catches errors and sets `error` state.
 
 ### Signup — `src/app/signup/page.tsx`
 
 - **Purpose:** Create account (email, password, optional display name).
-- **Flow:** Same pattern as login: redirect if token exists; otherwise form with Zod schema (`email`, `password` min 6, optional `display_name`). On submit → `signup(email, password, display_name)`; auth context handles redirect.
+- **Flow:** Same pattern as login: redirect if token exists; otherwise form with Zod schema (`email`, `password` min 8, optional `display_name`). On submit → `signup({ email, password, displayName })`, then route to `/verify-email?email=...`.
 - **Functions:**
-  - **onSubmit(data):** Clears error, calls `signup(data.email, data.password, data.display_name || undefined)`, sets error on failure.
+  - **onSubmit(data):** Clears error, calls `signup({ email: data.email, password: data.password, displayName: data.display_name || undefined })`, then routes to `/verify-email` with the prefilled email.
 
 ### Authenticated layout — `src/app/(authenticated)/layout.tsx`
 
@@ -191,17 +191,17 @@ apps/web/
 
 ### Auth — `src/contexts/auth.tsx`
 
-- **Purpose:** Hold token and user, and expose login, signup, logout, setToken, refetchUser.
+- **Purpose:** Hold token and user, and expose login, signup, logout, setOnboardingStep.
 - **State:** `token` (from `localStorage` on init), `user` (from `/me` when token exists).
 
 **Functions:**
 
-- **setToken(t):** If `t` is truthy, `localStorage.setItem("token", t)`; else `localStorage.removeItem("token")`. Sets `token` state and clears `user`.
-- **refetchUser(overrideToken?):** Uses `overrideToken ?? token`. If none, return. Else GET `/me` and `setUser(me)`; on failure (and no override) calls `setToken(null)`.
+- **startSession(accessToken, step?):** Stores token (and optional onboarding step) in `localStorage`, sets `isAuthLoading` while `/me` loads.
+- **clearSession():** Clears token and onboarding step from `localStorage`, resets auth state.
 - **useEffect (on mount/hydration):** Reads token from `localStorage`, sets token state; if token exists, fetches `/me` and sets user, or clears token on error.
-- **login(email, password):** POST `/auth/login` with `{ email, password }` → `access_token`. Calls `setToken(access_token)`, `refetchUser(access_token)`. Then GET `/me/bio`; if `bio.complete` → `router.replace("/home")`, else → `router.replace("/onboarding/bio")`. On bio fetch error, redirect to `/onboarding/bio`.
-- **signup(email, password, displayName?):** POST `/auth/signup` with `{ email, password, display_name }` → `access_token`. Same as login: setToken, refetchUser, then bio check and redirect to `/home` or `/onboarding/bio`.
-- **logout():** `setToken(null)`, `router.push("/login")`.
+- **login(email, password):** POST `/auth/login` with `{ email, password }` → `access_token`. Stores the token and redirects to `/home`.
+- **signup(payload):** POST `/auth/signup` with `{ email, password, display_name }` → `{ access_token?: string, email_verification_required: boolean }`. It stores `pending_onboarding_step="bio"` and the signup page routes to `/verify-email?email=...`.
+- **logout():** Clears session and redirects to `/login`.
 - **useAuth():** Returns context value; throws if used outside **AuthProvider**.
 
 ---
@@ -326,7 +326,7 @@ apps/web/
 
 ## Quick reference: data flow
 
-1. **Auth:** Token in `localStorage` + AuthContext. Login/signup call API, set token, fetch `/me` and `/me/bio`, redirect to `/home` or `/onboarding/bio`.
+1. **Auth:** Token in `localStorage` + AuthContext. Login sets token and redirects to `/home`. Signup does not create a session immediately; it marks pending onboarding and routes to `/verify-email`, then login starts the session.
 2. **Search:** Home page → SearchForm POST `/search` (idempotent) → SearchResponse → SearchResults + PersonResultCard links to `/people/[id]?search_id=...`.
 3. **Profile:** GET `/me/bio` and `/me/experience-cards`; profile page shows them; builder and onboarding/bio mutate and invalidate these.
 4. **Builder:** POST `/experience-cards/draft-v1` → card families (parent + children); approve all via POST `/experience-cards/:id/approve`; hide via POST on card id.

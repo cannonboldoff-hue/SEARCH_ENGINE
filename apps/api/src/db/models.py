@@ -34,6 +34,9 @@ class Person(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     display_name = Column(String(255), nullable=True)
+    email_verified_at = Column(DateTime(timezone=True), nullable=True)
+    email_verification_token_hash = Column(String(255), nullable=True)
+    email_verification_expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -112,6 +115,29 @@ class IdempotencyKey(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (Index("ix_idempotency_keys_key_person_endpoint", "key", "person_id", "endpoint", unique=True),)
+
+
+class SignupSession(Base):
+    __tablename__ = "signup_sessions"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=uuid4_str)
+    email = Column(String(255), nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    display_name = Column(String(255), nullable=True)
+    status = Column(String(20), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    send_count = Column(Integer, nullable=False, default=0)
+    last_sent_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_signup_sessions_email_status", "email", "status"),
+        Index("ix_signup_sessions_expires_at", "expires_at"),
+    )
 
 
 class RawExperience(Base):

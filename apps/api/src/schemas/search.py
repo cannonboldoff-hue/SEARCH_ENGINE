@@ -169,8 +169,21 @@ class PersonProfileResponse(BaseModel):
         return _serialize_decimal(v)
 
 
+class SavedSearchItem(BaseModel):
+    id: str
+    query_text: str
+    created_at: str
+    expires_at: str
+    expired: bool
+    result_count: int
+
+
+class SavedSearchesResponse(BaseModel):
+    searches: list[SavedSearchItem]
+
+
 class UnlockContactRequest(BaseModel):
-    search_id: str
+    search_id: Optional[str] = None
 
 
 class UnlockContactResponse(BaseModel):

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const LINKEDIN_URL_REGEX = /^(https?:\/\/)?(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
 export const DOB_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+export const PHONE_ALLOWED_CHARS_REGEX = /^[+]?[0-9().\-\s]+$/;
 
 export const bioSchema = z.object({
   first_name: z.string().min(1, "First name is required"),
@@ -29,7 +30,18 @@ export const bioSchema = z.object({
     .refine((val) => !val || val.trim() === "" || LINKEDIN_URL_REGEX.test(val), {
       message: "Enter a valid LinkedIn profile URL (e.g. https://linkedin.com/in/username)",
     }),
-  phone: z.string().optional(),
+  phone: z
+    .string()
+    .min(1, "Phone number is required")
+    .refine((val) => PHONE_ALLOWED_CHARS_REGEX.test(val.trim()), {
+      message: "Phone number contains invalid characters",
+    })
+    .refine((val) => {
+      const digits = val.replace(/\D/g, "");
+      return digits.length >= 10 && digits.length <= 15;
+    }, {
+      message: "Enter a valid phone number (10-15 digits)",
+    }),
 });
 
 export type BioForm = z.infer<typeof bioSchema>;

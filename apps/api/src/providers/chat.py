@@ -7,6 +7,7 @@ import httpx
 from pydantic import BaseModel
 
 from src.core import get_settings
+from src.utils import strip_json_from_response
 from src.prompts.search_filters import (
     get_cleanup_prompt,
     get_single_extract_prompt,
@@ -28,20 +29,6 @@ class ParsedQuery(BaseModel):
     team: str | None = None
     open_to_work_only: bool = False
     semantic_text: str = ""
-
-
-def _strip_json_from_response(raw: str) -> str:
-    """Strip markdown/code fences and return JSON string."""
-    s = (raw or "").strip()
-    if "```" in s:
-        parts = s.split("```")
-        for p in parts:
-            p = p.strip()
-            if p.lower().startswith("json"):
-                p = p[4:].strip()
-            if p.startswith("{"):
-                return p
-    return s
 
 
 class ChatProvider(ABC):
@@ -208,7 +195,7 @@ Example: {"company": null, "team": "backend", "open_to_work_only": false, "seman
                 "Chat API rejected response_format=json_object, retrying without it."
             )
             text = await self._chat(messages, max_tokens=max_tokens, response_format=None)
-        raw = _strip_json_from_response(text or "")
+        raw = strip_json_from_response(text or "")
         try:
             return json.loads(raw)
         except (ValueError, json.JSONDecodeError) as e:

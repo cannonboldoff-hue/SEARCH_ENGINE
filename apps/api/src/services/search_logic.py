@@ -2,7 +2,7 @@
 
 Pipeline: parse query -> embed -> hybrid candidates (vector + lexical) -> MUST/EXCLUDE filters
 (with fallback tiers if results < MIN_RESULTS) -> collapse by person with top-K blended scoring
--> penalties (missing date, location mismatch) -> explainability -> persist in one transaction.
+-> penalties (missing date, location mismatch) -> explainability (fallback inline, LLM async) -> persist.
 """
 
 import asyncio
@@ -27,11 +27,14 @@ from src.db.models import (
     Search,
     SearchResult,
 )
+from src.db.session import async_session
 from src.schemas import (
     SearchRequest,
     SearchResponse,
     PersonSearchResult,
     CardFamilyResponse,
+    SavedSearchItem,
+    SavedSearchesResponse,
 )
 from src.schemas.search import (
     ParsedConstraintsPayload,
@@ -53,7 +56,7 @@ from src.providers import (
 )
 from src.prompts.search_why_matched import get_why_matched_prompt
 from src.serializers import experience_card_to_response, experience_card_child_to_response
-from src.utils import normalize_embedding
+from src.utils import normalize_embedding, strip_json_from_response
 
 logger = logging.getLogger(__name__)
 SEARCH_ENDPOINT = "POST /search"
@@ -143,8 +146,9 @@ def _search_expired(search_rec: Search) -> bool:
     return not search_rec.created_at or search_rec.created_at < cutoff
 
 
-OVERFETCH_CARDS = 50
+OVERFETCH_CARDS = 10
 TOP_PEOPLE = 6
+TOP_PEOPLE_STORED = 24  # Store up to 24 for load-more pagination (4 pages of 6)
 MATCHED_CARDS_PER_PERSON = 3
 # Minimum unique persons to avoid fallback; if below, relax MUST in order: time -> location -> company/team
 MIN_RESULTS = 15
@@ -156,16 +160,16 @@ def _similarity_from_distance(d: float) -> float:
     return 1.0 / (1.0 + float(d)) if d is not None else 0.0
 
 # Collapse scoring weights (tunable): parent_best, child_best, avg of top-3 card scores
-WEIGHT_PARENT_BEST = 0.65
-WEIGHT_CHILD_BEST = 0.25
-WEIGHT_AVG_TOP3 = 0.10
+WEIGHT_PARENT_BEST = 0.55
+WEIGHT_CHILD_BEST = 0.30
+WEIGHT_AVG_TOP3 = 0.15
 # Bonuses and penalties (capped)
 LEXICAL_BONUS_MAX = 0.25
-SHOULD_BOOST = 0.02
+SHOULD_BOOST = 0.05
 SHOULD_CAP = 10
 SHOULD_BONUS_MAX = 0.25
-MISSING_DATE_PENALTY = 0.12  # when query has time window and card has no dates
-LOCATION_MISMATCH_PENALTY = 0.10  # when query specifies location and card differs
+MISSING_DATE_PENALTY = 0.15  # when query has time window and card has no dates
+LOCATION_MISMATCH_PENALTY = 0.15  # when query specifies location and card differs
 # Fallback tier stored in Search.extra: 0=strict, 1=time soft, 2=location soft, 3=company/team soft
 FALLBACK_TIER_STRICT = 0
 FALLBACK_TIER_TIME_SOFT = 1
@@ -278,20 +282,6 @@ def _build_why_matched_bullets(
     return bullets[:max_bullets]
 
 
-def _strip_json_from_response(raw: str) -> str:
-    """Strip markdown/code fences from an LLM response and return JSON text."""
-    s = (raw or "").strip()
-    if "```" not in s:
-        return s
-    for part in s.split("```"):
-        p = part.strip()
-        if p.lower().startswith("json"):
-            p = p[4:].strip()
-        if p.startswith("{"):
-            return p
-    return s
-
-
 def _compact_text(value: Any, max_len: int = 180) -> str | None:
     """Normalize whitespace and trim text for prompt payloads."""
     if value is None:
@@ -394,7 +384,7 @@ async def _generate_llm_why_matched(
         logger.warning("why_matched LLM call failed, using deterministic fallback: %s", e)
         return {}
     try:
-        parsed = json.loads(_strip_json_from_response(raw))
+        parsed = json.loads(strip_json_from_response(raw))
     except (TypeError, ValueError, json.JSONDecodeError) as e:
         logger.warning("why_matched LLM JSON parse failed, using deterministic fallback: %s", e)
         return {}
@@ -413,6 +403,60 @@ async def _generate_llm_why_matched(
         if lines:
             out[person_id] = lines
     return out
+
+
+async def _update_why_matched_async(
+    search_id: str,
+    payload: ParsedConstraintsPayload,
+    people_evidence: list[dict[str, Any]],
+    person_ids: list[str],
+) -> None:
+    """Best-effort async refresh of why_matched in SearchResult.extra."""
+    if not people_evidence or not person_ids:
+        return
+    try:
+        chat = get_chat_provider()
+    except Exception as e:
+        logger.warning("why_matched async skipped (chat provider unavailable): %s", e)
+        return
+
+    llm_why_by_person = await _generate_llm_why_matched(chat, payload, people_evidence)
+    if not llm_why_by_person:
+        return
+
+    unique_person_ids = list(dict.fromkeys([str(pid) for pid in person_ids if pid]))
+    if not unique_person_ids:
+        return
+
+    try:
+        async with async_session() as bg_db:
+            result_rows: list[SearchResult] = []
+            for attempt in range(4):
+                result = await bg_db.execute(
+                    select(SearchResult).where(
+                        SearchResult.search_id == search_id,
+                        SearchResult.person_id.in_(unique_person_ids),
+                    )
+                )
+                result_rows = result.scalars().all()
+                if result_rows:
+                    break
+                await bg_db.rollback()
+                await asyncio.sleep(0.15 * (attempt + 1))
+            if not result_rows:
+                return
+
+            for row in result_rows:
+                pid = str(row.person_id)
+                lines = llm_why_by_person.get(pid)
+                if not lines:
+                    continue
+                extra = dict(row.extra or {})
+                extra["why_matched"] = lines
+                row.extra = extra
+            await bg_db.commit()
+    except Exception as e:
+        logger.exception("why_matched async persist failed: %s", e)
 
 
 async def _lexical_candidates(
@@ -1307,13 +1351,30 @@ async def run_search(
     embedding_text = _build_embedding_text(payload, body)
     open_to_work_only = _resolve_open_to_work_only(body, must)
     offer_salary_inr_per_year = _resolve_offer_salary_inr_per_year(body, must)
-    query_vec = await _embed_query_vector(body.query, embedding_text)
+    query_ts = _build_query_ts(payload, body)
+
+    # Run embedding + lexical in parallel to reduce tail latency.
+    embed_task = asyncio.create_task(_embed_query_vector(body.query, embedding_text))
+    lexical_task = asyncio.create_task(_lexical_candidates(db, query_ts))
+    embed_exc: Exception | None = None
+    try:
+        query_vec = await embed_task
+    except Exception as exc:
+        embed_exc = exc
+        query_vec = []
+
+    try:
+        lexical_scores = await lexical_task
+    except Exception as exc:
+        logger.warning("Lexical search task failed, continuing without lexical bonus: %s", exc)
+        lexical_scores = {}
+
+    if embed_exc:
+        raise embed_exc
     if not query_vec:
         return await _create_empty_search_response(db, searcher_id, body, filters_dict, idempotency_key)
 
-    # Lexical + constraint prep
-    query_ts = _build_query_ts(payload, body)
-    lexical_scores = await _lexical_candidates(db, query_ts)
+    # Constraint prep
     term_ctx = _collect_constraint_terms(
         must=must,
         exclude_company_norm=exclude.company_norm,
@@ -1347,9 +1408,9 @@ async def run_search(
         term_ctx.query_has_location,
         must,
     )
-    ranked_people = person_best[:TOP_PEOPLE]
+    ranked_people_full = person_best[:TOP_PEOPLE_STORED]
 
-    if not ranked_people:
+    if not ranked_people_full:
         return await _create_empty_search_response(
             db,
             searcher_id,
@@ -1359,15 +1420,15 @@ async def run_search(
             fallback_tier=fallback_tier,
         )
 
-    person_ids = [pid for pid, _score in ranked_people]
+    person_ids_full = [pid for pid, _score in ranked_people_full]
     people_map, vis_map, children_by_id = await _load_people_profiles_and_children(
         db=db,
-        person_ids=person_ids,
+        person_ids=person_ids_full,
         child_evidence_rows=child_evidence_rows,
     )
 
-    ranked_people = _apply_post_rank_tiebreakers(
-        people=ranked_people,
+    ranked_people_full = _apply_post_rank_tiebreakers(
+        people=ranked_people_full,
         vis_map=vis_map,
         person_cards=person_cards,
         offer_salary_inr_per_year=offer_salary_inr_per_year,
@@ -1384,7 +1445,7 @@ async def run_search(
     await _deduct_search_credit_or_raise(db, searcher_id, search_rec.id)
 
     similarity_by_person, pending_search_rows, llm_people_evidence = _prepare_pending_search_rows(
-        ranked_people=ranked_people,
+        ranked_people=ranked_people_full,
         person_cards=person_cards,
         child_sims_by_person=child_sims_by_person,
         child_best_parent_ids=child_best_parent_ids,
@@ -1392,23 +1453,32 @@ async def run_search(
         vis_map=vis_map,
     )
 
-    llm_why_by_person = await _generate_llm_why_matched(chat, payload, llm_people_evidence)
     why_matched_by_person = _persist_search_results(
         db=db,
         search_id=search_rec.id,
         pending_search_rows=pending_search_rows,
-        llm_why_by_person=llm_why_by_person,
+        llm_why_by_person={},
     )
+    if llm_people_evidence:
+        asyncio.create_task(
+            _update_why_matched_async(
+                search_id=str(search_rec.id),
+                payload=payload,
+                people_evidence=llm_people_evidence,
+                person_ids=[row.person_id for row in pending_search_rows],
+            )
+        )
 
     child_only_cards = await _load_child_only_cards(
         db=db,
-        pid_list=[pid for pid, _score in ranked_people],
+        pid_list=person_ids_full,
         person_cards=person_cards,
         child_best_parent_ids=child_best_parent_ids,
     )
 
+    ranked_people_initial = ranked_people_full[:TOP_PEOPLE]
     people_list = _build_search_people_list(
-        ranked_people,
+        ranked_people_initial,
         people_map,
         vis_map,
         person_cards,
@@ -1428,4 +1498,129 @@ async def run_search(
         )
     return resp
 
+
+LOAD_MORE_LIMIT = 6
+
+
+async def load_search_more(
+    db: AsyncSession,
+    searcher_id: str,
+    search_id: str,
+    offset: int,
+    limit: int = LOAD_MORE_LIMIT,
+    skip_credits: bool = False,
+) -> list[PersonSearchResult]:
+    """Fetch the next batch of search results (by rank). When skip_credits=True (viewing from saved history), no credit deduction."""
+    search_rec, _ = await _validate_search_session(db, searcher_id, search_id)
+
+    stmt = (
+        select(SearchResult)
+        .where(SearchResult.search_id == search_id)
+        .order_by(SearchResult.rank.asc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+    if not rows:
+        return []
+
+    if not skip_credits:
+        if await get_balance(db, searcher_id) < 1:
+            raise HTTPException(status_code=402, detail="Insufficient credits")
+        if not await deduct_credits(db, searcher_id, 1, "search_more", "search_id", search_id):
+            raise HTTPException(status_code=402, detail="Insufficient credits")
+
+    person_ids = [str(r.person_id) for r in rows]
+
+    people_stmt = select(Person).where(Person.id.in_(person_ids))
+    people_result = await db.execute(people_stmt)
+    people_map = {str(p.id): p for p in people_result.scalars().all()}
+
+    profiles_stmt = select(PersonProfile).where(PersonProfile.person_id.in_(person_ids))
+    profiles_result = await db.execute(profiles_stmt)
+    vis_map = {str(p.person_id): p for p in profiles_result.scalars().all()}
+
+    card_ids: list[str] = []
+    for r in rows:
+        extra = r.extra or {}
+        card_ids.extend(extra.get("matched_parent_ids") or [])
+    card_ids = list(dict.fromkeys(card_ids))
+
+    cards_by_id: dict[str, ExperienceCard] = {}
+    if card_ids:
+        cards_stmt = select(ExperienceCard).where(ExperienceCard.id.in_(card_ids))
+        cards_result = await db.execute(cards_stmt)
+        cards_by_id = {str(c.id): c for c in cards_result.scalars().all()}
+
+    out: list[PersonSearchResult] = []
+    for r in rows:
+        pid = str(r.person_id)
+        person = people_map.get(pid)
+        vis = vis_map.get(pid)
+        extra = r.extra or {}
+        matched_ids = extra.get("matched_parent_ids") or []
+        why_matched = extra.get("why_matched") or []
+        best_cards = [cards_by_id[cid] for cid in matched_ids if cid in cards_by_id][:MATCHED_CARDS_PER_PERSON]
+        raw_score = float(r.score) if r.score is not None else 0.0
+        similarity = _score_to_similarity_percent(raw_score)
+
+        out.append(
+            PersonSearchResult(
+                id=pid,
+                name=person.display_name if person else None,
+                headline=_build_person_headline(vis),
+                bio=_build_person_bio(vis),
+                similarity_percent=similarity,
+                why_matched=why_matched,
+                open_to_work=vis.open_to_work if vis else False,
+                open_to_contact=vis.open_to_contact if vis else False,
+                work_preferred_locations=vis.work_preferred_locations or [] if vis else [],
+                work_preferred_salary_min=vis.work_preferred_salary_min if vis else None,
+                matched_cards=[experience_card_to_response(c) for c in best_cards],
+            )
+        )
+    return out
+
+
+async def list_searches(
+    db: AsyncSession,
+    searcher_id: str,
+    limit: int = 50,
+) -> SavedSearchesResponse:
+    """List recent searches for the searcher (including expired), newest first, with result count."""
+    now = datetime.now(timezone.utc)
+
+    stmt = (
+        select(
+            Search.id,
+            Search.query_text,
+            Search.created_at,
+            Search.expires_at,
+            func.count(SearchResult.id).label("result_count"),
+        )
+        .select_from(Search)
+        .outerjoin(SearchResult, SearchResult.search_id == Search.id)
+        .where(Search.searcher_id == searcher_id)
+        .group_by(Search.id, Search.query_text, Search.created_at, Search.expires_at)
+        .order_by(Search.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    out: list[SavedSearchItem] = []
+    for (sid, query_text, created_at, expires_at, cnt) in rows:
+        expired = bool(expires_at and expires_at < now)
+        out.append(
+            SavedSearchItem(
+                id=str(sid),
+                query_text=query_text or "",
+                created_at=created_at.isoformat() if created_at else "",
+                expires_at=expires_at.isoformat() if expires_at else "",
+                expired=expired,
+                result_count=int(cnt or 0),
+            )
+        )
+    return SavedSearchesResponse(searches=out)
 

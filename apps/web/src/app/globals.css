@@ -52,11 +52,33 @@
 
 body {
   @apply bg-background text-foreground antialiased;
+  overflow-x: hidden;
 }
 
 /* Smooth scroll */
 html {
   scroll-behavior: smooth;
+  overflow-x: hidden;
+}
+
+/* Themed scrollbars - match dark/light theme */
+.scrollbar-theme {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
+}
+.scrollbar-theme::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-theme::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-theme::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.35);
+  border-radius: 3px;
+}
+.scrollbar-theme::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
 }
 
 /* Keyframe animations */

@@ -1,6 +1,6 @@
 # Search Flow Documentation (Code-Accurate)
 
-This document reflects the current implementation in `apps/api` as of February 15, 2026.
+This document reflects the current implementation in `apps/api` as of February 20, 2026.
 
 ## 1) Key Updates
 
@@ -9,6 +9,7 @@ This document reflects the current implementation in `apps/api` as of February 1
 - Search idempotency is replay-only (no reservation row, no explicit 409 "in progress" path).
 - Empty search responses are still charged 1 credit.
 - `similarity_percent` is derived from final blended ranking score (clamped to 0-100), not pure vector similarity.
+- `why_matched` LLM generation now runs asynchronously; responses return deterministic fallback reasons immediately.
 
 ## 2) Quick Navigation
 
@@ -57,9 +58,9 @@ Execution order:
 2. Credit pre-check (`balance >= 1`)
 3. Parse query via LLM and deterministic normalize/validate
 4. Resolve request overrides (`open_to_work_only`, `salary_max`)
-5. Embed query text
+5. Start embedding query text and lexical FTS in parallel
 6. If embedding is empty: create empty search response (charged)
-7. Build lexical query and lexical bonus map
+7. Build lexical bonus map (already running in parallel)
 8. Build normalized constraint term context
 9. Fetch vector candidates with fallback tiers
 10. Collapse card-level results to person-level blended scores
@@ -69,8 +70,8 @@ Execution order:
 14. Apply post-rank tiebreak sorting
 15. Create `Search` row and deduct 1 credit
 16. Prepare pending `SearchResult` rows and LLM evidence payload
-17. Generate `why_matched` via one batched LLM call (fallback to deterministic bullets)
-18. Insert `SearchResult` rows
+17. Insert `SearchResult` rows using deterministic fallback `why_matched`
+18. Kick off async LLM explainability refresh (best-effort; updates `SearchResult.extra.why_matched`)
 19. Fill child-only matched-card display fallback
 20. Build API response payload
 21. Persist idempotency response payload when key exists
@@ -226,13 +227,13 @@ After initial ranking, optional deterministic sorts run:
 - clamps final blended score to `[0,1]`, then maps to `0-100`
 
 `why_matched` pipeline:
-- deterministic fallback bullets are generated first (up to 6 lines)
-- one batched LLM call attempts higher-quality reasons
+- deterministic fallback bullets are generated first (up to 6 lines) and returned in the response
+- a background task runs one batched LLM call to produce higher-quality reasons
 - LLM reasons are sanitized:
   - max 3 lines per person
   - dedupe
   - compacted and length-bounded
-- if LLM fails or output is unusable, fallback bullets are used
+- if LLM fails or output is unusable, fallback bullets remain in `SearchResult.extra`
 
 ### 4.12 Persistence order
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -26,11 +26,14 @@ type FormData = z.infer<typeof schema>;
 export default function LoginPage() {
   const { login, isAuthenticated, isAuthLoading, onboardingStep } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
+  const [verificationEmail, setVerificationEmail] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
+    setValue,
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
   const redirectTo = getPostAuthPath(onboardingStep);
@@ -39,16 +42,26 @@ export default function LoginPage() {
     if (!isAuthLoading && isAuthenticated) router.replace(redirectTo);
   }, [isAuthLoading, isAuthenticated, redirectTo, router]);
 
+  useEffect(() => {
+    const email = searchParams.get("email");
+    if (email) setValue("email", email);
+  }, [searchParams, setValue]);
+
   if (isAuthLoading || isAuthenticated) {
     return <LoadingScreen message="Loading..." />;
   }
 
   const onSubmit = async (data: FormData) => {
     setError(null);
+    setVerificationEmail(null);
     try {
       await login(data.email, data.password);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Login failed");
+      const message = e instanceof Error ? e.message : "Login failed";
+      setError(message);
+      if (message.toLowerCase().includes("email not verified")) {
+        setVerificationEmail(data.email);
+      }
     }
   };
 
@@ -99,6 +112,17 @@ export default function LoginPage() {
               <Button type="submit" className="w-full" disabled={isSubmitting}>
                 {isSubmitting ? "Signing in..." : "Sign in"}
               </Button>
+              {verificationEmail && (
+                <p className="text-center text-xs text-muted-foreground">
+                  Your email is not verified.{" "}
+                  <Link
+                    href={`/verify-email?email=${encodeURIComponent(verificationEmail)}`}
+                    className="text-foreground font-medium hover:underline"
+                  >
+                    Verify now
+                  </Link>
+                </p>
+              )}
               <p className="text-center text-sm text-muted-foreground">
                 {"Don't have an account? "}
                 <Link href="/signup" className="text-foreground font-medium hover:underline">

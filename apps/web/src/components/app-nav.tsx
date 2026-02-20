@@ -1,170 +1,227 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { ChevronDown, LogOut, Settings, User, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useAuth } from "@/contexts/auth-context";
-import { useSearch } from "@/contexts/search-context";
-import { CreditsBadge } from "@/components/credits-badge";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { LockOpen, Settings, Compass, LayoutGrid, Hammer, Globe } from "lucide-react";
+import { useSidebarWidth } from "@/contexts/sidebar-width-context";
+import { useProfileV1 } from "@/hooks/use-profile-v1";
 import { cn } from "@/lib/utils";
+import { CreditsBadge } from "@/components/credits-badge";
+import { api } from "@/lib/api";
+import type { SavedSearchesResponse } from "@/types";
+
+function truncateQuery(text: string, maxLen = 40): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen).trim() + "…";
+}
+
+function formatSearchDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
 
 export function AppNav() {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
-  const search = useSearch();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const isDiscover = pathname === "/home" || pathname === "/";
+  const searchParams = useSearchParams();
+  const selectedSearchId = searchParams.get("id");
+  const { sidebarWidth } = useSidebarWidth();
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  const { data: profile } = useProfileV1();
+  const accountName = (profile?.display_name || profile?.username || "Account").trim();
+  const accountInitial = accountName ? accountName[0]?.toUpperCase() : "U";
 
-  const menuItems = [
-    { href: "/profile", label: "Profile", icon: User },
-    { href: "/settings", label: "Settings", icon: Settings },
+  const { data } = useQuery({
+    queryKey: ["me", "searches"],
+    queryFn: () => api<SavedSearchesResponse>("/me/searches"),
+  });
+
+  const sidebarItems = [
+    { href: "/home", label: "Home", icon: Compass },
+    { href: "/explore", label: "Explore", icon: Globe },
+    { href: "/cards", label: "Your Cards", icon: LayoutGrid },
+    { href: "/builder", label: "Builder", icon: Hammer },
+    { href: "/unlocked", label: "Unlocked", icon: LockOpen },
   ];
 
-  const searchInputRef = useRef<HTMLTextAreaElement>(null);
-  const autoResizeSearch = useCallback(() => {
-    const el = searchInputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, []);
-  useEffect(() => {
-    const id = setTimeout(autoResizeSearch, 0);
-    return () => clearTimeout(id);
-  }, [search.query, autoResizeSearch]);
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    search.performSearch();
-  };
-  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      search.performSearch();
-    }
-  };
-
-  const initials = user?.display_name
-    ? user.display_name.split(/\s+/).map((n) => n[0]).slice(0, 2).join("").toUpperCase()
-    : user?.email?.[0]?.toUpperCase() ?? "?";
+  const searches = data?.searches ?? [];
 
   return (
     <>
-      <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-sm">
-        <div className="container flex h-14 items-center justify-between gap-4 px-4">
+      {/* Left sidebar - permanent, GPT-style */}
+      <aside
+        className="fixed inset-y-0 left-0 z-50 flex-shrink-0 bg-background border-r border-border overflow-x-hidden min-w-0"
+        style={{ width: sidebarWidth }}
+        aria-label="Main navigation"
+      >
+        <div className="flex flex-col h-full min-w-0 overflow-hidden">
+          {/* Logo at top */}
+          <div className="flex-shrink-0 flex items-center px-3 py-4 border-b border-border min-h-[3.5rem]">
+            <Link
+              href="/home"
+              className="flex items-center gap-2.5 text-foreground hover:opacity-90 transition-opacity min-w-0"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-semibold">
+                C
+              </span>
+              <span className="font-semibold text-sm truncate">CONXA</span>
+            </Link>
+          </div>
+
+          {/* Nav links - fixed, not scrollable */}
+          <nav className="flex-shrink-0 px-2 py-3 space-y-0.5">
+            {sidebarItems.map(({ href, label, icon: Icon }) => {
+              const isActive =
+                pathname === href ||
+                (href === "/home" && (pathname === "/" || pathname === "/home")) ||
+                (href === "/explore" && pathname.startsWith("/explore")) ||
+                (href === "/cards" && pathname.startsWith("/cards")) ||
+                (href === "/builder" && pathname.startsWith("/builder"));
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                  )}
+                >
+                  <Icon className="h-5 w-5 shrink-0" />
+                  {label}
+                </Link>
+              );
+            })}
+
+            {/* Your searches - section header (not clickable) */}
+            <div className="pt-4 pb-1">
+              <p className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Your searches
+              </p>
+            </div>
+          </nav>
+
+          {/* Your searches list - only this section scrolls */}
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-theme px-2 pb-2">
+            {searches.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground/80">
+                No searches yet
+              </p>
+            ) : (
+              <ul className="space-y-0.5">
+                {searches.map((search) => {
+                  const isSearchActive =
+                    pathname.startsWith("/searches") && selectedSearchId === search.id;
+                  const content = (
+                    <>
+                      <span className="truncate font-medium block">
+                        {truncateQuery(search.query_text)}
+                      </span>
+                      <span className="text-xs opacity-80">
+                        {search.expired
+                          ? `Expired · ${formatSearchDate(search.created_at)}`
+                          : `${search.result_count} results · ${formatSearchDate(search.created_at)}`}
+                      </span>
+                    </>
+                  );
+                  return (
+                    <li key={search.id} className="min-w-0">
+                      {search.expired ? (
+                        <span
+                          className={cn(
+                            "flex flex-col gap-0.5 px-3 py-2 rounded-lg text-sm block min-w-0",
+                            "text-muted-foreground/60 opacity-70 cursor-not-allowed"
+                          )}
+                        >
+                          {content}
+                        </span>
+                      ) : (
+                        <Link
+                          href={`/searches?id=${encodeURIComponent(search.id)}`}
+                          className={cn(
+                            "flex flex-col gap-0.5 px-3 py-2 rounded-lg text-sm transition-colors block min-w-0",
+                            isSearchActive
+                              ? "bg-accent text-foreground font-medium"
+                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                          )}
+                        >
+                          {content}
+                        </Link>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {/* Account + Settings at bottom */}
+          <div className="flex-shrink-0 border-t border-border px-2 py-3 space-y-0.5">
+            <Link
+              href="/profile"
+              className={cn(
+                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-w-0",
+                pathname === "/profile" || pathname.startsWith("/profile")
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+              )}
+              title={accountName}
+              aria-label="Account"
+            >
+              {profile?.photo_url ? (
+                <img
+                  src={profile.photo_url}
+                  alt={accountName}
+                  className="h-7 w-7 shrink-0 rounded-full object-cover bg-muted"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <span className="h-7 w-7 shrink-0 rounded-full bg-muted text-foreground/80 flex items-center justify-center text-xs font-semibold">
+                  {accountInitial}
+                </span>
+              )}
+              <span className="truncate">{accountName}</span>
+            </Link>
+
+            <Link
+              href="/settings"
+              className={cn(
+                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                pathname === "/settings" || pathname.startsWith("/settings")
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+              )}
+            >
+              <Settings className="h-5 w-5 shrink-0" />
+              Settings
+            </Link>
+          </div>
+        </div>
+      </aside>
+
+      {/* Top bar - CONXA centered in the main content area (right of sidebar) */}
+      <header
+        className="sticky top-0 z-40 flex h-14 items-center border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+        style={{ marginLeft: sidebarWidth }}
+      >
+        <div className="grid h-full w-full grid-cols-3 items-center px-4">
+          <div />
           <Link
             href="/home"
-            className="font-semibold text-sm text-foreground transition-colors flex items-center gap-2 flex-shrink-0"
+            className="justify-self-center font-semibold text-sm text-foreground hover:text-foreground/90 transition-colors"
           >
             CONXA
           </Link>
-
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center justify-self-end">
             <CreditsBadge />
-            <div className="relative" ref={dropdownRef}>
-              <button
-                type="button"
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-1.5 rounded-full p-0.5 text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-expanded={dropdownOpen}
-                aria-haspopup="true"
-                title={user?.display_name || user?.email || "Account"}
-              >
-                <span
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground"
-                  aria-hidden
-                >
-                  {initials}
-                </span>
-                <ChevronDown
-                  className={cn("h-3.5 w-3.5 transition-transform", dropdownOpen && "rotate-180")}
-                />
-              </button>
-            {dropdownOpen && (
-              <div
-                className="absolute right-0 mt-1 w-48 rounded-lg border border-border bg-card py-1 shadow-lg z-50"
-                role="menu"
-              >
-                {menuItems.map(({ href, label, icon: Icon }) => (
-                  <Link
-                    key={href}
-                    href={href}
-                    onClick={() => setDropdownOpen(false)}
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent mx-1 rounded-md",
-                      pathname === href ? "bg-accent text-foreground" : "text-muted-foreground"
-                    )}
-                    role="menuitem"
-                  >
-                    <Icon className="h-4 w-4" />
-                    {label}
-                  </Link>
-                ))}
-                <div className="border-t border-border my-1" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDropdownOpen(false);
-                    logout();
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors mx-1 rounded-md"
-                  role="menuitem"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Log out
-                </button>
-              </div>
-            )}
-            </div>
           </div>
         </div>
       </header>
-
-      {isDiscover && (
-        <div className="border-b border-border bg-muted/30 px-4 py-3">
-          <form
-            onSubmit={handleSearchSubmit}
-            className="container flex items-center gap-2 max-w-2xl mx-auto"
-          >
-            <div className="relative flex-1 min-w-0 flex items-end">
-              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              <textarea
-                ref={searchInputRef}
-                placeholder="Describe who you're looking for..."
-                value={search.query}
-                onChange={(e) => {
-                  search.setQuery(e.target.value);
-                  autoResizeSearch();
-                }}
-                onKeyDown={handleSearchKeyDown}
-                rows={1}
-                className="flex min-h-9 w-full resize-none rounded-md border border-border bg-background pl-8 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/30 transition-colors overflow-hidden"
-                style={{ maxHeight: 160 }}
-              />
-            </div>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={search.isSearching || !search.query.trim()}
-              className="flex-shrink-0 h-9 self-end"
-            >
-              {search.isSearching ? "..." : "Search"}
-            </Button>
-          </form>
-        </div>
-      )}
     </>
   );
 }

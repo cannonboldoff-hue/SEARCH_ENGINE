@@ -18,7 +18,7 @@ from datetime import datetime, timezone, date
 from typing import Optional, Any
 from enum import Enum
 
-from pydantic import BaseModel, Field, validator, root_validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -197,13 +197,14 @@ class V1Card(BaseModel):
     relation_type: Optional[str] = None
     child_type: Optional[str] = None
 
-    @root_validator(pre=True)
-    def normalize_prompt_style_fields(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_prompt_style_fields(cls, data: Any) -> Any:
         """Accept both prompt-style parent keys and legacy V1 keys."""
-        if not isinstance(values, dict):
-            return values
+        if not isinstance(data, dict):
+            return data
 
-        data = dict(values)
+        data = dict(data)
 
         # Parent intent fields from prompt schema.
         if not data.get("intent") and data.get("intent_primary"):
@@ -259,15 +260,17 @@ class V1Card(BaseModel):
 
         return data
 
-    @validator('time', pre=True)
-    def normalize_time(cls, v):
+    @field_validator("time", mode="before")
+    @classmethod
+    def normalize_time(cls, v: Any) -> Any:
         """Convert string to TimeInfo dict."""
         if isinstance(v, str):
             return {"text": v}
         return v
-    
-    @validator('location', pre=True)
-    def normalize_location(cls, v):
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def normalize_location(cls, v: Any) -> Any:
         """Convert string to LocationInfo dict."""
         if isinstance(v, str):
             return {"text": v}

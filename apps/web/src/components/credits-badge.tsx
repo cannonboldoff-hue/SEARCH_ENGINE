@@ -15,6 +15,7 @@ export function CreditsBadge() {
       <span className="text-xs font-medium tabular-nums">
         {credits?.balance ?? "--"}
       </span>
+      <span className="hidden text-xs sm:inline">credits</span>
     </Link>
   );
 }

@@ -20,7 +20,6 @@ import { PageLoading, PageError, ErrorMessage } from "@/components/feedback";
 import { api, apiWithIdempotency } from "@/lib/api";
 import type {
   PersonProfile,
-  PersonPublicProfile,
   ContactDetails,
   ExperienceCard,
   ExperienceCardChild,
@@ -141,7 +140,7 @@ function ExperienceCardChildDetails({
   return <DetailGrid rows={rows} />;
 }
 
-function BioSection({ bio }: { bio: NonNullable<PersonPublicProfile["bio"]> }) {
+function BioSection({ bio }: { bio: NonNullable<PersonProfile["bio"]> }) {
   const pastCompanies = bio.past_companies?.length
     ? bio.past_companies
         .map((company) =>
@@ -256,21 +255,17 @@ export default function PersonProfilePage() {
   const searchId = searchParams.get("search_id");
   const queryClient = useQueryClient();
 
-  const fromSearch = !!searchId;
-
-  const searchProfileQuery = useQuery({
+  const profileQuery = useQuery({
     queryKey: ["person", personId, searchId],
-    queryFn: () =>
-      api<PersonProfile>(
-        `/people/${personId}?search_id=${encodeURIComponent(searchId || "")}`
-      ),
-    enabled: !!personId && fromSearch,
-  });
-
-  const publicProfileQuery = useQuery({
-    queryKey: ["person-public", personId],
-    queryFn: () => api<PersonPublicProfile>(`/people/${personId}/profile`),
-    enabled: !!personId && !fromSearch,
+    queryFn: () => {
+      if (searchId) {
+        return api<PersonProfile>(
+          `/people/${personId}?search_id=${encodeURIComponent(searchId)}`
+        );
+      }
+      return api<PersonProfile>(`/people/${personId}`);
+    },
+    enabled: !!personId,
   });
 
   const unlockMutation = useMutation({
@@ -279,7 +274,7 @@ export default function PersonProfilePage() {
       return apiWithIdempotency<{ unlocked: boolean; contact: ContactDetails }>(
         `/people/${personId}/unlock-contact`,
         key,
-        { method: "POST", body: { search_id: searchId! } }
+        { method: "POST", body: searchId ? { search_id: searchId } : {} }
       );
     },
     onSuccess: () => {
@@ -287,41 +282,38 @@ export default function PersonProfilePage() {
     },
   });
 
-  const isLoading = fromSearch
-    ? searchProfileQuery.isLoading
-    : publicProfileQuery.isLoading;
-  const error = fromSearch ? searchProfileQuery.error : publicProfileQuery.error;
+  const isLoading = profileQuery.isLoading;
+  const error = profileQuery.error;
 
   if (isLoading) {
     return <PageLoading message="Loading profile..." />;
   }
 
-  if (fromSearch) {
-    const profile = searchProfileQuery.data;
-    if (error || !profile) {
-      return (
-        <PageError
-          message={error instanceof Error ? error.message : "Failed to load profile"}
-          backHref="/home"
-          backLabel="Back to CONXA"
-        />
-      );
-    }
-    const contactUnlocked = !!profile.contact;
+  const profile = profileQuery.data;
+  if (error || !profile) {
     return (
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35 }}
-        className="max-w-2xl mx-auto space-y-6"
+      <PageError
+        message={error instanceof Error ? error.message : "Failed to load profile"}
+        backHref="/home"
+        backLabel="Back to CONXA"
+      />
+    );
+  }
+  const contactUnlocked = !!profile.contact;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="max-w-2xl mx-auto space-y-6"
+    >
+      <Link
+        href="/home"
+        className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5 group"
       >
-        <Link
-          href="/home"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5 group"
-        >
-          <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
-          Back to Search
-        </Link>
+        <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
+        Back to Search
+      </Link>
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">{profile.display_name || "Anonymous"}</CardTitle>
@@ -450,65 +442,5 @@ export default function PersonProfilePage() {
           </CardContent>
         </Card>
       </motion.div>
-    );
-  }
-
-  const publicProfile = publicProfileQuery.data;
-  if (error || !publicProfile) {
-    return (
-      <PageError
-        message={error instanceof Error ? error.message : "Failed to load profile"}
-        backHref="/home"
-        backLabel="Back to CONXA"
-      />
-    );
-  }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35 }}
-      className="max-w-2xl mx-auto space-y-6"
-    >
-      <Link
-        href="/home"
-        className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5 group"
-      >
-        <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
-        Back to CONXA
-      </Link>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">
-            {publicProfile.display_name || "Anonymous"}
-          </CardTitle>
-        </CardHeader>
-      </Card>
-
-      {publicProfile.bio && <BioSection bio={publicProfile.bio} />}
-
-      <section>
-        <h2 className="text-sm font-medium text-muted-foreground mb-3">Experience</h2>
-        {publicProfile.card_families.length === 0 ? (
-          <div className="text-center py-8 rounded-lg border border-dashed border-border">
-            <Briefcase className="h-6 w-6 text-muted-foreground/40 mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No experience cards shared.</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {publicProfile.card_families.map((family, idx) => (
-              <CardFamilyBlock
-                key={family.parent.id}
-                parent={family.parent}
-                children={family.children}
-                index={idx}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-    </motion.div>
   );
 }

@@ -12,6 +12,8 @@ from src.schemas import (
     PersonListItem,
     PersonListResponse,
     PersonPublicProfileResponse,
+    UnlockedCardItem,
+    UnlockedCardsResponse,
     CardFamilyResponse,
     BioResponse,
     ContactDetailsResponse,
@@ -25,10 +27,20 @@ async def get_person_profile(
     db: AsyncSession,
     searcher_id: str,
     person_id: str,
-    search_id: str,
+    search_id: str | None = None,
 ) -> PersonProfileResponse:
-    """Load profile for a person in a valid search result."""
-    await _validate_search_session(db, searcher_id, search_id, person_id)
+    """Load profile for person view; validate search context only when search_id is provided."""
+    if search_id:
+        await _validate_search_session(db, searcher_id, search_id, person_id)
+
+    unlock_stmt = select(UnlockContact).where(
+        UnlockContact.searcher_id == searcher_id,
+        UnlockContact.target_person_id == person_id,
+    )
+    if search_id:
+        unlock_stmt = unlock_stmt.where(UnlockContact.search_id == search_id)
+    else:
+        unlock_stmt = unlock_stmt.order_by(UnlockContact.created_at.desc()).limit(1)
 
     p_result, profile_result, cards_result, unlock_result = await asyncio.gather(
         db.execute(select(Person).where(Person.id == person_id)),
@@ -39,13 +51,7 @@ async def get_person_profile(
                 ExperienceCard.experience_card_visibility == True,
             ).order_by(ExperienceCard.created_at.desc())
         ),
-        db.execute(
-            select(UnlockContact).where(
-                UnlockContact.searcher_id == searcher_id,
-                UnlockContact.target_person_id == person_id,
-                UnlockContact.search_id == search_id,
-            )
-        ),
+        db.execute(unlock_stmt),
     )
     person = p_result.scalar_one_or_none()
     if not person:
@@ -150,6 +156,88 @@ async def list_people_for_discover(db: AsyncSession) -> PersonListResponse:
         for pid, p in people.items()
     ]
     return PersonListResponse(people=people_list)
+
+
+async def list_unlocked_cards_for_searcher(
+    db: AsyncSession,
+    searcher_id: str,
+) -> UnlockedCardsResponse:
+    """List unique people unlocked by the searcher (latest unlock first)."""
+    unlocks_result = await db.execute(
+        select(UnlockContact)
+        .where(UnlockContact.searcher_id == searcher_id)
+        .order_by(UnlockContact.created_at.desc())
+    )
+    unlocks = unlocks_result.scalars().all()
+    if not unlocks:
+        return UnlockedCardsResponse(cards=[])
+
+    unique_unlocks: list[UnlockContact] = []
+    seen_person_ids: set[str] = set()
+    for unlock in unlocks:
+        person_id = str(unlock.target_person_id)
+        if person_id in seen_person_ids:
+            continue
+        seen_person_ids.add(person_id)
+        unique_unlocks.append(unlock)
+
+    person_ids = [str(unlock.target_person_id) for unlock in unique_unlocks]
+
+    async def get_people():
+        result = await db.execute(select(Person).where(Person.id.in_(person_ids)))
+        return {str(person.id): person for person in result.scalars().all()}
+
+    async def get_profiles():
+        result = await db.execute(select(PersonProfile).where(PersonProfile.person_id.in_(person_ids)))
+        return {str(profile.person_id): profile for profile in result.scalars().all()}
+
+    async def get_card_summaries():
+        result = await db.execute(
+            select(ExperienceCard.person_id, ExperienceCard.summary, ExperienceCard.created_at)
+            .where(
+                ExperienceCard.person_id.in_(person_ids),
+                ExperienceCard.experience_card_visibility == True,
+            )
+            .order_by(ExperienceCard.person_id, ExperienceCard.created_at.desc())
+        )
+        return result.all()
+
+    people_by_id, profiles_by_id, card_rows = await asyncio.gather(
+        get_people(),
+        get_profiles(),
+        get_card_summaries(),
+    )
+
+    summaries_by_person: dict[str, list[str]] = {person_id: [] for person_id in person_ids}
+    for row in card_rows:
+        row_person_id = str(row.person_id)
+        if len(summaries_by_person[row_person_id]) >= 5:
+            continue
+        summary = (row.summary or "").strip()
+        if summary:
+            summaries_by_person[row_person_id].append(summary)
+
+    cards: list[UnlockedCardItem] = []
+    for unlock in unique_unlocks:
+        person_id = str(unlock.target_person_id)
+        person = people_by_id.get(person_id)
+        if not person:
+            continue
+        profile = profiles_by_id.get(person_id)
+        cards.append(
+            UnlockedCardItem(
+                person_id=person_id,
+                search_id=str(unlock.search_id),
+                display_name=person.display_name,
+                current_location=profile.current_city if profile else None,
+                open_to_work=bool(profile.open_to_work) if profile else False,
+                open_to_contact=bool(profile.open_to_contact) if profile else False,
+                experience_summaries=summaries_by_person.get(person_id, [])[:5],
+                unlocked_at=unlock.created_at,
+            )
+        )
+
+    return UnlockedCardsResponse(cards=cards)
 
 
 def _bio_response_for_public(person: Person, profile: PersonProfile | None) -> BioResponse:

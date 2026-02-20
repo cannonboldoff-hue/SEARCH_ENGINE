@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from src.db.session import async_session
 from src.db.models import Person, ExperienceCard, ExperienceCardChild
-from src.core import decode_access_token
+from src.core import decode_access_token, get_settings
 from src.services.experience_card import experience_card_service
 
 security = HTTPBearer(auto_error=False)
@@ -48,6 +48,12 @@ async def get_current_user(
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    settings = get_settings()
+    if settings.email_verification_required and not user.email_verified_at:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email not verified",
+        )
     return user
 
 
@@ -85,5 +91,4 @@ async def get_experience_card_child_or_404(
             detail="Child card not found",
         )
     return child
-
 

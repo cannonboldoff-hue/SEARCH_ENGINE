@@ -72,6 +72,21 @@ export type PersonListResponse = {
   people: PersonListItem[];
 };
 
+export type UnlockedCardItem = {
+  person_id: string;
+  search_id: string;
+  display_name: string | null;
+  current_location: string | null;
+  open_to_work: boolean;
+  open_to_contact: boolean;
+  experience_summaries: string[];
+  unlocked_at: string | null;
+};
+
+export type UnlockedCardsResponse = {
+  cards: UnlockedCardItem[];
+};
+
 /** Public profile for person detail page (GET /people/:id/profile). */
 export type PersonPublicProfile = {
   id: string;
@@ -83,6 +98,20 @@ export type PersonPublicProfile = {
 export type SearchResponse = {
   search_id: string;
   people: PersonSearchResult[];
+};
+
+/** One search-history entry in GET /me/searches. */
+export type SavedSearchItem = {
+  id: string;
+  query_text: string;
+  created_at: string;
+  expires_at: string;
+  expired: boolean;
+  result_count: number;
+};
+
+export type SavedSearchesResponse = {
+  searches: SavedSearchItem[];
 };
 
 /** Response shape from GET `/me/experience-cards` and POST/PATCH `/experience-cards`. Matches backend `ExperienceCardResponse`. */

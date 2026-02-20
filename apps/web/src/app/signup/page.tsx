@@ -16,23 +16,28 @@ import { getPostAuthPath } from "@/lib/auth-flow";
 import { AuthLayout } from "@/components/auth";
 import { LoadingScreen, ErrorMessage } from "@/components/feedback";
 
-const schema = z.object({
+const signupSchema = z.object({
   email: z.string().email("Invalid email"),
-  password: z.string().min(6, "At least 6 characters"),
+  password: z
+    .string()
+    .min(8, "At least 8 characters")
+    .regex(/[A-Za-z]/, "Include at least one letter")
+    .regex(/\d/, "Include at least one number"),
   display_name: z.string().optional(),
 });
 
-type FormData = z.infer<typeof schema>;
+type SignupFormData = z.infer<typeof signupSchema>;
 
 export default function SignupPage() {
   const { signup, isAuthenticated, isAuthLoading, onboardingStep } = useAuth();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<FormData>({ resolver: zodResolver(schema) });
+  } = useForm<SignupFormData>({ resolver: zodResolver(signupSchema) });
 
   const redirectTo = getPostAuthPath(onboardingStep);
 
@@ -44,10 +49,15 @@ export default function SignupPage() {
     return <LoadingScreen message="Loading..." />;
   }
 
-  const onSubmit = async (data: FormData) => {
+  const onSubmitDetails = async (data: SignupFormData) => {
     setError(null);
     try {
-      await signup(data.email, data.password, data.display_name || undefined);
+      await signup({
+        email: data.email,
+        password: data.password,
+        displayName: data.display_name || undefined,
+      });
+      router.replace(`/verify-email?email=${encodeURIComponent(data.email)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign up failed");
     }
@@ -56,7 +66,7 @@ export default function SignupPage() {
   return (
     <AuthLayout
       title="CONXA"
-      subtitle="Start with 1,000 credits. Build your experience and get discovered."
+      subtitle="Create your account. We'll send a verification email to activate it."
     >
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -66,12 +76,10 @@ export default function SignupPage() {
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">Sign up</CardTitle>
-            <CardDescription>
-              Email, password, and optional display name.
-            </CardDescription>
+            <CardDescription>Enter your details. We'll email a verification link.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            <form onSubmit={handleSubmit(onSubmitDetails)} className="space-y-4">
               {error && <ErrorMessage message={error} />}
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
@@ -79,6 +87,9 @@ export default function SignupPage() {
                   id="email"
                   type="email"
                   placeholder="you@example.com"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
                   {...register("email")}
                 />
                 {errors.email && (
@@ -90,7 +101,8 @@ export default function SignupPage() {
                 <Input
                   id="password"
                   type="password"
-                  placeholder="At least 6 characters"
+                  placeholder="At least 8 characters"
+                  autoComplete="new-password"
                   {...register("password")}
                 />
                 {errors.password && (
@@ -102,6 +114,7 @@ export default function SignupPage() {
                 <Input
                   id="display_name"
                   placeholder="How you want to be shown"
+                  autoComplete="name"
                   {...register("display_name")}
                 />
               </div>

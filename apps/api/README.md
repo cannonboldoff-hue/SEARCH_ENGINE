@@ -1,4 +1,4 @@
-# CONXA — Backend (API)
+﻿# CONXA â€” Backend (API)
 
 Step-by-step documentation of the FastAPI backend: every module and function, in order of use.
 
@@ -29,9 +29,9 @@ Step-by-step documentation of the FastAPI backend: every module and function, in
 
 The backend is a **FastAPI** app that provides:
 
-- **Auth**: signup/login with JWT; password hashing with bcrypt.
-- **Profile (“me”)**: person, visibility settings, bio, credits, contact details.
-- **Builder**: raw experiences → LLM draft cards → experience cards (with pgvector embeddings).
+- **Auth**: Email/password signup + login with JWT; password hashing with bcrypt.
+- **Profile (â€œmeâ€)**: person, visibility settings, bio, credits, contact details.
+- **Builder**: raw experiences â†’ LLM draft cards â†’ experience cards (with pgvector embeddings).
 - **Search**: semantic search over approved experience cards; view profile; unlock contact (credits).
 
 Tech: **PostgreSQL** (async via asyncpg), **pgvector** for embeddings, **Alembic** for migrations, **SlowAPI** for rate limiting.
@@ -42,13 +42,13 @@ Tech: **PostgreSQL** (async via asyncpg), **pgvector** for embeddings, **Alembic
 
 | Step | What happens |
 |------|----------------|
-| 1 | **`lifespan(_app)`** — Async context manager for app startup/shutdown. Currently only `yield`s (no startup logic). |
-| 2 | **`FastAPI(...)`** — App created with title, description, version, lifespan. |
-| 3 | **`app.state.limiter = limiter`** — Attach SlowAPI limiter for rate-limited routes. |
-| 4 | **`app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)`** — Return 429 when rate limit exceeded. |
-| 5 | **CORS** — `get_settings().cors_origins` is split by comma; if empty, `["*"]`. Middleware allows credentials, all methods/headers. **Production:** set `CORS_ORIGINS` to your web app URL(s), e.g. `https://conxa-web.onrender.com` — browsers reject `*` when credentials are used. |
-| 6 | **Routers** — `auth_router`, `profile_router`, `contact_router`, `builder_router`, `search_router` are included. |
-| 7 | **`GET /health`** — Returns `{"status": "ok"}` (no auth). |
+| 1 | **`lifespan(_app)`** â€” Async context manager for app startup/shutdown. Currently only `yield`s (no startup logic). |
+| 2 | **`FastAPI(...)`** â€” App created with title, description, version, lifespan. |
+| 3 | **`app.state.limiter = limiter`** â€” Attach SlowAPI limiter for rate-limited routes. |
+| 4 | **`app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)`** â€” Return 429 when rate limit exceeded. |
+| 5 | **CORS** â€” `get_settings().cors_origins` is split by comma; if empty, `["*"]`. Middleware allows credentials, all methods/headers. **Production:** set `CORS_ORIGINS` to your web app URL(s), e.g. `https://conxa-web.onrender.com` â€” browsers reject `*` when credentials are used. |
+| 6 | **Routers** â€” `auth_router`, `profile_router`, `contact_router`, `builder_router`, `search_router` are included. |
+| 7 | **`GET /health`** â€” Returns `{"status": "ok"}` (no auth). |
 
 ---
 
@@ -56,7 +56,7 @@ Tech: **PostgreSQL** (async via asyncpg), **pgvector** for embeddings, **Alembic
 
 | Function / item | Purpose |
 |-----------------|--------|
-| **`Settings`** (Pydantic `BaseSettings`) | Loads from env / `.env`. Fields: `database_url`, `jwt_secret`, `jwt_algorithm`, `jwt_expire_minutes`, `chat_api_base_url`, `chat_api_key`, `chat_model`, `embed_api_base_url`, `embed_api_key`, `embed_model`, `openai_api_key`, `search_rate_limit`, `unlock_rate_limit`, `cors_origins`. `extra = "ignore"` so unknown env vars don’t error. |
+| **`Settings`** (Pydantic `BaseSettings`) | Loads from env / `.env`. Fields: `database_url`, `jwt_secret`, `jwt_algorithm`, `jwt_expire_minutes`, `chat_api_base_url`, `chat_api_key`, `chat_model`, `embed_api_base_url`, `embed_api_key`, `embed_model`, `openai_api_key`, `search_rate_limit`, `unlock_rate_limit`, `cors_origins`. `extra = "ignore"` so unknown env vars donâ€™t error. |
 | **`get_settings()`** | Returns cached `Settings()` (via `@lru_cache`). Single instance for the process. |
 
 ---
@@ -65,8 +65,8 @@ Tech: **PostgreSQL** (async via asyncpg), **pgvector** for embeddings, **Alembic
 
 | Constant | Meaning |
 |----------|--------|
-| **`EMBEDDING_DIM`** | `384` — Vector size for DB and for `normalize_embedding`. |
-| **`SEARCH_RESULT_EXPIRY_HOURS`** | `24` — Search results (and profile view / unlock) are valid for this many hours. |
+| **`EMBEDDING_DIM`** | `384` â€” Vector size for DB and for `normalize_embedding`. |
+| **`SEARCH_RESULT_EXPIRY_HOURS`** | `24` â€” Search results (and profile view / unlock) are valid for this many hours. |
 
 ---
 
@@ -76,10 +76,10 @@ Tech: **PostgreSQL** (async via asyncpg), **pgvector** for embeddings, **Alembic
 
 | Step | What happens |
 |------|----------------|
-| 1 | **URL** — `get_settings().database_url`; if it doesn’t contain `asyncpg`, `postgres://` or `postgresql://` is replaced with `postgresql+asyncpg://`. |
-| 2 | **Engine** — `create_async_engine(database_url, poolclass=NullPool if "render.com" in url else None, echo=SQL_ECHO)`. |
-| 3 | **Session factory** — `async_sessionmaker(engine, AsyncSession, expire_on_commit=False, autoflush=False)`. |
-| 4 | **`Base`** — SQLAlchemy `declarative_base()` for models. |
+| 1 | **URL** â€” `get_settings().database_url`; if it doesnâ€™t contain `asyncpg`, `postgres://` or `postgresql://` is replaced with `postgresql+asyncpg://`. |
+| 2 | **Engine** â€” `create_async_engine(database_url, poolclass=NullPool if "render.com" in url else None, echo=SQL_ECHO)`. |
+| 3 | **Session factory** â€” `async_sessionmaker(engine, AsyncSession, expire_on_commit=False, autoflush=False)`. |
+| 4 | **`Base`** â€” SQLAlchemy `declarative_base()` for models. |
 
 ### Models (`db/models.py`)
 
@@ -119,9 +119,9 @@ Password hashing and JWT creation/validation (no DB here).
 | Dependency | Step-by-step |
 |------------|----------------|
 | **`get_db()`** | Async generator: yield an `AsyncSession` from `async_session()`. On success `await session.commit()`; on exception `await session.rollback()` then re-raise. |
-| **`get_current_user(credentials, db)`** | 1) If no Bearer credentials → 401 "Not authenticated". 2) Decode token with `decode_access_token(credentials.credentials)`; if no subject → 401 "Invalid or expired token". 3) Load `Person` by id; if missing → 401 "User not found". 4) Return `Person`. |
+| **`get_current_user(credentials, db)`** | 1) If no Bearer credentials â†’ 401 "Not authenticated". 2) Decode token with `decode_access_token(credentials.credentials)`; if no subject â†’ 401 "Invalid or expired token". 3) Load `Person` by id; if missing â†’ 401 "User not found". 4) If `EMAIL_VERIFICATION_REQUIRED=true` and `email_verified_at` is null â†’ 403 "Email not verified". 5) Return `Person`. |
 
-`security = HTTPBearer(auto_error=False)` so missing header doesn’t auto-raise.
+`security = HTTPBearer(auto_error=False)` so missing header doesnâ€™t auto-raise.
 
 ---
 
@@ -132,7 +132,7 @@ Credit balance, deductions, and idempotency storage.
 | Function | Step-by-step |
 |----------|--------------|
 | **`get_balance(db, person_id)`** | Select `CreditWallet` for person_id; return `wallet.balance` or 0 if no row. |
-| **`deduct_credits(db, person_id, amount, reason, reference_type, reference_id)`** | 1) Select wallet with `with_for_update()`. 2) If no wallet or balance < amount → return False. 3) Decrement `wallet.balance`; create `CreditLedger` row (amount negative, reason, reference_*, balance_after). 4) Add wallet and ledger, flush; return True. |
+| **`deduct_credits(db, person_id, amount, reason, reference_type, reference_id)`** | 1) Select wallet with `with_for_update()`. 2) If no wallet or balance < amount â†’ return False. 3) Decrement `wallet.balance`; create `CreditLedger` row (amount negative, reason, reference_*, balance_after). 4) Add wallet and ledger, flush; return True. |
 | **`get_idempotent_response(db, key, person_id, endpoint)`** | Select one `IdempotencyKey` where (key, person_id, endpoint) match; return row or None. |
 | **`save_idempotent_response(db, key, person_id, endpoint, response_status, response_body)`** | Create `IdempotencyKey` with given fields; add and flush. |
 
@@ -142,7 +142,7 @@ Credit balance, deductions, and idempotency storage.
 
 Pydantic models for request/response. Summary:
 
-- **Auth**: `SignupRequest`, `LoginRequest`, `TokenResponse`.
+- **Auth**: `SignupRequest`, `SignupResponse`, `LoginRequest`, `TokenResponse`, `VerifyEmailRequest`, `VerifyEmailResponse`, `ResendVerificationRequest`, `ResendVerificationResponse`.
 - **Profile**: `PersonResponse`, `PatchProfileRequest`, `VisibilitySettingsResponse`, `PatchVisibilityRequest`, `BioResponse`, `BioCreateUpdate`, `PastCompanyItem`.
 - **Contact**: `ContactDetailsResponse`, `PatchContactRequest`.
 - **Credits**: `CreditsResponse`, `LedgerEntryResponse`.
@@ -189,7 +189,7 @@ All used by routers and services for validation and serialization.
 | **`ChatProvider`** (abstract) | `parse_search_query(query)`, `chat(user_message, max_tokens)`. |
 | **`OpenAICompatibleChatProvider`** | 1) **`__init__(base_url, api_key, model)`**: normalize base_url to end with `/v1`. 2) **`_chat(messages, max_tokens)`**: POST to `{base_url}/chat/completions` with model, messages, max_tokens, temperature=0.2; return `data["choices"][0]["message"]["content"].strip()`; on HTTP/request/KeyError raise `ChatServiceError`. 3) **`parse_search_query(query)`**: Build prompt asking for JSON with company, team, open_to_work_only, semantic_text; call `_chat`, strip markdown code block if present, parse JSON; return `ParsedQuery(...)`. |
 | **`OpenAIChatProvider`** | Subclass using `openai_api_key` and `chat_model` from settings; base_url `https://api.openai.com/v1`. |
-| **`get_chat_provider()`** | If `openai_api_key` set and no `chat_api_base_url` → `OpenAIChatProvider()`. Else if `chat_api_base_url` → `OpenAICompatibleChatProvider(...)`. Else raise RuntimeError. |
+| **`get_chat_provider()`** | If `openai_api_key` set and no `chat_api_base_url` â†’ `OpenAIChatProvider()`. Else if `chat_api_base_url` â†’ `OpenAICompatibleChatProvider(...)`. Else raise RuntimeError. |
 
 ### Embedding (`providers/embedding.py`)
 
@@ -198,11 +198,11 @@ All used by routers and services for validation and serialization.
 | **`EmbeddingServiceError`** | Exception for embedding API errors. |
 | **`EmbeddingProvider`** (abstract) | `dimension` property; `embed(texts: list[str]) -> list[list[float]]`. |
 | **`OpenAICompatibleEmbeddingProvider`** | 1) **`__init__(base_url, api_key, model, dimension=384)`**: normalize base_url to `/v1`. 2) **`embed(texts)`**: POST to `{base_url}/embeddings` with model and input=texts; return list of embeddings ordered by index; on error raise `EmbeddingServiceError`. |
-| **`get_embedding_provider()`** | If `embed_api_base_url` set → return `OpenAICompatibleEmbeddingProvider(..., dimension=384)`. Else raise RuntimeError. |
+| **`get_embedding_provider()`** | If `embed_api_base_url` set â†’ return `OpenAICompatibleEmbeddingProvider(..., dimension=384)`. Else raise RuntimeError. |
 
 ### Experience Card prompts (`prompts/experience_card.py`)
 
-Prompts for the Experience Card pipeline (messy text → rewrite → cleanup → extract-all → validate-all). Align with `domain`: parents use `ExperienceCardParentV1Schema` (intent = `Intent`), children use `ExperienceCardChildV1Schema` (intent = `ChildIntent`, relation_type = `ChildRelationType`), child_type from `ALLOWED_CHILD_TYPES`. Do not assume the user is in tech.
+Prompts for the Experience Card pipeline (messy text â†’ rewrite â†’ cleanup â†’ extract-all â†’ validate-all). Align with `domain`: parents use `ExperienceCardParentV1Schema` (intent = `Intent`), children use `ExperienceCardChildV1Schema` (intent = `ChildIntent`, relation_type = `ChildRelationType`), child_type from `ALLOWED_CHILD_TYPES`. Do not assume the user is in tech.
 
 | Prompt | Purpose |
 |--------|---------|
@@ -221,8 +221,8 @@ Use `fill_prompt(template, user_text=..., person_id=..., parent_and_children_jso
 
 | Function | Step-by-step |
 |----------|--------------|
-| **`signup(db, body)`** | 1) Select Person by email; if exists → 400 "Email already registered". 2) Create Person (email, hashed_password from `hash_password(body.password)`, display_name). 3) Add Person, flush. 4) Create VisibilitySettings, ContactDetails, CreditWallet(balance=1000), CreditLedger(amount=1000, reason="signup"); add all, flush. 5) Refresh person; create JWT with `create_access_token(person.id)`; return TokenResponse. |
-| **`login(db, body)`** | 1) Select Person by email. 2) If no person or `verify_password(body.password, person.hashed_password)` is False → 401 "Invalid email or password". 3) Return TokenResponse(access_token=create_access_token(person.id)). |
+| **`signup(db, body)`** | 1) Normalize email; check not registered. 2) Create Person + PersonProfile (balance) + CreditLedger. 3) Send verification email (best effort). 4) If `EMAIL_VERIFICATION_REQUIRED=true`, return `SignupResponse(email_verification_required=true)` without an access token. Otherwise return `SignupResponse(access_token=...)`. |
+| **`login(db, body)`** | 1) Select Person by case-insensitive email. 2) If no person or `verify_password(...)` is False â†’ 401 "Invalid email or password". 3) If `EMAIL_VERIFICATION_REQUIRED=true` and user is unverified â†’ 403 "Email not verified". 4) Return `TokenResponse(access_token=create_access_token(person.id))`. |
 | **`AuthService`** | Facade with `signup` and `login` static methods. `auth_service` is the singleton used by the router. |
 
 ### Me (`services/me.py`)
@@ -233,7 +233,7 @@ Use `fill_prompt(template, user_text=..., person_id=..., parent_and_children_jso
 | **`_person_response(person)`** | Return PersonResponse(id, email, display_name, created_at). |
 | **`get_profile(person)`** | Return _person_response(person). |
 | **`update_profile(db, person, body)`** | If body.display_name is not None, set person.display_name; return _person_response(person). |
-| **`get_visibility(db, person_id)`** | Load VisibilitySettings; if missing → 404; else return VisibilitySettingsResponse with all visibility fields. |
+| **`get_visibility(db, person_id)`** | Load VisibilitySettings; if missing â†’ 404; else return VisibilitySettingsResponse with all visibility fields. |
 | **`patch_visibility(db, person_id, body)`** | Load or create VisibilitySettings; apply each non-None field from body (open_to_work, work_preferred_locations, salary fields, open_to_contact, contact salary fields); return VisibilitySettingsResponse. |
 | **`get_bio_response(db, person)`** | Load Bio and ContactDetails for person; build BioResponse (including email from Person, linkedin/phone from Contact); set complete=True if bio has school and person has email. |
 | **`update_bio(db, person, body)`** | Load or create Bio; apply every non-None field from body; if body.email set, update person.email; if first/last name set, set person.display_name from name parts; if linkedin_url/phone set, ensure ContactDetails exists and update; return BioResponse. |
@@ -250,10 +250,10 @@ Use `fill_prompt(template, user_text=..., person_id=..., parent_and_children_jso
 |----------|--------------|
 | **`unlock_endpoint(person_id)`** | Return idempotency endpoint string: `"POST /people/{person_id}/unlock-contact"`. |
 | **`_search_expired(search_rec)`** | True if search created_at is older than now minus SEARCH_RESULT_EXPIRY_HOURS. |
-| **`run_search(db, searcher_id, body, idempotency_key)`** | 1) If idempotency_key: get existing idempotent response for POST /search; if found, return SearchResponse from stored body. 2) Check balance; if < 1 → 402. 3) Chat: parse_search_query(body.query) → ParsedQuery (company, team, open_to_work_only, semantic_text). 4) Embedding: embed(semantic_text or query) → query vector; normalize. 5) Get list of person_ids that have at least one APPROVED card with non-null embedding. 6) If no such persons: create Search record, deduct 1 credit, return empty people; optionally save idempotent response. 7) Else: raw SQL pgvector — `ec.embedding <=> :qvec`, group by person_id, MIN(1 - distance), order by score DESC, limit 50. 8) If open_to_work_only: filter to persons in PersonProfile.open_to_work. 9) If parsed company/team: filter to persons with matching (case-insensitive) card company/team. 10) If body.preferred_locations: keep only persons whose work_preferred_locations intersect. 11) If body.salary_min/max: filter by work_preferred_salary range overlap. 12) Take top 20. 13) Create Search record; deduct 1 credit; create SearchResult rows (rank, score); build PersonSearchResult list (load Person + PersonProfile for each); return SearchResponse; optionally save idempotent response. |
-| **`get_person_profile(db, searcher_id, person_id, search_id)`** | 1) Load Search by id and searcher_id; if missing → 403 "Invalid search_id"; if expired → 403 "Search expired". 2) Load SearchResult for (search_id, person_id); if missing → 403 "Person not in this search result". 3) Load Person; if missing → 404. 4) Load PersonProfile. 5) Load APPROVED ExperienceCards for person, order by created_at desc. 6) If UnlockContact exists for (searcher, person, search), set contact from PersonProfile in response; else contact=None. 7) Return PersonProfileResponse (id, display_name, visibility fields, experience_cards via serializer, contact). |
-| **`unlock_contact(db, searcher_id, person_id, search_id, idempotency_key)`** | 1) If idempotency_key: get existing response for unlock endpoint; if found return it. 2) Validate search (same as get_person_profile); validate SearchResult; ensure person open_to_contact. 3) If UnlockContact already exists: return UnlockContactResponse(unlocked=True, contact from PersonProfile). 4) Check balance; if < 1 → 402. 5) Create UnlockContact row; flush; deduct 1 credit (reason=unlock_contact, reference_id=unlock.id). 6) Return UnlockContactResponse with contact from PersonProfile; optionally save idempotent response. |
-| **`SearchService`** | Facade: search → run_search, get_profile → get_person_profile, unlock → unlock_contact. |
+| **`run_search(db, searcher_id, body, idempotency_key)`** | 1) If idempotency_key: get existing idempotent response for POST /search; if found, return SearchResponse from stored body. 2) Check balance; if < 1 â†’ 402. 3) Chat: parse_search_query(body.query) â†’ ParsedQuery (company, team, open_to_work_only, semantic_text). 4) Embedding: embed(semantic_text or query) â†’ query vector; normalize. 5) Get list of person_ids that have at least one APPROVED card with non-null embedding. 6) If no such persons: create Search record, deduct 1 credit, return empty people; optionally save idempotent response. 7) Else: raw SQL pgvector â€” `ec.embedding <=> :qvec`, group by person_id, MIN(1 - distance), order by score DESC, limit 50. 8) If open_to_work_only: filter to persons in PersonProfile.open_to_work. 9) If parsed company/team: filter to persons with matching (case-insensitive) card company/team. 10) If body.preferred_locations: keep only persons whose work_preferred_locations intersect. 11) If body.salary_min/max: filter by work_preferred_salary range overlap. 12) Take top 20. 13) Create Search record; deduct 1 credit; create SearchResult rows (rank, score); build PersonSearchResult list (load Person + PersonProfile for each); return SearchResponse; optionally save idempotent response. |
+| **`get_person_profile(db, searcher_id, person_id, search_id)`** | 1) Load Search by id and searcher_id; if missing â†’ 403 "Invalid search_id"; if expired â†’ 403 "Search expired". 2) Load SearchResult for (search_id, person_id); if missing â†’ 403 "Person not in this search result". 3) Load Person; if missing â†’ 404. 4) Load PersonProfile. 5) Load APPROVED ExperienceCards for person, order by created_at desc. 6) If UnlockContact exists for (searcher, person, search), set contact from PersonProfile in response; else contact=None. 7) Return PersonProfileResponse (id, display_name, visibility fields, experience_cards via serializer, contact). |
+| **`unlock_contact(db, searcher_id, person_id, search_id, idempotency_key)`** | 1) If idempotency_key: get existing response for unlock endpoint; if found return it. 2) Validate search (same as get_person_profile); validate SearchResult; ensure person open_to_contact. 3) If UnlockContact already exists: return UnlockContactResponse(unlocked=True, contact from PersonProfile). 4) Check balance; if < 1 â†’ 402. 5) Create UnlockContact row; flush; deduct 1 credit (reason=unlock_contact, reference_id=unlock.id). 6) Return UnlockContactResponse with contact from PersonProfile; optionally save idempotent response. |
+| **`SearchService`** | Facade: search â†’ run_search, get_profile â†’ get_person_profile, unlock â†’ unlock_contact. |
 
 ### Experience card (`services/experience_card.py`)
 
@@ -274,67 +274,69 @@ Use `fill_prompt(template, user_text=..., person_id=..., parent_and_children_jso
 
 ### Auth (`routers/auth.py`)
 
-- **POST /auth/signup** — Body: SignupRequest. Depends: get_db. Calls `auth_service.signup(db, body)`; returns TokenResponse.
-- **POST /auth/login** — Body: LoginRequest. Depends: get_db. Calls `auth_service.login(db, body)`; returns TokenResponse.
+- **POST /auth/signup** â€” Body: SignupRequest. Depends: get_db. Calls `auth_service.signup(db, body)`; returns `SignupResponse` (`access_token` is omitted when email verification is required).
+- **POST /auth/login** â€” Body: LoginRequest. Depends: get_db. Calls `auth_service.login(db, body)`; returns TokenResponse.
+- **POST /auth/verify-email** â€” Body: VerifyEmailRequest. Depends: get_db. Calls `auth_service.verify_email(db, body)`; returns VerifyEmailResponse.
+- **POST /auth/verify-email/resend** â€” Body: ResendVerificationRequest. Depends: get_db. Calls `auth_service.resend_verification_email(db, body)`; returns ResendVerificationResponse.
 
 ### Profile (`routers/profile.py`)
 
 All require `get_current_user` (JWT). Prefix `/me`.
 
-- **GET /me** — Returns PersonResponse via `profile_service.get_current_user(current_user)`.
-- **PATCH /me** — Body: PatchProfileRequest. `profile_service.patch_current_user(db, current_user, body)`.
-- **GET /me/visibility** — `profile_service.get_visibility(db, current_user.id)`.
-- **PATCH /me/visibility** — Body: PatchVisibilityRequest. `profile_service.patch_visibility(db, current_user.id, body)`.
-- **GET /me/bio** — `profile_service.get_bio(db, current_user)`.
-- **PUT /me/bio** — Body: BioCreateUpdate. `profile_service.put_bio(db, current_user, body)`.
-- **GET /me/credits** — `profile_service.get_credits(db, current_user.id)`.
-- **POST /me/credits/purchase** — Body: PurchaseCreditsRequest. `profile_service.purchase_credits(db, current_user.id, body)`.
-- **GET /me/credits/ledger** — `profile_service.get_credits_ledger(db, current_user.id)`.
+- **GET /me** â€” Returns PersonResponse via `profile_service.get_current_user(current_user)`.
+- **PATCH /me** â€” Body: PatchProfileRequest. `profile_service.patch_current_user(db, current_user, body)`.
+- **GET /me/visibility** â€” `profile_service.get_visibility(db, current_user.id)`.
+- **PATCH /me/visibility** â€” Body: PatchVisibilityRequest. `profile_service.patch_visibility(db, current_user.id, body)`.
+- **GET /me/bio** â€” `profile_service.get_bio(db, current_user)`.
+- **PUT /me/bio** â€” Body: BioCreateUpdate. `profile_service.put_bio(db, current_user, body)`.
+- **GET /me/credits** â€” `profile_service.get_credits(db, current_user.id)`.
+- **POST /me/credits/purchase** â€” Body: PurchaseCreditsRequest. `profile_service.purchase_credits(db, current_user.id, body)`.
+- **GET /me/credits/ledger** â€” `profile_service.get_credits_ledger(db, current_user.id)`.
 
 ### Contact (`routers/contact.py`)
 
 Prefix `/me` (mounted with profile). Requires `get_current_user`.
 
-- **GET /me/contact** — `profile_service.get_contact(db, current_user.id)`.
-- **PATCH /me/contact** — Body: PatchContactRequest. `profile_service.patch_contact(db, current_user.id, body)`.
+- **GET /me/contact** â€” `profile_service.get_contact(db, current_user.id)`.
+- **PATCH /me/contact** â€” Body: PatchContactRequest. `profile_service.patch_contact(db, current_user.id, body)`.
 
 ### Builder (`routers/builder.py`)
 
 All require `get_current_user` and `get_db`. Tags: builder.
 
-- **POST /experiences/raw** — Body: RawExperienceCreate. Creates raw experience; returns RawExperienceResponse.
-- **POST /experience-cards/draft-v1** — Body: RawExperienceCreate. Runs Experience Card v1 pipeline (atomize → parent extract → child gen → validate); on ChatServiceError → 503. Returns DraftSetV1Response (draft_set_id, raw_experience_id, card_families: list of { parent, children }).
-- **POST /experience-cards** — Body: ExperienceCardCreate. Creates card; returns ExperienceCardResponse (via serializer).
-- **PATCH /experience-cards/{card_id}** — Body: ExperienceCardPatch. Load card for user; 404 if not found; apply_card_patch(card, body); return serialized card.
-- **POST /experience-cards/{card_id}/approve** — Load card; 404 if not found; approve (compute embedding); on EmbeddingServiceError → 503; return serialized card.
-- **DELETE /experience-cards/{card_id}** — Load card; 404 if not found; delete card; return serialized card.
-- **GET /me/experience-cards** — Query: status (optional). If status not in DRAFT/APPROVED/HIDDEN → 400. List cards via service; return list of ExperienceCardResponse.
-- **GET /me/experience-cards-v1** — List current user's experience cards in domain v1 shape; returns list of `ExperienceCardV1Schema` (intent from `domain.Intent`).
+- **POST /experiences/raw** â€” Body: RawExperienceCreate. Creates raw experience; returns RawExperienceResponse.
+- **POST /experience-cards/draft-v1** â€” Body: RawExperienceCreate. Runs Experience Card v1 pipeline (atomize â†’ parent extract â†’ child gen â†’ validate); on ChatServiceError â†’ 503. Returns DraftSetV1Response (draft_set_id, raw_experience_id, card_families: list of { parent, children }).
+- **POST /experience-cards** â€” Body: ExperienceCardCreate. Creates card; returns ExperienceCardResponse (via serializer).
+- **PATCH /experience-cards/{card_id}** â€” Body: ExperienceCardPatch. Load card for user; 404 if not found; apply_card_patch(card, body); return serialized card.
+- **POST /experience-cards/{card_id}/approve** â€” Load card; 404 if not found; approve (compute embedding); on EmbeddingServiceError â†’ 503; return serialized card.
+- **DELETE /experience-cards/{card_id}** â€” Load card; 404 if not found; delete card; return serialized card.
+- **GET /me/experience-cards** â€” Query: status (optional). If status not in DRAFT/APPROVED/HIDDEN â†’ 400. List cards via service; return list of ExperienceCardResponse.
+- **GET /me/experience-cards-v1** â€” List current user's experience cards in domain v1 shape; returns list of `ExperienceCardV1Schema` (intent from `domain.Intent`).
 
 ### Search (`routers/search.py`)
 
 Require `get_current_user` and `get_db`.
 
-- **POST /search** — Rate-limited by `search_rate_limit`. Header: Idempotency-Key (optional). Body: SearchRequest. Calls `search_service.search(db, current_user.id, body, idempotency_key)`.
-- **GET /people/{person_id}** — Query: search_id (required). If missing → 400. `search_service.get_profile(db, current_user.id, person_id, search_id)`.
-- **POST /people/{person_id}/unlock-contact** — Rate-limited by `unlock_rate_limit`. Query: search_id. Header: Idempotency-Key (optional). `search_service.unlock(db, current_user.id, person_id, search_id, idempotency_key)`.
+- **POST /search** â€” Rate-limited by `search_rate_limit`. Header: Idempotency-Key (optional). Body: SearchRequest. Calls `search_service.search(db, current_user.id, body, idempotency_key)`.
+- **GET /people/{person_id}** â€” Query: search_id (required). If missing â†’ 400. `search_service.get_profile(db, current_user.id, person_id, search_id)`.
+- **POST /people/{person_id}/unlock-contact** â€” Rate-limited by `unlock_rate_limit`. Query: search_id. Header: Idempotency-Key (optional). `search_service.unlock(db, current_user.id, person_id, search_id, idempotency_key)`.
 
 ---
 
 ## Migrations (Alembic)
 
-- **`alembic/env.py`** — Inserts `apps/api` into sys.path. Reads `database_url` from settings; replaces `postgres://` with `postgresql://` for sync engine. Sets `config.sqlalchemy.url`. Imports `Base` and `db.models` so all tables are in metadata. **Offline**: configure with url and target_metadata, run_migrations in a transaction. **Online**: create sync engine with NullPool, connect, configure, run_migrations.
-- **Versions** — `001_initial.py`: vector extension, people, visibility_settings, contact_details, credit_wallets, credit_ledger, idempotency_keys, raw_experiences, experience_cards (with vector(384)), searches, search_results, unlock_contacts. Later revisions add idempotency composite unique, bio/card flags, etc.
+- **`alembic/env.py`** â€” Inserts `apps/api` into sys.path. Reads `database_url` from settings; replaces `postgres://` with `postgresql://` for sync engine. Sets `config.sqlalchemy.url`. Imports `Base` and `db.models` so all tables are in metadata. **Offline**: configure with url and target_metadata, run_migrations in a transaction. **Online**: create sync engine with NullPool, connect, configure, run_migrations.
+- **Versions** â€” `001_initial.py`: vector extension, people, visibility_settings, contact_details, credit_wallets, credit_ledger, idempotency_keys, raw_experiences, experience_cards (with vector(384)), searches, search_results, unlock_contacts. Later revisions add idempotency composite unique, bio/card flags, etc.
 
 ---
 
 ## Request flow summary
 
-1. **Signup/Login** → auth router → auth service → DB (Person, wallet, ledger) / verify password → JWT in response.
-2. **Authenticated request** → Bearer token → dependencies.get_current_user → decode JWT → load Person → inject into route.
-3. **Search** → validate body → (optional) idempotency → credits check → chat parse query → embed query → pgvector similarity → filters (open_to_work, company/team, locations, salary) → create Search + SearchResult → deduct credit → return people.
-4. **View profile** → validate search_id + searcher + not expired → ensure person in results → load person, visibility, approved cards; if unlock already done, include contact.
-5. **Unlock contact** → same search validation → open_to_contact check → if already unlocked return cached; else deduct credit, create UnlockContact, return contact details.
-6. **Builder: draft cards** → POST /experience-cards/draft-v1 runs v1 pipeline (atomize → parent → children → validate); cards persisted as DRAFT. **Approve card** → set APPROVED → embed card text → save embedding on card.
+1. **Signup/Login** â†’ auth router â†’ auth service â†’ DB (Person, profile, ledger) / verify password. Signup returns a token only when email verification is not required; login returns JWT for verified users.
+2. **Authenticated request** â†’ Bearer token â†’ dependencies.get_current_user â†’ decode JWT â†’ load Person â†’ inject into route.
+3. **Search** â†’ validate body â†’ (optional) idempotency â†’ credits check â†’ chat parse query â†’ embed query â†’ pgvector similarity â†’ filters (open_to_work, company/team, locations, salary) â†’ create Search + SearchResult â†’ deduct credit â†’ return people.
+4. **View profile** â†’ validate search_id + searcher + not expired â†’ ensure person in results â†’ load person, visibility, approved cards; if unlock already done, include contact.
+5. **Unlock contact** â†’ same search validation â†’ open_to_contact check â†’ if already unlocked return cached; else deduct credit, create UnlockContact, return contact details.
+6. **Builder: draft cards** â†’ POST /experience-cards/draft-v1 runs v1 pipeline (atomize â†’ parent â†’ children â†’ validate); cards persisted as DRAFT. **Approve card** â†’ set APPROVED â†’ embed card text â†’ save embedding on card.
 
 This README documents each backend step and function as implemented in the codebase.

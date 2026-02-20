@@ -1,6 +1,15 @@
 """Pydantic request/response schemas. Re-exported for backward compatibility."""
 
-from src.schemas.auth import SignupRequest, LoginRequest, TokenResponse
+from src.schemas.auth import (
+    SignupRequest,
+    SignupResponse,
+    LoginRequest,
+    TokenResponse,
+    VerifyEmailRequest,
+    VerifyEmailResponse,
+    ResendVerificationRequest,
+    ResendVerificationResponse,
+)
 from src.schemas.profile import (
     PersonResponse,
     PatchProfileRequest,
@@ -32,6 +41,8 @@ from src.schemas.search import (
     PersonSearchResult,
     SearchResponse,
     PersonProfileResponse,
+    SavedSearchItem,
+    SavedSearchesResponse,
     UnlockContactRequest,
     UnlockContactResponse,
 )
@@ -39,12 +50,19 @@ from src.schemas.discover import (
     PersonListItem,
     PersonListResponse,
     PersonPublicProfileResponse,
+    UnlockedCardItem,
+    UnlockedCardsResponse,
 )
 
 __all__ = [
     "SignupRequest",
+    "SignupResponse",
     "LoginRequest",
     "TokenResponse",
+    "VerifyEmailRequest",
+    "VerifyEmailResponse",
+    "ResendVerificationRequest",
+    "ResendVerificationResponse",
     "PersonResponse",
     "PatchProfileRequest",
     "VisibilitySettingsResponse",
@@ -76,9 +94,13 @@ __all__ = [
     "PersonSearchResult",
     "SearchResponse",
     "PersonProfileResponse",
+    "SavedSearchItem",
+    "SavedSearchesResponse",
     "UnlockContactRequest",
     "UnlockContactResponse",
     "PersonListItem",
     "PersonListResponse",
     "PersonPublicProfileResponse",
+    "UnlockedCardItem",
+    "UnlockedCardsResponse",
 ]

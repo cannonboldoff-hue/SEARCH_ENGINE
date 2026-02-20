@@ -13,8 +13,17 @@ import { DraftCardFamily } from "@/components/builder/draft-card-family";
 import { SavedCardFamily } from "@/components/builder/saved-card-family";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
-import { API_BASE } from "@/lib/constants";
 import { AUTH_TOKEN_KEY } from "@/lib/auth-flow";
+import {
+  STREAM_PROCESSOR_BUFFER,
+  STREAM_SAMPLE_RATE,
+  type StreamServerMessage,
+  appendTranscriptText,
+  arrayBufferToBase64,
+  buildTranscribeWsUrl,
+  downsampleTo16k,
+  float32ToPcm16Buffer,
+} from "@/lib/voice-transcribe";
 import {
   useExperienceCards,
   useExperienceCardFamilies,
@@ -93,78 +102,6 @@ function mergeChildForm(
     if (isEmpty && hasValue) updates[key] = val;
   }
   return updates;
-}
-
-const STREAM_SAMPLE_RATE = 16000;
-const STREAM_PROCESSOR_BUFFER = 4096;
-
-type StreamServerMessage =
-  | { type: "transcript"; transcript?: string }
-  | { type: "error"; detail?: string }
-  | { type: "event"; event?: unknown };
-
-function buildTranscribeWsUrl(token: string): string {
-  const base = API_BASE.trim();
-  if (!base.startsWith("http://") && !base.startsWith("https://")) {
-    throw new Error("Voice input requires NEXT_PUBLIC_API_BASE_URL.");
-  }
-  const wsBase = base.replace(/^http/i, "ws").replace(/\/+$/, "");
-  const params = new URLSearchParams({
-    token,
-    language_code: "unknown",
-  });
-  return `${wsBase}/experiences/transcribe/stream?${params.toString()}`;
-}
-
-function downsampleTo16k(input: Float32Array, inputSampleRate: number): Float32Array {
-  if (inputSampleRate <= STREAM_SAMPLE_RATE) return input;
-  const ratio = inputSampleRate / STREAM_SAMPLE_RATE;
-  const outputLength = Math.round(input.length / ratio);
-  const output = new Float32Array(outputLength);
-  let outputOffset = 0;
-  let inputOffset = 0;
-
-  while (outputOffset < outputLength) {
-    const nextInputOffset = Math.round((outputOffset + 1) * ratio);
-    let accum = 0;
-    let count = 0;
-    for (let i = inputOffset; i < nextInputOffset && i < input.length; i += 1) {
-      accum += input[i];
-      count += 1;
-    }
-    output[outputOffset] = count > 0 ? accum / count : 0;
-    outputOffset += 1;
-    inputOffset = nextInputOffset;
-  }
-  return output;
-}
-
-function float32ToPcm16Buffer(floatBuffer: Float32Array): ArrayBuffer {
-  const buffer = new ArrayBuffer(floatBuffer.length * 2);
-  const view = new DataView(buffer);
-  for (let i = 0; i < floatBuffer.length; i += 1) {
-    const s = Math.max(-1, Math.min(1, floatBuffer[i]));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-  return buffer;
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...Array.from(chunk));
-  }
-  return btoa(binary);
-}
-
-function appendTranscriptText(current: string, nextText: string): string {
-  const clean = nextText.trim();
-  if (!clean) return current;
-  if (!current.trim()) return clean;
-  return `${current}${/\s$/.test(current) ? "" : " "}${clean}`;
 }
 
 export default function BuilderPage() {
@@ -681,7 +618,7 @@ export default function BuilderPage() {
     } finally {
       setIsSavingAll(false);
     }
-  }, [draftSetId, queryClient, router, setOnboardingStep]);
+  }, [queryClient, router, setOnboardingStep]);
 
   const hasV1Families = (cardFamilies?.length ?? 0) > 0;
   const hasCards = hasV1Families || (draftSetId == null && savedFamilies.length > 0);
@@ -694,9 +631,9 @@ export default function BuilderPage() {
       transition={{ duration: 0.2 }}
     >
       <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4 flex-shrink-0 px-1">
-        <BackLink href="/profile" className="min-w-0 flex-shrink-0" />
+        <BackLink href="/cards" className="min-w-0 flex-shrink-0" />
         <h1 className="text-base sm:text-lg font-semibold tracking-tight text-foreground truncate text-center flex-1 min-w-0">
-          Experience Builder
+          Builder
         </h1>
         <div className="w-[4.5rem] sm:w-24 flex-shrink-0" aria-hidden />
       </div>
@@ -705,9 +642,6 @@ export default function BuilderPage() {
         <div className="flex flex-col min-h-[280px] lg:min-h-0 border border-border rounded-xl p-3 sm:p-4 bg-card overflow-hidden">
           <h2 className="text-sm sm:text-base font-medium text-foreground mb-1 flex-shrink-0">Your experience</h2>
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-2 sm:mb-3 flex-shrink-0">
-            <p className="text-xs text-muted-foreground text-left sm:pr-4">
-              {"Write freely in any language. We keep your input language when structuring cards (English stays English too)."}
-            </p>
             <div className="flex items-center justify-end gap-2 flex-wrap sm:flex-nowrap">
               <Button
                 variant={isRecording ? "destructive" : "outline"}
@@ -802,7 +736,7 @@ export default function BuilderPage() {
                 {draftSetId != null ? (
                   <>
                     <p className="font-medium text-foreground">No experiences extracted</p>
-                    <p className="text-sm mt-1">We couldn’t structure this into cards. Try adding more detail (e.g. role, company, duration) and click Update again.</p>
+                    <p className="text-sm mt-1">We couldn&apos;t structure this into cards. Try adding more detail (e.g. role, company, duration) and click Update again.</p>
                   </>
                 ) : (
                   <>
