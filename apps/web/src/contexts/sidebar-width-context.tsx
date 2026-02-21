@@ -6,25 +6,32 @@ import type { ReactNode } from "react";
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 520;
 
+export const SIDEBAR_WIDTH_EXPANDED = 260;
+export const SIDEBAR_WIDTH_COLLAPSED = 64;
+
 interface SidebarWidthContextValue {
   sidebarWidth: number;
+  isCollapsed: boolean;
   setSidebarWidth: (value: number) => void;
+  setIsCollapsed: (collapsed: boolean) => void;
+  toggleSidebar: () => void;
 }
 
 const SidebarWidthContext = createContext<SidebarWidthContextValue | undefined>(undefined);
 
-/** Fixed width for GPT-style permanent sidebar (no resize) */
-const DEFAULT_SIDEBAR_WIDTH = 260;
-
 export function SidebarWidthProvider({ children }: { children: ReactNode }) {
-  const [sidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const sidebarWidth = isCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
+
   const setSidebarWidth = useCallback((_value: number) => {
-    // Sidebar is fixed width; no-op to keep API stable
+    // Sidebar width is derived from isCollapsed; no-op to keep API stable
   }, []);
 
+  const toggleSidebar = useCallback(() => setIsCollapsed((c) => !c), []);
+
   const contextValue = useMemo(
-    () => ({ sidebarWidth, setSidebarWidth }),
-    [sidebarWidth, setSidebarWidth]
+    () => ({ sidebarWidth, isCollapsed, setSidebarWidth, setIsCollapsed, toggleSidebar }),
+    [sidebarWidth, isCollapsed, setSidebarWidth, setIsCollapsed, toggleSidebar]
   );
 
   return <SidebarWidthContext.Provider value={contextValue}>{children}</SidebarWidthContext.Provider>;
