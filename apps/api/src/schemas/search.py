@@ -146,7 +146,7 @@ class SearchRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_num_cards(self) -> "SearchRequest":
-        if self.num_cards is not None and (self.num_cards < 1 or self.num_cards > 24):
+        if self.num_cards is not None and (self.num_cards < 1 or self.num_cards > 1000):
             raise ValueError("num_cards must be between 1 and 24")
         return self
 
