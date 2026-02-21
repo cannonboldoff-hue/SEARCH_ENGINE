@@ -5,6 +5,7 @@ import base64
 import io
 import wave
 from datetime import date
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import delete, select
@@ -27,8 +28,12 @@ from src.schemas import (
     RewriteTextResponse,
     TranslateTextResponse,
     DraftSetV1Response,
+    DetectExperiencesResponse,
+    DraftSingleRequest,
     FillFromTextRequest,
     FillFromTextResponse,
+    ClarifyExperienceRequest,
+    ClarifyExperienceResponse,
     CardFamilyV1Response,
     ExperienceCardCreate,
     ExperienceCardPatch,
@@ -49,14 +54,44 @@ from src.providers import (
     get_translation_provider,
 )
 from src.serializers import experience_card_to_response, experience_card_child_to_response
-from src.services.experience_card import experience_card_service, apply_card_patch, apply_child_patch
-from src.services.experience_card_pipeline import (
+from src.services.experience import (
+    experience_card_service,
+    apply_card_patch,
+    apply_child_patch,
+    embed_experience_cards,
     rewrite_raw_text,
-    run_draft_v1_pipeline,
+    run_draft_v1_single,
     fill_missing_fields_from_text,
+    clarify_experience_interactive,
+    detect_experiences,
+    DEFAULT_MAX_PARENT_CLARIFY,
+    DEFAULT_MAX_CHILD_CLARIFY,
+    PipelineError,
 )
 
 router = APIRouter(tags=["builder"])
+
+
+async def _reembed_cards_after_update(
+    db: AsyncSession,
+    *,
+    parents: list[ExperienceCard] | None = None,
+    children: list[ExperienceCardChild] | None = None,
+    context: str = "update",
+) -> None:
+    """
+    Re-run embedding for the given cards after a content update (patch / fill / clarify).
+    On failure, logs and raises HTTP 503.
+    """
+    parents = parents or []
+    children = children or []
+    if not parents and not children:
+        return
+    try:
+        await embed_experience_cards(db, parents, children)
+    except PipelineError as e:
+        logger.warning("Re-embed after %s failed: %s", context, e)
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 def _is_wav_bytes(data: bytes) -> bool:
@@ -292,10 +327,23 @@ async def stream_transcribe_experience_audio(websocket: WebSocket):
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
+        upstream_closed_abruptly = False
         for task in done:
             err = task.exception()
-            if err and not isinstance(err, (WebSocketDisconnect, ConnectionClosedOK)):
-                raise err
+            if err is None:
+                continue
+            if isinstance(err, (WebSocketDisconnect, ConnectionClosedOK)):
+                continue
+            if isinstance(err, ConnectionClosed):
+                upstream_closed_abruptly = True
+                continue
+            raise err
+        if upstream_closed_abruptly:
+            logger.info("Builder transcribe upstream connection closed (no close frame)")
+            try:
+                await websocket.send_json({"type": "error", "detail": "Live transcription session ended unexpectedly."})
+            except Exception:
+                pass
     except WebSocketDisconnect:
         logger.info("Builder transcribe websocket disconnected by client")
     except Exception as e:
@@ -316,27 +364,51 @@ async def stream_transcribe_experience_audio(websocket: WebSocket):
             pass
 
 
-@router.post("/experience-cards/draft-v1", response_model=DraftSetV1Response)
-async def create_draft_cards_v1(
+@router.post("/experience-cards/detect-experiences", response_model=DetectExperiencesResponse)
+async def detect_experiences_endpoint(
     body: RawExperienceCreate,
+    current_user: Person = Depends(get_current_user),
+):
+    """Analyze text and return count + list of distinct experiences (for user to choose one)."""
+    try:
+        result = await detect_experiences(body.raw_text or "")
+        return DetectExperiencesResponse(
+            count=result.get("count", 0),
+            experiences=[{"index": e["index"], "label": e["label"], "suggested": e.get("suggested", False)} for e in result.get("experiences", [])],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("detect-experiences failed: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+
+@router.post("/experience-cards/draft-v1-single", response_model=DraftSetV1Response)
+async def create_draft_single_experience(
+    body: DraftSingleRequest,
     current_user: Person = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run draft v1 pipeline: rewrite → extract-all → validate-all; persist cards as DRAFT."""
+    """Extract and draft ONE experience by index (1-based). Process one experience at a time."""
     try:
-        draft_set_id, raw_experience_id, card_families = await run_draft_v1_pipeline(
-            db, current_user.id, body
+        draft_set_id, raw_experience_id, card_families = await run_draft_v1_single(
+            db,
+            current_user.id,
+            body.raw_text or "",
+            body.experience_index,
+            body.experience_count or 1,
         )
         return DraftSetV1Response(
             draft_set_id=draft_set_id,
             raw_experience_id=raw_experience_id,
             card_families=[CardFamilyV1Response(parent=f["parent"], children=f["children"]) for f in card_families],
         )
-    except (ChatServiceError, EmbeddingServiceError) as e:
-        logger.exception("draft-v1 pipeline failed: %s", e)
+    except (ChatServiceError, EmbeddingServiceError, PipelineError) as e:
+        logger.exception("draft-v1-single pipeline failed: %s", e)
         raise HTTPException(status_code=503, detail=str(e))
     except RuntimeError as e:
-        logger.warning("draft-v1 pipeline config error: %s", e)
+        logger.warning("draft-v1-single pipeline config error: %s", e)
         raise HTTPException(status_code=503, detail=str(e))
 
 
@@ -362,6 +434,22 @@ def _merged_form(current: dict, filled: dict, string_only_keys: tuple) -> dict:
     return out
 
 
+def _parse_date_for_patch(value: Any) -> Optional[date]:
+    """Parse date from merged form (YYYY-MM-DD or YYYY-MM). Clarify can return YYYY-MM."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    s = s[:10]
+    if len(s) == 7 and s[4] == "-":  # YYYY-MM
+        s = f"{s}-01"
+    try:
+        return date.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+
+
 def _parent_merged_to_patch(merged: dict) -> ExperienceCardPatch:
     """Build ExperienceCardPatch from frontend form dict (merged)."""
     intent_secondary = None
@@ -371,24 +459,19 @@ def _parent_merged_to_patch(merged: dict) -> ExperienceCardPatch:
             intent_secondary = [x.strip() for x in s.split(",") if x.strip()]
         elif isinstance(s, list):
             intent_secondary = [str(x).strip() for x in s if str(x).strip()]
-    start_date = None
-    if merged.get("start_date"):
-        try:
-            start_date = date.fromisoformat(str(merged["start_date"]).strip()[:10])
-        except (ValueError, TypeError):
-            pass
-    end_date = None
-    if merged.get("end_date"):
-        try:
-            end_date = date.fromisoformat(str(merged["end_date"]).strip()[:10])
-        except (ValueError, TypeError):
-            pass
+    start_date = _parse_date_for_patch(merged.get("start_date"))
+    end_date = _parse_date_for_patch(merged.get("end_date"))
     confidence_score = None
     if merged.get("confidence_score") is not None and str(merged["confidence_score"]).strip():
         try:
             confidence_score = float(merged["confidence_score"])
         except (ValueError, TypeError):
             pass
+    location_val = merged.get("location")
+    if isinstance(location_val, dict) and "text" in location_val:
+        location_val = location_val.get("text") or None
+    elif not isinstance(location_val, str):
+        location_val = None
     return ExperienceCardPatch(
         title=merged.get("title") or None,
         summary=merged.get("summary") or None,
@@ -397,7 +480,7 @@ def _parent_merged_to_patch(merged: dict) -> ExperienceCardPatch:
         sub_domain=merged.get("sub_domain") or None,
         company_name=merged.get("company_name") or None,
         company_type=merged.get("company_type") or None,
-        location=merged.get("location") or None,
+        location=location_val,
         employment_type=merged.get("employment_type") or None,
         start_date=start_date,
         end_date=end_date,
@@ -419,13 +502,18 @@ def _child_merged_to_patch(merged: dict) -> ExperienceCardChildPatch:
             tags = [x.strip() for x in s.split(",") if x.strip()]
         elif isinstance(s, list):
             tags = [str(x).strip() for x in s if str(x).strip()]
+    location_val = merged.get("location")
+    if isinstance(location_val, dict) and "text" in location_val:
+        location_val = location_val.get("text") or None
+    elif not isinstance(location_val, str):
+        location_val = None
     return ExperienceCardChildPatch(
         title=merged.get("title") or None,
         summary=merged.get("summary") or None,
         tags=tags,
         time_range=merged.get("time_range") or None,
         company=merged.get("company") or None,
-        location=merged.get("location") or None,
+        location=location_val,
     )
 
 
@@ -464,6 +552,7 @@ async def fill_missing_from_text(
         patch = _parent_merged_to_patch(merged)
         apply_card_patch(card, patch)
         await db.flush()
+        await _reembed_cards_after_update(db, parents=[card], context="fill-missing (parent)")
 
     if body.child_id and body.card_type == "child":
         merged = _merged_form(current, filled, _CHILD_MERGE_KEYS)
@@ -479,8 +568,102 @@ async def fill_missing_from_text(
         patch = _child_merged_to_patch(merged)
         apply_child_patch(child, patch)
         await db.flush()
+        await _reembed_cards_after_update(db, children=[child], context="fill-missing (child)")
 
     return FillFromTextResponse(filled=filled)
+
+
+@router.post("/experience-cards/clarify-experience", response_model=ClarifyExperienceResponse)
+async def clarify_experience(
+    body: ClarifyExperienceRequest,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Interactive clarification: planner -> validate -> question writer / answer applier. Optionally persist when filled."""
+    conv = [{"role": m.role, "content": m.content} for m in body.conversation_history]
+    max_parent = body.max_parent_questions if body.max_parent_questions is not None else DEFAULT_MAX_PARENT_CLARIFY
+    max_child = body.max_child_questions if body.max_child_questions is not None else DEFAULT_MAX_CHILD_CLARIFY
+    try:
+        result = await clarify_experience_interactive(
+            raw_text=body.raw_text,
+            current_card=body.current_card or {},
+            card_type=body.card_type or "parent",
+            conversation_history=conv,
+            card_family=body.card_family,
+            asked_history_structured=body.asked_history,
+            last_question_target=body.last_question_target,
+            max_parent=max_parent,
+            max_child=max_child,
+            card_families=body.card_families,
+            focus_parent_id=body.focus_parent_id,
+            detected_experiences=body.detected_experiences,
+        )
+    except HTTPException:
+        raise
+
+    clarifying_question = result.get("clarifying_question") or None
+    filled = result.get("filled") or {}
+    action = result.get("action")
+    message = result.get("message")
+    options = result.get("options")
+    focus_parent_id_resp = result.get("focus_parent_id")
+
+    current = body.current_card or {}
+    if filled and body.card_id and body.card_type == "parent":
+        merged = _merged_form(current, filled, _PARENT_MERGE_KEYS)
+        # #region agent log
+        import json as _json; _ts = int(__import__('datetime').datetime.now().timestamp()*1000)
+        try:
+            with open(r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log", "a") as _f:
+                _f.write(_json.dumps({"hypothesisId":"A-C-merge","location":"builder.py:clarify_merge","message":"merge filled into current","data":{"filled_start":filled.get("start_date"),"filled_end":filled.get("end_date"),"current_start":current.get("start_date"),"current_end":current.get("end_date"),"merged_start":merged.get("start_date"),"merged_end":merged.get("end_date")},"timestamp":_ts})+"\n")
+        except Exception: pass
+        # #endregion
+        card = await experience_card_service.get_card(db, body.card_id, current_user.id)
+        if card:
+            patch = _parent_merged_to_patch(merged)
+            apply_card_patch(card, patch)
+            # #region agent log
+            import json as _json; _ts2 = int(__import__('datetime').datetime.now().timestamp()*1000)
+            try:
+                with open(r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log", "a") as _f:
+                    _f.write(_json.dumps({"hypothesisId":"D-db-patch","location":"builder.py:after_patch","message":"card after patch","data":{"patch_start":str(patch.start_date),"patch_end":str(patch.end_date),"card_start":str(card.start_date),"card_end":str(card.end_date)},"timestamp":_ts2})+"\n")
+            except Exception: pass
+            # #endregion
+            await db.flush()
+            await _reembed_cards_after_update(db, parents=[card], context="clarify (parent)")
+
+    if filled and body.child_id and body.card_type == "child":
+        merged = _merged_form(current, filled, _CHILD_MERGE_KEYS)
+        child_row = await db.execute(
+            select(ExperienceCardChild).where(
+                ExperienceCardChild.id == body.child_id,
+                ExperienceCardChild.person_id == current_user.id,
+            )
+        )
+        child = child_row.scalar_one_or_none()
+        if child:
+            patch = _child_merged_to_patch(merged)
+            apply_child_patch(child, patch)
+            await db.flush()
+            await _reembed_cards_after_update(db, children=[child], context="clarify (child)")
+
+    return ClarifyExperienceResponse(
+        clarifying_question=clarifying_question,
+        filled=filled,
+        action=action,
+        message=message,
+        options=options,
+        focus_parent_id=focus_parent_id_resp,
+        should_stop=result.get("should_stop"),
+        stop_reason=result.get("stop_reason"),
+        target_type=result.get("target_type"),
+        target_field=result.get("target_field"),
+        target_child_type=result.get("target_child_type"),
+        progress=result.get("progress"),
+        missing_fields=result.get("missing_fields"),
+        asked_history_entry=result.get("asked_history_entry"),
+        canonical_family=result.get("canonical_family"),
+    )
 
 
 @router.post("/experience-cards", response_model=ExperienceCardResponse)
@@ -500,6 +683,7 @@ async def patch_experience_card(
     db: AsyncSession = Depends(get_db),
 ):
     apply_card_patch(card, body)
+    await _reembed_cards_after_update(db, parents=[card], context="PATCH card")
     return experience_card_to_response(card)
 
 
@@ -525,6 +709,7 @@ async def patch_experience_card_child(
     db: AsyncSession = Depends(get_db),
 ):
     apply_child_patch(child, body)
+    await _reembed_cards_after_update(db, children=[child], context="PATCH child")
     return experience_card_child_to_response(child)
 
 

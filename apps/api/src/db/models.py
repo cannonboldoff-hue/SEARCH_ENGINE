@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import (
     Column,
+    LargeBinary,
     String,
     Text,
     Boolean,
@@ -61,6 +62,8 @@ class PersonProfile(Base):
     date_of_birth = Column(String(20), nullable=True)
     current_city = Column(String(255), nullable=True)
     profile_photo_url = Column(String(1000), nullable=True)
+    profile_photo = Column(LargeBinary, nullable=True)
+    profile_photo_media_type = Column(String(50), nullable=True)
     school = Column(String(255), nullable=True)
     college = Column(String(255), nullable=True)
     current_company = Column(String(255), nullable=True)

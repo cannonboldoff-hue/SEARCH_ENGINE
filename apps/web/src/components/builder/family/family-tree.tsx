@@ -9,10 +9,6 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-/* ────────────────────────────────────────────── */
-/*  Public types                                  */
-/* ────────────────────────────────────────────── */
-
 export interface TreeNode {
   id: string;
   label: string;
@@ -30,20 +26,12 @@ interface FamilyTreeProps {
   className?: string;
 }
 
-/* ────────────────────────────────────────────── */
-/*  Connector lines (SVG overlay)                 */
-/* ────────────────────────────────────────────── */
-
 interface LineCoord {
   x1: number;
   y1: number;
   x2: number;
   y2: number;
 }
-
-/* ────────────────────────────────────────────── */
-/*  Main tree component                           */
-/* ────────────────────────────────────────────── */
 
 export function FamilyTree({
   parent,
@@ -57,21 +45,16 @@ export function FamilyTree({
   const childRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [lines, setLines] = useState<LineCoord[]>([]);
 
-  /* ── Recalculate connector lines ── */
   const recalc = useCallback(() => {
     if (!wrapperRef.current || !parentRef.current) return;
     const wr = wrapperRef.current.getBoundingClientRect();
     const pr = parentRef.current.getBoundingClientRect();
-
-    // Parent bottom-center
     const px = pr.left + pr.width / 2 - wr.left;
     const py = pr.bottom - wr.top;
-
     const next: LineCoord[] = [];
     childRefs.current.forEach((el) => {
       if (!el) return;
       const cr = el.getBoundingClientRect();
-      // Child top-center
       next.push({
         x1: px,
         y1: py,
@@ -91,7 +74,6 @@ export function FamilyTree({
     return () => ro.disconnect();
   }, [recalc, childNodes.length]);
 
-  /* Re-calc after children spring-animate in */
   useEffect(() => {
     const t = setTimeout(recalc, 450);
     return () => clearTimeout(t);
@@ -109,7 +91,6 @@ export function FamilyTree({
 
   return (
     <div ref={wrapperRef} className={cn("relative w-full", className)}>
-      {/* ── SVG connector lines layer ── */}
       {hasChildren && lines.length > 0 && (
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
@@ -133,7 +114,6 @@ export function FamilyTree({
               }}
             />
           ))}
-          {/* Small dot at parent anchor */}
           {lines.length > 0 && (
             <circle
               cx={lines[0].x1}
@@ -146,7 +126,6 @@ export function FamilyTree({
         </svg>
       )}
 
-      {/* ── Parent card (centered, wider) ── */}
       <div className="flex justify-center" style={{ position: "relative", zIndex: 1 }}>
         <div ref={parentRef}>
           <motion.button
@@ -183,10 +162,8 @@ export function FamilyTree({
         </div>
       </div>
 
-      {/* ── Vertical gap for connectors ── */}
       {hasChildren && <div className="h-16" />}
 
-      {/* ── Child cards row ── */}
       {hasChildren && (
         <div
           className="flex flex-wrap justify-center gap-4"

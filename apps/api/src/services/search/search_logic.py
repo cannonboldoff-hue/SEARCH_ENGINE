@@ -48,7 +48,7 @@ from src.services.credits import (
     get_idempotent_response,
     save_idempotent_response,
 )
-from src.services.filter_validator import validate_and_normalize
+from .filter_validator import validate_and_normalize
 from src.providers import (
     get_chat_provider,
     get_embedding_provider,

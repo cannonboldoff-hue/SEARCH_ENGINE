@@ -71,3 +71,30 @@ export function apiWithIdempotency<T>(
   };
   return api<T>(path, { ...options, headers });
 }
+
+/** Upload a file (e.g. profile photo) via multipart/form-data. Returns JSON. */
+export async function apiUpload<T>(
+  path: string,
+  formData: FormData,
+  options: Omit<RequestInit, "body" | "headers"> = {}
+): Promise<T> {
+  const token = getToken();
+  const headers: HeadersInit = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const url = `${API_BASE}${path}`;
+  if (!url.startsWith("http")) {
+    throw new Error("Set NEXT_PUBLIC_API_BASE_URL and ensure the API is running.");
+  }
+  const res = await fetch(url, {
+    ...options,
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const message = normalizeErrorDetail(err.detail) || err.message || String(res.status);
+    throw new Error(message);
+  }
+  return res.json();
+}

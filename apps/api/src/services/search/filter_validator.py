@@ -203,6 +203,11 @@ def validate_and_normalize(payload: ParsedConstraintsPayload) -> ParsedConstrain
         keywords=exclude_keywords,
     )
 
+    # num_cards: preserve from payload, clamp to 1-24 if set
+    num_cards = payload.num_cards
+    if num_cards is not None:
+        num_cards = max(1, min(24, num_cards))
+
     return ParsedConstraintsPayload(
         query_original=payload.query_original or "",
         query_cleaned=payload.query_cleaned or "",
@@ -212,4 +217,5 @@ def validate_and_normalize(payload: ParsedConstraintsPayload) -> ParsedConstrain
         search_phrases=search_phrases,
         query_embedding_text=(payload.query_embedding_text or "").strip(),
         confidence_score=confidence,
+        num_cards=num_cards,
     )

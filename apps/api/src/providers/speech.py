@@ -45,7 +45,7 @@ class SarvamStreamingSpeechProvider:
         if not code:
             return None
         if code.lower() == "unknown":
-            return "unknown"
+            return None  # use default (e.g. en-IN) instead of sending "unknown" to Sarvam
         if re.fullmatch(r"[a-z]{2}-[A-Z]{2}", code):
             return code
         return None

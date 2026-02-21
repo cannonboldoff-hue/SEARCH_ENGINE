@@ -29,6 +29,14 @@ def create_access_token(subject: str) -> str:
     return jwt.encode(to_encode, s.jwt_secret, algorithm=s.jwt_algorithm)
 
 
+def create_photo_token(subject: str, expire_minutes: int = 60 * 24) -> str:
+    """Short-lived token for profile photo URL (e.g. 24h) so <img> can load without Bearer."""
+    s = get_settings()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
+    to_encode = {"sub": subject, "exp": expire}
+    return jwt.encode(to_encode, s.jwt_secret, algorithm=s.jwt_algorithm)
+
+
 def decode_access_token(token: str) -> Optional[str]:
     s = get_settings()
     try:

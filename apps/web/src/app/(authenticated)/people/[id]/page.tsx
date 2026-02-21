@@ -13,17 +13,16 @@ import {
   MapPin,
   Phone,
   ExternalLink,
-  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageLoading, PageError, ErrorMessage } from "@/components/feedback";
+import { CardFamilyDisplay } from "@/components/builder";
 import { api, apiWithIdempotency } from "@/lib/api";
 import type {
   PersonProfile,
   ContactDetails,
   ExperienceCard,
-  ExperienceCardChild,
 } from "@/types";
 
 type DetailRow = {
@@ -58,87 +57,6 @@ function DetailGrid({ rows, columns = 2 }: { rows: DetailRow[]; columns?: 1 | 2 
       ))}
     </dl>
   );
-}
-
-function ExperienceCardDetails({
-  card,
-  hideVisibilityField = true,
-  hideConfidenceScore = true,
-  hideTimestamps = true,
-}: {
-  card: ExperienceCard;
-  hideVisibilityField?: boolean;
-  hideConfidenceScore?: boolean;
-  hideTimestamps?: boolean;
-}) {
-  const rows: DetailRow[] = [
-    { label: "Title", value: card.title },
-    { label: "Normalized role", value: card.normalized_role },
-    { label: "Domain", value: card.domain },
-    { label: "Sub domain", value: card.sub_domain },
-    { label: "Company name", value: card.company_name },
-    { label: "Company type", value: card.company_type },
-    { label: "Employment type", value: card.employment_type },
-    { label: "Location", value: card.location },
-    { label: "Start date", value: card.start_date },
-    { label: "End date", value: card.end_date },
-    { label: "Current role", value: card.is_current },
-    { label: "Summary", value: card.summary },
-    { label: "Intent primary", value: card.intent_primary },
-    {
-      label: "Intent secondary",
-      value:
-        card.intent_secondary && card.intent_secondary.length > 0
-          ? card.intent_secondary.join(", ")
-          : null,
-    },
-    { label: "Seniority", value: card.seniority_level },
-    ...(hideConfidenceScore ? [] : [{ label: "Confidence score", value: card.confidence_score }]),
-    ...(hideVisibilityField
-      ? []
-      : [{ label: "Visible in search", value: card.experience_card_visibility }]),
-    ...(hideTimestamps
-      ? []
-      : [
-          { label: "Created at", value: card.created_at },
-          { label: "Updated at", value: card.updated_at },
-        ]),
-  ];
-
-  return <DetailGrid rows={rows} />;
-}
-
-function ExperienceCardChildDetails({
-  child,
-  hideTitleAndHeadline = false,
-}: {
-  child: ExperienceCardChild;
-  hideTitleAndHeadline?: boolean;
-}) {
-  const topicLabels =
-    child.topics && child.topics.length > 0
-      ? child.topics
-          .map((topic) => topic?.label)
-          .filter((label): label is string => !!label && label.trim().length > 0)
-      : [];
-
-  const rows: DetailRow[] = [
-    { label: "Relation type", value: child.relation_type },
-    ...(hideTitleAndHeadline
-      ? []
-      : [
-          { label: "Title", value: child.title },
-          { label: "Headline", value: child.headline },
-        ]),
-    { label: "Summary", value: child.summary },
-    { label: "Time range", value: child.time_range },
-    { label: "Role title", value: child.role_title },
-    { label: "Company", value: child.company },
-    { label: "Location", value: child.location },
-    { label: "Topics", value: topicLabels.length ? topicLabels.join(", ") : null },
-  ];
-
-  return <DetailGrid rows={rows} />;
 }
 
 function BioSection({ bio }: { bio: NonNullable<PersonProfile["bio"]> }) {
@@ -179,73 +97,6 @@ function BioSection({ bio }: { bio: NonNullable<PersonProfile["bio"]> }) {
         <DetailGrid rows={rows} />
       </CardContent>
     </Card>
-  );
-}
-
-function CardFamilyBlock({
-  parent,
-  children,
-  index,
-  isSearchResultView = false,
-}: {
-  parent: ExperienceCard;
-  children: ExperienceCardChild[];
-  index: number;
-  isSearchResultView?: boolean;
-}) {
-  const title = parent.title || parent.company_name || parent.normalized_role || "Untitled";
-  const meta = [parent.company_name, parent.normalized_role, parent.location]
-    .filter(Boolean)
-    .join(" / ");
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.04, duration: 0.25 }}
-      className="space-y-2"
-    >
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            {title}
-          </CardTitle>
-          {meta && <p className="text-xs text-muted-foreground pl-6">{meta}</p>}
-        </CardHeader>
-        <CardContent className="pt-0">
-          <ExperienceCardDetails
-            card={parent}
-            hideVisibilityField={true}
-            hideConfidenceScore={true}
-            hideTimestamps={true}
-          />
-        </CardContent>
-      </Card>
-      {children.length > 0 && (
-        <ul className="space-y-2 pl-4 border-l-2 border-border ml-2">
-          {children.map((child) => (
-            <li key={child.id}>
-              <Card className="bg-muted/30">
-                <CardHeader className="py-2 px-3">
-                  <CardTitle className="text-xs font-medium">
-                    {isSearchResultView
-                      ? child.summary || child.relation_type || "Child card"
-                      : child.title || child.headline || child.summary || "Child card"}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-3 pb-3 pt-0">
-                  <ExperienceCardChildDetails
-                    child={child}
-                    hideTitleAndHeadline={isSearchResultView}
-                  />
-                </CardContent>
-              </Card>
-            </li>
-          ))}
-        </ul>
-      )}
-    </motion.div>
   );
 }
 
@@ -352,12 +203,11 @@ function PersonProfilePageContent() {
           {profile.card_families && profile.card_families.length > 0 ? (
             <div className="space-y-6">
               {profile.card_families.map((family, idx) => (
-                <CardFamilyBlock
+                <CardFamilyDisplay
                   key={family.parent.id}
                   parent={family.parent}
                   children={family.children}
                   index={idx}
-                  isSearchResultView
                 />
               ))}
             </div>
@@ -367,27 +217,16 @@ function PersonProfilePageContent() {
               <p className="text-sm text-muted-foreground">No experience cards shared.</p>
             </div>
           ) : (
-            <ul className="space-y-2">
+            <div className="space-y-6">
               {profile.experience_cards.map((card, idx) => (
-                <motion.li key={card.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.04, duration: 0.25 }}>
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium">
-                        {card.title || card.company_name || "Untitled"}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <ExperienceCardDetails
-                        card={card}
-                        hideVisibilityField
-                        hideConfidenceScore
-                        hideTimestamps
-                      />
-                    </CardContent>
-                  </Card>
-                </motion.li>
+                <CardFamilyDisplay
+                  key={card.id}
+                  parent={card}
+                  children={[]}
+                  index={idx}
+                />
               ))}
-            </ul>
+            </div>
           )}
         </section>
         <Card>

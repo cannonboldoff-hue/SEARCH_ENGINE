@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # CORS (comma-separated origins; * allows all)
     cors_origins: str = "*"
 
+    # Profile photo uploads (directory path; created if missing)
+    profile_photos_upload_dir: str | None = None
+
     @property
     def cors_origins_list(self) -> list[str]:
         """Parsed CORS origins for middleware."""

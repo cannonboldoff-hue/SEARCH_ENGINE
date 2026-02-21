@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Check } from "lucide-react";
-import { MessyTextVoiceInput, VoiceButton, useVoiceInput } from "@/components/builder/messy-text-voice-input";
+import { MessyTextVoiceInput, VoiceButton, useVoiceInput } from "../voice/messy-text-voice-input";
+import { ExperienceClarifyChat } from "../chat/experience-clarify-chat";
 
 interface ParentCardEditFormProps {
   form: {
@@ -38,6 +39,10 @@ interface ParentCardEditFormProps {
   /** Optional: paste messy text and click Update to fill missing fields from parsed result. */
   onUpdateFromMessyText?: (text: string) => Promise<void>;
   isUpdatingFromMessyText?: boolean;
+  /** Optional: when set, clarify endpoint can persist filled fields to this saved card. */
+  clarifyCardId?: string | null;
+  /** Optional: translate raw text before sending to clarify API (e.g. to English). */
+  translateRawText?: (text: string) => Promise<string>;
 }
 
 export function ParentCardEditForm({
@@ -52,11 +57,35 @@ export function ParentCardEditForm({
   showDeleteButton = false,
   onUpdateFromMessyText,
   isUpdatingFromMessyText = false,
+  clarifyCardId = null,
+  translateRawText,
 }: ParentCardEditFormProps) {
   const [messyText, setMessyText] = useState("");
   const voiceInput = useVoiceInput((text) => {
     setMessyText(text);
   });
+
+  const handleClarifyFilled = useCallback(
+    (filled: Record<string, unknown>) => {
+      const updates: Partial<ParentCardEditFormProps["form"]> = {};
+      const formAny = form as Record<string, unknown>;
+      for (const key of Object.keys(filled)) {
+        const cur = formAny[key];
+        const val = filled[key];
+        const isEmpty =
+          cur === undefined ||
+          cur === null ||
+          (typeof cur === "string" && String(cur).trim() === "");
+        const hasValue =
+          val !== undefined &&
+          val !== null &&
+          (typeof val !== "string" || String(val).trim() !== "");
+        if (isEmpty && hasValue) (updates as Record<string, unknown>)[key] = val;
+      }
+      if (Object.keys(updates).length) onChange(updates);
+    },
+    [form, onChange]
+  );
 
   const handleUpdateFromMessy = async () => {
     if (!messyText.trim() || !onUpdateFromMessyText) return;
@@ -65,20 +94,16 @@ export function ParentCardEditForm({
 
   return (
     <div className="mt-3 rounded-xl border border-white/10 bg-zinc-950 shadow-sm">
-      
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
         <p className="text-[10px] tracking-widest uppercase text-zinc-400">
           Editing Experience
         </p>
-  
         <div className="flex items-center gap-2">
           {onCancel && (
             <Button size="sm" variant="ghost" onClick={onCancel}>
               Cancel
             </Button>
           )}
-  
           {showDeleteButton && onDelete && (
             <Button
               size="sm"
@@ -89,17 +114,14 @@ export function ParentCardEditForm({
               Delete
             </Button>
           )}
-  
           <Button size="sm" onClick={onSubmit} disabled={isSubmitting}>
             <Check className="h-4 w-4 mr-1" />
             Done
           </Button>
         </div>
       </div>
-  
+
       <div className="p-4 space-y-6">
-  
-        {/* Messy Text */}
         {onUpdateFromMessyText && (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -112,7 +134,6 @@ export function ParentCardEditForm({
                 onToggle={voiceInput.toggleRecording}
               />
             </div>
-  
             <MessyTextVoiceInput
               value={messyText}
               onChange={setMessyText}
@@ -120,10 +141,18 @@ export function ParentCardEditForm({
               rows={2}
               showButton={false}
             />
+            <ExperienceClarifyChat
+              rawText={messyText}
+              currentCard={form as Record<string, unknown>}
+              cardType="parent"
+              cardId={clarifyCardId}
+              onFilled={handleClarifyFilled}
+              translateRawText={translateRawText}
+              className="mt-2"
+            />
           </div>
         )}
-  
-        {/* BASIC - with Update button */}
+
         <div>
           <div className="flex items-center justify-between gap-3 mb-3">
             <p className="text-xs uppercase tracking-wide text-zinc-500">Basic</p>
@@ -138,14 +167,12 @@ export function ParentCardEditForm({
               </Button>
             )}
           </div>
-
           <div className="space-y-3">
             <Input
               value={form.title}
               onChange={(e) => onChange({ title: e.target.value })}
               placeholder="Title"
             />
-  
             <Textarea
               value={form.summary}
               onChange={(e) => onChange({ summary: e.target.value })}
@@ -153,11 +180,9 @@ export function ParentCardEditForm({
             />
           </div>
         </div>
-  
-        {/* COMPANY */}
+
         <div className="space-y-3">
           <p className="text-xs uppercase tracking-wide text-zinc-500">Company</p>
-  
           <div className="grid sm:grid-cols-2 gap-3">
             <Input
               value={form.company_name}
@@ -180,15 +205,13 @@ export function ParentCardEditForm({
               placeholder="Employment"
             />
           </div>
-  
           <Input
             value={form.normalized_role}
             onChange={(e) => onChange({ normalized_role: e.target.value })}
             placeholder="Role"
           />
         </div>
-  
-        {/* DOMAIN */}
+
         <div className="grid sm:grid-cols-2 gap-3">
           <Input
             value={form.domain}
@@ -201,11 +224,9 @@ export function ParentCardEditForm({
             placeholder="Sub-domain"
           />
         </div>
-  
-        {/* DATES */}
+
         <div className="space-y-3">
           <p className="text-xs uppercase tracking-wide text-zinc-500">Dates</p>
-  
           <div className="grid sm:grid-cols-2 gap-3">
             <Input
               type="date"
@@ -218,7 +239,6 @@ export function ParentCardEditForm({
               onChange={(e) => onChange({ end_date: e.target.value })}
             />
           </div>
-  
           <label className="flex items-center justify-between text-sm text-zinc-300">
             <span>Current role</span>
             <input
@@ -228,11 +248,9 @@ export function ParentCardEditForm({
             />
           </label>
         </div>
-  
-        {/* META */}
+
         <div className="space-y-3">
           <p className="text-xs uppercase tracking-wide text-zinc-500">Meta</p>
-  
           <div className="grid sm:grid-cols-2 gap-3">
             <Input
               value={form.seniority_level}
@@ -247,21 +265,18 @@ export function ParentCardEditForm({
               placeholder="Confidence"
             />
           </div>
-  
           <Input
             value={form.intent_primary}
             onChange={(e) => onChange({ intent_primary: e.target.value })}
             placeholder="Primary intent"
           />
-  
           <Input
             value={form.intent_secondary_str}
             onChange={(e) => onChange({ intent_secondary_str: e.target.value })}
             placeholder="Secondary intent"
           />
         </div>
-  
-        {/* VISIBILITY */}
+
         <label className="flex items-center justify-between text-sm text-zinc-300">
           <span>Visible</span>
           <input
@@ -272,9 +287,7 @@ export function ParentCardEditForm({
             }
           />
         </label>
-  
       </div>
     </div>
-  );    
+  );
 }
-

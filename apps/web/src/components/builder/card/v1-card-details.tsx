@@ -7,7 +7,7 @@ function toText(value: unknown): string | null {
   return null;
 }
 
-function v1CardTopics(card: ExperienceCardV1 | Record<string, unknown>): string[] {
+export function v1CardTopics(card: ExperienceCardV1 | Record<string, unknown>): string[] {
   const topics = (card as Record<string, unknown>).topics;
   if (!Array.isArray(topics)) return [];
   return topics
@@ -19,15 +19,25 @@ function v1CardTopics(card: ExperienceCardV1 | Record<string, unknown>): string[
     .filter(Boolean);
 }
 
+/** Labels to hide when hideInternalFields is true (read-only display, no metadata). */
+const INTERNAL_FIELD_LABELS = new Set([
+  "Parent ID", "Depth", "Confidence score", "Visibility", "Created at", "Updated at",
+  "Edited at", "Person ID", "Created by", "Version", "Embedding ref", "Search phrases",
+  "Privacy", "Quality", "Intent", "Intent (primary)", "Intent (secondary)",
+]);
+
 /** Renders card fields that have values; empty fields are not shown. */
 export function V1CardDetails({
   card,
   compact = false,
   summaryFullWidth = false,
+  hideInternalFields = false,
 }: {
   card: ExperienceCardV1 | Record<string, unknown>;
   compact?: boolean;
   summaryFullWidth?: boolean;
+  /** When true, omit metadata/internal rows (created at, visibility, intent, etc.) for read-only display. */
+  hideInternalFields?: boolean;
 }) {
   if (!card) return null;
 
@@ -266,15 +276,19 @@ export function V1CardDetails({
       typeof r === "object" && r !== null && "value" in r && r.value != null && r.value !== ""
   );
 
-  if (rows.length === 0) return null;
+  const filteredRows = hideInternalFields
+    ? rows.filter((r) => !INTERNAL_FIELD_LABELS.has(r.label))
+    : rows;
 
-  const totalChars = rows.reduce((sum, row) => sum + `${row.label}${row.value}`.length, 0);
-  const useTwoColumnCompact = compact && rows.length <= 6 && totalChars <= 220;
-  const useTwoColumnFull = !compact && rows.length <= 8 && totalChars <= 320;
+  if (filteredRows.length === 0) return null;
+
+  const totalChars = filteredRows.reduce((sum, row) => sum + `${row.label}${row.value}`.length, 0);
+  const useTwoColumnCompact = compact && filteredRows.length <= 6 && totalChars <= 220;
+  const useTwoColumnFull = !compact && filteredRows.length <= 8 && totalChars <= 320;
 
   if (summaryFullWidth) {
-    const summaryRow = rows.find((r) => r.label === "Summary");
-    const restRows = rows.filter((r) => r.label !== "Summary");
+    const summaryRow = filteredRows.find((r) => r.label === "Summary");
+    const restRows = filteredRows.filter((r) => r.label !== "Summary");
     return (
       <div className="mt-3 pt-3 border-t border-border/40 space-y-3">
         {summaryRow && (
@@ -305,11 +319,9 @@ export function V1CardDetails({
             : "space-y-2 mt-3 pt-3 border-t border-border/40"
       )}
     >
-      {rows.map((r, i) => (
+      {filteredRows.map((r, i) => (
         <Row key={`${r.label}-${i}`} label={r.label} value={r.value} />
       ))}
     </div>
   );
 }
-
-export { v1CardTopics };

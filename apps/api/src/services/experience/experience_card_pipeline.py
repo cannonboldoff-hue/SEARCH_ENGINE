@@ -1,22 +1,50 @@
 """
-Experience Card Pipeline - Refactored Version
+Experience Card Pipeline
 
-Key improvements:
-1. Pydantic models for strict LLM response validation
-2. Explicit error handling with detailed messages
-3. Transaction-based persistence (all-or-nothing)
-4. Separated concerns (parse, validate, persist, embed)
-5. No silent fallbacks - all errors surface
-6. Standardized LLM response format
+Orchestrates: rewrite → extract → validate → persist → embed.
+
+SECTIONS (in order):
+  1. Rewrite cache    - In-process cache for rewritten raw text (avoids duplicate LLM calls).
+  2. Models           - Pydantic models for LLM response validation (V1Card, V1Family, etc.).
+  3. Parsing          - JSON extraction, parse_llm_response_to_families, parent/child normalization.
+  4. Metadata         - inject_metadata_into_family.
+  5. Field extraction - Date parsing, extract_time_fields, extract_location_fields, normalize_card_title.
+  6. Persistence      - card_to_experience_card_fields, card_to_child_fields, persist_families.
+  7. Serialization    - serialize_card_for_response.
+  8. Fill missing     - fill_missing_fields_from_text (edit-form LLM fill).
+  9. Clarify flow     - _run_clarify_flow, clarify_experience_interactive.
+  10. Public API      - rewrite_raw_text, detect_experiences, next_draft_run_version, run_draft_v1_single.
+
+Embedding: After persist_families(), embed_experience_cards() builds search-document text per card,
+fetches vectors from the embedding provider, and flushes. Search-document text is defined in
+experience_card_search_document; embedding logic lives in experience_card_embedding.
+
+Public API (for routers):
+  - rewrite_raw_text, detect_experiences, run_draft_v1_single
+  - fill_missing_fields_from_text, clarify_experience_interactive
+  - DEFAULT_MAX_PARENT_CLARIFY, DEFAULT_MAX_CHILD_CLARIFY (re-exported from experience_clarify)
 """
 
+from __future__ import annotations
+
+__all__ = [
+    "rewrite_raw_text",
+    "detect_experiences",
+    "run_draft_v1_single",
+    "fill_missing_fields_from_text",
+    "clarify_experience_interactive",
+    "DEFAULT_MAX_PARENT_CLARIFY",
+    "DEFAULT_MAX_CHILD_CLARIFY",
+]
+
+import asyncio
+import hashlib
 import json
 import logging
 import re
 import uuid
 from datetime import datetime, timezone, date
 from typing import Optional, Any
-from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
 from fastapi import HTTPException, status
@@ -26,27 +54,74 @@ from sqlalchemy import select, func
 from src.db.models import RawExperience, DraftSet, ExperienceCard, ExperienceCardChild
 from src.domain import ALLOWED_CHILD_TYPES
 from src.schemas import RawExperienceCreate
-from src.providers import (
-    get_chat_provider,
-    ChatServiceError,
-    EmbeddingServiceError,
-    get_embedding_provider,
-)
+from src.providers import get_chat_provider, ChatServiceError
 from src.prompts.experience_card import (
     PROMPT_REWRITE,
-    PROMPT_EXTRACT_ALL_CARDS,
-    PROMPT_VALIDATE_ALL_CARDS,
+    PROMPT_DETECT_EXPERIENCES,
+    PROMPT_EXTRACT_SINGLE_CARDS,
     PROMPT_FILL_MISSING_FIELDS,
+    PROMPT_OPENING_QUESTION,
+    PROMPT_CLARIFY_PLANNER,
+    PROMPT_CLARIFY_QUESTION_WRITER,
+    PROMPT_CLARIFY_APPLY_ANSWER,
     fill_prompt,
 )
-from src.services.experience_card import _experience_card_search_document
-from src.utils import normalize_embedding
+from .experience_clarify import (
+    ClarifyPlan,
+    normalize_card_family_for_clarify,
+    is_parent_good_enough,
+    compute_missing_fields,
+    validate_clarify_plan,
+    fallback_clarify_plan,
+    should_stop_clarify,
+    merge_patch_into_card_family,
+    normalize_after_patch,
+    canonical_parent_to_flat_response,
+    is_question_generic_onboarding,
+    CHOOSE_FOCUS_MESSAGE,
+    DEFAULT_MAX_PARENT_CLARIFY,
+    DEFAULT_MAX_CHILD_CLARIFY,
+    _parse_planner_json,
+)
+from .experience_card_embedding import embed_experience_cards
+from .pipeline_errors import PipelineError, PipelineStage
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# REWRITE CACHE
+# =============================================================================
+# In-process cache for rewritten raw text. Key = SHA-256 of stripped input;
+# value = cleaned string. Capped at 256 entries (LRU eviction). Lock guards
+# concurrent async access.
+# =============================================================================
+
+_REWRITE_CACHE: dict[str, str] = {}
+_REWRITE_CACHE_MAX = 256
+_rewrite_cache_lock = asyncio.Lock()
+
+
+def _rewrite_cache_key(text: str) -> str:
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+
+
+async def _rewrite_cache_get(text: str) -> Optional[str]:
+    key = _rewrite_cache_key(text)
+    async with _rewrite_cache_lock:
+        return _REWRITE_CACHE.get(key)
+
+
+async def _rewrite_cache_set(text: str, cleaned: str) -> None:
+    key = _rewrite_cache_key(text)
+    async with _rewrite_cache_lock:
+        if len(_REWRITE_CACHE) >= _REWRITE_CACHE_MAX:
+            oldest = next(iter(_REWRITE_CACHE))
+            del _REWRITE_CACHE[oldest]
+        _REWRITE_CACHE[key] = cleaned
+
 
 # =============================================================================
-# PYDANTIC MODELS FOR LLM RESPONSE VALIDATION
+# MODELS — LLM response validation (Pydantic)
 # =============================================================================
 
 class TimeInfo(BaseModel):
@@ -238,10 +313,14 @@ class V1Card(BaseModel):
         if not data.get("index") and isinstance(data.get("search_phrases"), list):
             data["index"] = {"search_phrases": data.get("search_phrases", [])}
 
-        if isinstance(data.get("intent_secondary"), str):
+        if data.get("intent_secondary") is None:
+            data["intent_secondary"] = []
+        elif isinstance(data.get("intent_secondary"), str):
             data["intent_secondary"] = [s.strip() for s in data["intent_secondary"].split(",") if s.strip()]
 
-        if isinstance(data.get("search_phrases"), str):
+        if data.get("search_phrases") is None:
+            data["search_phrases"] = []
+        elif isinstance(data.get("search_phrases"), str):
             data["search_phrases"] = [s.strip() for s in data["search_phrases"].split(",") if s.strip()]
 
         # Coerce frequently malformed LLM list fields into schema-compatible objects.
@@ -292,26 +371,11 @@ class V1ExtractorResponse(BaseModel):
         extra = "allow"
 
 
-class PipelineStage(str, Enum):
-    """Pipeline stage identifiers for error reporting."""
-    REWRITE = "rewrite"
-    EXTRACT = "extract"
-    VALIDATE = "validate"
-    PERSIST = "persist"
-    EMBED = "embed"
-
-
-class PipelineError(Exception):
-    """Base exception for pipeline errors with stage context."""
-    def __init__(self, stage: PipelineStage, message: str, cause: Optional[Exception] = None):
-        self.stage = stage
-        self.message = message
-        self.cause = cause
-        super().__init__(f"[{stage.value}] {message}")
-
-
 # =============================================================================
 # PARSING & VALIDATION
+# =============================================================================
+# JSON extraction from LLM output, normalization of family/child dicts,
+# and parse_llm_response_to_families.
 # =============================================================================
 
 def _strip_json_fence(text: str) -> str:
@@ -364,6 +428,124 @@ def _extract_json_from_text(text: str) -> str:
                             continue
     
     raise ValueError("No valid JSON found in text")
+
+
+def _is_time_empty(t: Any) -> bool:
+    """True if time is missing or has no meaningful value."""
+    if t is None:
+        return True
+    if isinstance(t, str):
+        return not (t or "").strip()
+    if isinstance(t, dict):
+        return not (
+            (t.get("text") or "").strip()
+            or t.get("start")
+            or t.get("end")
+        )
+    return True
+
+
+def _is_location_empty(loc: Any) -> bool:
+    """True if location is missing or has no meaningful value."""
+    if loc is None:
+        return True
+    if isinstance(loc, str):
+        return not (loc or "").strip()
+    if isinstance(loc, dict):
+        return not (
+            (loc.get("text") or "").strip()
+            or loc.get("city")
+            or loc.get("country")
+        )
+    return True
+
+
+def _get_parent_time(parent: dict) -> Optional[dict]:
+    """Extract time dict from parent (time object or start_date/end_date/time_text)."""
+    t = parent.get("time")
+    if isinstance(t, dict) and (t.get("text") or t.get("start") or t.get("end")):
+        return t
+    start = parent.get("start_date")
+    end = parent.get("end_date")
+    text = parent.get("time_text")
+    ongoing = parent.get("is_current")
+    if start or end or text or isinstance(ongoing, bool):
+        return {"start": start, "end": end, "text": text, "ongoing": ongoing}
+    return None
+
+
+def _get_parent_location(parent: dict) -> Any:
+    """Extract location (str or dict) from parent."""
+    loc = parent.get("location")
+    if loc is None:
+        return None
+    if isinstance(loc, str) and (loc or "").strip():
+        return loc
+    if isinstance(loc, dict) and (
+        (loc.get("text") or "").strip() or loc.get("city") or loc.get("country")
+    ):
+        return loc
+    return None
+
+
+def _get_parent_company(parent: dict) -> Optional[str]:
+    """Extract company name from parent."""
+    c = parent.get("company") or parent.get("company_name") or parent.get("organization")
+    if c and str(c).strip():
+        return str(c).strip()
+    return None
+
+
+def _inherit_parent_context_into_children(
+    parent_dict: Optional[dict], children_list: list[dict]
+) -> list[dict]:
+    """
+    Fill each child's missing time_range, location, and company from the parent.
+    Only fills when the child has no explicit value—so user-stated values are preserved.
+    """
+    if not parent_dict or not isinstance(parent_dict, dict) or not children_list:
+        return children_list
+    p_time = _get_parent_time(parent_dict)
+    p_location = _get_parent_location(parent_dict)
+    p_company = _get_parent_company(parent_dict)
+    if not p_time and not p_location and not p_company:
+        return children_list
+    result = []
+    for child in children_list:
+        if not isinstance(child, dict):
+            result.append(child)
+            continue
+        c = dict(child)
+        if p_time and _is_time_empty(c.get("time")):
+            c["time"] = dict(p_time) if isinstance(p_time, dict) else p_time
+            val = c.get("value")
+            if isinstance(val, dict):
+                val = dict(val)
+                val["time"] = c["time"]
+                c["value"] = val
+        if p_location is not None and _is_location_empty(c.get("location")):
+            loc = (
+                p_location
+                if isinstance(p_location, dict)
+                else {"text": p_location}
+                if isinstance(p_location, str)
+                else p_location
+            )
+            c["location"] = loc
+            val = c.get("value")
+            if isinstance(val, dict):
+                val = dict(val)
+                val["location"] = c["location"]
+                c["value"] = val
+        if p_company and not (c.get("company") or "").strip():
+            c["company"] = p_company
+            val = c.get("value")
+            if isinstance(val, dict):
+                val = dict(val)
+                val["company"] = p_company
+                c["value"] = val
+        result.append(c)
+    return result
 
 
 def _normalize_child_dict_for_v1_card(child_dict: dict) -> dict:
@@ -502,6 +684,11 @@ def parse_llm_response_to_families(
         raw_children = normalized_family_dict.get("children")
         if isinstance(raw_children, list):
             normalized_family_dict["children"] = [_normalize_child_dict_for_v1_card(c) for c in raw_children]
+            # Inherit parent's time_range, location, company into children when child has no explicit value
+            parent_dict = normalized_family_dict.get("parent") or family_dict.get("parent")
+            normalized_family_dict["children"] = _inherit_parent_context_into_children(
+                parent_dict, normalized_family_dict["children"]
+            )
 
         try:
             family = V1Family(**normalized_family_dict)
@@ -522,6 +709,9 @@ def parse_llm_response_to_families(
 
 # =============================================================================
 # METADATA INJECTION
+# =============================================================================
+# Inject person_id, ids, timestamps into parent and children (no overwrite of
+# existing values from LLM).
 # =============================================================================
 
 def inject_metadata_into_family(
@@ -570,138 +760,44 @@ def inject_metadata_into_family(
 # =============================================================================
 # FIELD EXTRACTION & NORMALIZATION
 # =============================================================================
+# Date parsing, extract_time_fields, extract_location_fields, extract_company,
+# extract_team, extract_role_info, extract_search_phrases, normalize_card_title.
+# =============================================================================
 
-_MONTH_LOOKUP = {
-    "jan": 1,
-    "january": 1,
-    "feb": 2,
-    "february": 2,
-    "mar": 3,
-    "march": 3,
-    "apr": 4,
-    "april": 4,
-    "may": 5,
-    "jun": 6,
-    "june": 6,
-    "jul": 7,
-    "july": 7,
-    "aug": 8,
-    "august": 8,
-    "sep": 9,
-    "sept": 9,
-    "september": 9,
-    "oct": 10,
-    "october": 10,
-    "nov": 11,
-    "november": 11,
-    "dec": 12,
-    "december": 12,
-}
-
-
-def _month_name_to_number(text: str) -> Optional[int]:
-    key = (text or "").strip().lower()
-    return _MONTH_LOOKUP.get(key)
+# ISO date pattern: YYYY-MM-DD or YYYY-MM (used to find dates in free text).
+# We rely on the LLM to output only ISO dates; this is a fallback for time_text.
+_DATE_ISO_IN_TEXT = re.compile(r"\d{4}-\d{2}(?:-\d{2})?")
 
 
 def parse_date_field(value: Optional[str]) -> Optional[date]:
-    """Parse common date strings into a date. Returns None on failure."""
+    """
+    Parse date from string. Expects ISO format only (YYYY-MM-DD or YYYY-MM).
+    The LLM is instructed to output dates in this format; we do not hardcode
+    month names or locale-dependent formats.
+    """
     if not value:
         return None
-
     text = str(value).strip()
     if not text:
         return None
-
-    # Normalize common separators
     normalized = (
-        text.replace("/", "-")
-        .replace(".", "-")
-        .replace("–", "-")
-        .replace("—", "-")
-        .strip()
+        text.replace("/", "-").replace(".", "-").replace("–", "-").replace("—", "-").strip()
     )
-    normalized = re.sub(r"[,\s]+", " ", normalized).strip()
-
-    # Handle ISO YYYY-MM or YYYY-MM-DD
-    if re.fullmatch(r"\d{4}-\d{2}", normalized):
+    normalized = re.sub(r"[,\s]+", " ", normalized).strip().replace(" ", "-")
+    if len(normalized) == 7 and normalized[4] == "-":  # YYYY-MM
         normalized = f"{normalized}-01"
-    elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized):
-        pass
-    else:
-        # Month name + year (e.g., "Jan 2024" or "January 2024")
-        match = re.fullmatch(r"([A-Za-z]{3,9})\s+(\d{4})", normalized)
-        if match:
-            month = _month_name_to_number(match.group(1))
-            if month:
-                return date(int(match.group(2)), month, 1)
-
-        # Year + month name (e.g., "2024 Jan")
-        match = re.fullmatch(r"(\d{4})\s+([A-Za-z]{3,9})", normalized)
-        if match:
-            month = _month_name_to_number(match.group(2))
-            if month:
-                return date(int(match.group(1)), month, 1)
-
-        # Month name - year (e.g., "Apr-2024")
-        match = re.fullmatch(r"([A-Za-z]{3,9})-(\d{4})", normalized)
-        if match:
-            month = _month_name_to_number(match.group(1))
-            if month:
-                return date(int(match.group(2)), month, 1)
-
-        # Year - month name (e.g., "2024-Apr")
-        match = re.fullmatch(r"(\d{4})-([A-Za-z]{3,9})", normalized)
-        if match:
-            month = _month_name_to_number(match.group(2))
-            if month:
-                return date(int(match.group(1)), month, 1)
-
-        # Numeric month/year (e.g., "01-2024")
-        match = re.fullmatch(r"(\d{1,2})-(\d{4})", normalized)
-        if match:
-            month = int(match.group(1))
-            if 1 <= month <= 12:
-                return date(int(match.group(2)), month, 1)
-
-        # Year-only fallback (e.g., "2024")
-        if re.fullmatch(r"\d{4}", normalized):
-            return date(int(normalized), 1, 1)
-
     try:
         return date.fromisoformat(normalized)
-    except ValueError as e:
-        logger.warning(f"Failed to parse date '{value}': {e}")
+    except ValueError:
         return None
 
 
 def _extract_dates_from_text(text: str) -> tuple[Optional[date], Optional[date]]:
-    """Best-effort extract up to two dates from a free-form time range string."""
+    """Extract up to two ISO-format dates from a string (e.g. time_text)."""
     if not text:
         return None, None
     haystack = str(text).replace("–", "-").replace("—", "-")
-
-    # Example: "2024 Apr-Dec" (single year shared by both months)
-    shared_year_month_range = re.search(
-        r"\b(\d{4})\s+([A-Za-z]{3,9})\s*-\s*([A-Za-z]{3,9})\b",
-        haystack,
-        re.IGNORECASE,
-    )
-    if shared_year_month_range:
-        year, start_mon, end_mon = shared_year_month_range.groups()
-        start_date = parse_date_field(f"{year} {start_mon}")
-        end_date = parse_date_field(f"{year} {end_mon}")
-        if start_date or end_date:
-            return start_date, end_date
-
-    pattern = re.compile(
-        r"(\d{4}-\d{2}-\d{2}|\d{4}-\d{2}|"
-        r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{4}|"
-        r"\d{4}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|"
-        r"\d{1,2}[/-]\d{4})",
-        re.IGNORECASE,
-    )
-    matches = pattern.findall(haystack)
+    matches = _DATE_ISO_IN_TEXT.findall(haystack)
     parsed = [parse_date_field(m) for m in matches if m]
     parsed = [d for d in parsed if d is not None]
     if not parsed:
@@ -888,6 +984,8 @@ def normalize_card_title(card: V1Card, fallback_text: Optional[str] = None) -> s
 # =============================================================================
 # PERSISTENCE
 # =============================================================================
+# V1Card/V1Family → ORM fields; persist_families (parents + children, then embed).
+# =============================================================================
 
 def card_to_experience_card_fields(
     card: V1Card,
@@ -988,8 +1086,8 @@ def card_to_child_fields(
             "country": country,
         },
         "roles": [{"label": role_title, "seniority": role_seniority}] if role_title else [],
-        "topics": [t.dict() for t in card.topics],
-        "entities": [e.dict() for e in card.entities],
+        "topics": [t.model_dump() for t in card.topics],
+        "entities": [e.model_dump() for e in card.entities],
         "actions": card.actions,
         "outcomes": card.outcomes,
         "tooling": card.tooling,
@@ -1080,12 +1178,11 @@ async def persist_families(
                 child_ec = ExperienceCardChild(**child_fields)
                 db.add(child_ec)
                 all_children.append(child_ec)
-            
-            if all_children:
-                await db.flush()
-                for child_ec in all_children:
-                    await db.refresh(child_ec)
-        
+
+        if all_children:
+            await db.flush()
+            await asyncio.gather(*[db.refresh(child_ec) for child_ec in all_children])
+
         return all_parents, all_children
     
     except Exception as e:
@@ -1097,79 +1194,9 @@ async def persist_families(
 
 
 # =============================================================================
-# EMBEDDING
-# =============================================================================
-
-async def embed_cards(
-    db: AsyncSession,
-    parents: list[ExperienceCard],
-    children: list[ExperienceCardChild],
-) -> None:
-    """
-    Generate and persist embeddings for all cards.
-    
-    Raises:
-        PipelineError: If embedding fails
-    """
-    if not parents and not children:
-        return
-    
-    embed_texts: list[str] = []
-    embed_targets: list[tuple[str, ExperienceCard | ExperienceCardChild]] = []
-    
-    # Collect parent documents (use stored search_document when present)
-    for parent in parents:
-        doc = parent.search_document or _experience_card_search_document(parent)
-        if doc:
-            embed_texts.append(doc)
-            embed_targets.append(("parent", parent))
-    
-    # Collect child documents
-    for child in children:
-        doc = child.search_document or ""
-        if doc.strip():
-            embed_texts.append(doc.strip())
-            embed_targets.append(("child", child))
-    
-    if not embed_texts:
-        logger.warning("No documents to embed")
-        return
-    
-    try:
-        provider = get_embedding_provider()
-        vectors = await provider.embed(embed_texts)
-        
-        if len(vectors) != len(embed_targets):
-            raise PipelineError(
-                PipelineStage.EMBED,
-                f"Embedding API returned {len(vectors)} vectors but expected {len(embed_targets)}",
-            )
-        
-        # Assign embeddings
-        for (kind, obj), vec in zip(embed_targets, vectors):
-            normalized = normalize_embedding(vec, dim=provider.dimension)
-            obj.embedding = normalized
-        
-        await db.flush()
-        
-        logger.info(f"Successfully embedded {len(embed_texts)} documents")
-    
-    except EmbeddingServiceError as e:
-        raise PipelineError(
-            PipelineStage.EMBED,
-            f"Embedding service failed: {str(e)}",
-            cause=e,
-        )
-    except Exception as e:
-        raise PipelineError(
-            PipelineStage.EMBED,
-            f"Embedding failed: {str(e)}",
-            cause=e,
-        )
-
-
-# =============================================================================
 # RESPONSE SERIALIZATION
+# =============================================================================
+# Persisted ExperienceCard / ExperienceCardChild → API response dict.
 # =============================================================================
 
 def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> dict:
@@ -1223,10 +1250,12 @@ def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> d
 
 
 # =============================================================================
-# HELPER FUNCTIONS
+# FILL MISSING FIELDS (edit form)
+# =============================================================================
+# Rewrite → LLM fill missing fields only; return dict to merge into form.
+# Allowed keys must match frontend form keys.
 # =============================================================================
 
-# Allowed keys for fill-missing-fields (edit form). Must match frontend form keys.
 FILL_MISSING_PARENT_KEYS = (
     "title, summary, normalized_role, domain, sub_domain, company_name, company_type, "
     "location, employment_type, start_date, end_date, is_current, intent_primary, "
@@ -1300,41 +1329,590 @@ async def fill_missing_fields_from_text(
         return {}
 
 
+def _parse_date_field_for_clarify(val: Any) -> Optional[str]:
+    """Parse date for clarify response; return ISO string or None."""
+    if val is None:
+        return None
+    parsed = parse_date_field(str(val))
+    return parsed.isoformat() if parsed else None
+
+
+# =============================================================================
+# CLARIFY FLOW
+# =============================================================================
+# Structured history, LLM planner → question writer / answer applier.
+# _run_clarify_flow, clarify_experience_interactive, and helpers.
+# =============================================================================
+
+def _clarify_result(
+    *,
+    clarifying_question: Optional[str] = None,
+    filled: Optional[dict] = None,
+    should_stop: bool = False,
+    stop_reason: Optional[str] = None,
+    target_type: Optional[str] = None,
+    target_field: Optional[str] = None,
+    target_child_type: Optional[str] = None,
+    progress: Optional[dict] = None,
+    missing_fields: Optional[list] = None,
+    asked_history_entry: Optional[dict] = None,
+    canonical_family: Optional[dict] = None,
+) -> dict:
+    """Build a standard clarify-flow return dict. Omitted keys default to None/false."""
+    return {
+        "clarifying_question": clarifying_question,
+        "filled": filled or {},
+        "should_stop": should_stop,
+        "stop_reason": stop_reason,
+        "target_type": target_type,
+        "target_field": target_field,
+        "target_child_type": target_child_type,
+        "progress": progress,
+        "missing_fields": missing_fields,
+        "asked_history_entry": asked_history_entry,
+        "canonical_family": canonical_family,
+    }
+
+
+def _build_asked_history_and_counts(
+    conversation_history: list[dict],
+    asked_history_structured: Optional[list[dict]] = None,
+) -> tuple[list[dict], int, int]:
+    """
+    Build structured asked_history and parent_asked_count, child_asked_count.
+    If asked_history_structured is provided, use it and derive counts. Else derive from conversation_history (legacy).
+    """
+    if asked_history_structured:
+        history = list(asked_history_structured)
+        parent_count = sum(1 for m in history if m.get("role") == "assistant" and m.get("kind") == "clarify_question" and m.get("target_type") == "parent")
+        child_count = sum(1 for m in history if m.get("role") == "assistant" and m.get("kind") == "clarify_question" and m.get("target_type") == "child")
+        return history, parent_count, child_count
+    # Legacy: conversation_history is list of { role, content }. Count assistant messages as parent asks.
+    history = []
+    parent_count = 0
+    for msg in conversation_history or []:
+        role = (msg.get("role") or "user").strip().lower()
+        content = (msg.get("content") or "").strip()
+        if role == "assistant" and content:
+            history.append({
+                "role": "assistant",
+                "kind": "clarify_question",
+                "target_type": "parent",
+                "target_field": None,
+                "target_child_type": None,
+                "text": content,
+            })
+            parent_count += 1
+        elif role == "user" and content:
+            history.append({
+                "role": "user",
+                "kind": "clarify_answer",
+                "text": content,
+            })
+    return history, parent_count, 0
+
+
+async def _plan_next_clarify_step_llm(
+    cleaned_text: str,
+    canonical_family: dict,
+    asked_history: list[dict],
+    parent_asked_count: int,
+    child_asked_count: int,
+    max_parent: int = DEFAULT_MAX_PARENT_CLARIFY,
+    max_child: int = DEFAULT_MAX_CHILD_CLARIFY,
+) -> Optional[ClarifyPlan]:
+    """Call LLM planner; return ClarifyPlan or None on parse failure."""
+    prompt = fill_prompt(
+        PROMPT_CLARIFY_PLANNER,
+        cleaned_text=cleaned_text,
+        canonical_card_json=json.dumps(canonical_family, indent=2),
+        asked_history_json=json.dumps(asked_history, indent=2),
+        max_parent=max_parent,
+        max_child=max_child,
+        parent_asked_count=parent_asked_count,
+        child_asked_count=child_asked_count,
+    )
+    chat = get_chat_provider()
+    try:
+        response = await chat.chat(prompt, max_tokens=512)
+    except ChatServiceError as e:
+        logger.warning("clarify planner LLM failed: %s", e)
+        return None
+    if not response or not response.strip():
+        return None
+    try:
+        json_str = _extract_json_from_text(response)
+        data = json.loads(json_str)
+        return _parse_planner_json(data)
+    except (ValueError, json.JSONDecodeError) as e:
+        logger.warning("clarify planner parse failed: %s", e)
+        return None
+
+
+async def _generate_clarify_question_llm(plan: ClarifyPlan, canonical_family: dict) -> Optional[str]:
+    """Generate one short question for the validated plan. Returns question text or None."""
+    plan_json = json.dumps({
+        "action": plan.action,
+        "target_type": plan.target_type,
+        "target_field": plan.target_field,
+        "target_child_type": plan.target_child_type,
+        "reason": plan.reason,
+    })
+    card_context = json.dumps(canonical_family.get("parent") or {}, indent=2)
+    prompt = fill_prompt(
+        PROMPT_CLARIFY_QUESTION_WRITER,
+        validated_plan_json=plan_json,
+        card_context_json=card_context,
+    )
+    chat = get_chat_provider()
+    try:
+        response = await chat.chat(prompt, max_tokens=256)
+    except ChatServiceError as e:
+        logger.warning("clarify question writer LLM failed: %s", e)
+        return None
+    if not response or not response.strip():
+        return None
+    try:
+        json_str = _extract_json_from_text(response)
+        data = json.loads(json_str)
+        if isinstance(data, dict) and data.get("question"):
+            return str(data["question"]).strip()
+    except (ValueError, json.JSONDecodeError):
+        pass
+    return None
+
+
+async def _apply_clarify_answer_patch_llm(
+    plan: ClarifyPlan,
+    user_answer: str,
+    canonical_family: dict,
+) -> tuple[Optional[dict], bool, Optional[str]]:
+    """
+    Convert user answer to patch. Returns (patch_dict, needs_retry, retry_question).
+    Patch may be None if needs_retry or parse failure.
+    """
+    plan_json = json.dumps({
+        "action": plan.action,
+        "target_type": plan.target_type,
+        "target_field": plan.target_field,
+        "target_child_type": plan.target_child_type,
+    })
+    card_json = json.dumps(canonical_family, indent=2)
+    prompt = fill_prompt(
+        PROMPT_CLARIFY_APPLY_ANSWER,
+        validated_plan_json=plan_json,
+        user_answer=user_answer,
+        canonical_card_json=card_json,
+    )
+    chat = get_chat_provider()
+    try:
+        response = await chat.chat(prompt, max_tokens=512)
+    except ChatServiceError as e:
+        logger.warning("clarify apply answer LLM failed: %s", e)
+        return None, True, "Could you rephrase that? I want to capture it correctly."
+    if not response or not response.strip():
+        return None, True, "Can you say a bit more?"
+    try:
+        json_str = _extract_json_from_text(response)
+        data = json.loads(json_str)
+        if not isinstance(data, dict):
+            return None, True, "Can you say a bit more?"
+        patch = data.get("patch") if isinstance(data.get("patch"), dict) else None
+        needs_retry = bool(data.get("needs_retry"))
+        retry_q = str(data.get("retry_question") or "").strip() or None
+        return patch, needs_retry, retry_q
+    except (ValueError, json.JSONDecodeError):
+        return None, True, "Can you say a bit more?"
+
+
+
+async def _run_clarify_flow(
+    raw_text: str,
+    card_family: dict,
+    conversation_history: list[dict],
+    asked_history_structured: Optional[list[dict]] = None,
+    last_question_target: Optional[dict] = None,
+    max_parent: int = DEFAULT_MAX_PARENT_CLARIFY,
+    max_child: int = DEFAULT_MAX_CHILD_CLARIFY,
+    card_families: Optional[list[dict]] = None,
+    focus_parent_id: Optional[str] = None,
+) -> dict:
+    """
+    Clarify flow: normalize -> plan -> validate -> question writer or apply answer.
+    Returns dict with: action?, clarifying_question?, message?, options?, focus_parent_id?, filled?, should_stop?, ...
+    """
+    # Resolve to single family when focus is set (e.g. from detected_experiences choose_focus)
+    if card_families and focus_parent_id:
+        for f in card_families:
+            p = f.get("parent") or {}
+            if str(p.get("id")) == str(focus_parent_id):
+                card_family = f
+                break
+
+    # 1) Canonical normalizer
+    canonical = normalize_card_family_for_clarify(card_family)
+    asked_history, parent_asked_count, child_asked_count = _build_asked_history_and_counts(
+        conversation_history, asked_history_structured
+    )
+
+    last_is_user = bool(asked_history and asked_history[-1].get("role") == "user")
+
+    # 2) Resolve plan_for_apply (synchronous — no LLM needed yet)
+    plan_for_apply: Optional[ClarifyPlan] = None
+    if last_is_user and len(asked_history) >= 1:
+        if last_question_target:
+            tt = last_question_target.get("target_type")
+            tf = last_question_target.get("target_field")
+            tct = last_question_target.get("target_child_type")
+            if tt in ("parent", "child"):
+                plan_for_apply = ClarifyPlan(action="ask", target_type=tt, target_field=tf, target_child_type=tct)
+        if not plan_for_apply:
+            for i in range(len(asked_history) - 1, -1, -1):
+                m = asked_history[i]
+                if m.get("role") == "assistant" and m.get("kind") == "clarify_question":
+                    plan_for_apply = ClarifyPlan(
+                        action="ask",
+                        target_type=m.get("target_type"),
+                        target_field=m.get("target_field"),
+                        target_child_type=m.get("target_child_type"),
+                    )
+                    break
+
+    # 3) Run rewrite + (optionally) apply_answer concurrently.
+    #    rewrite_raw_text is cached so subsequent calls within the same request
+    #    (e.g. after detect_experiences already ran it) are free.
+    if plan_for_apply and last_is_user:
+        user_answer = asked_history[-1].get("text") or ""
+        cleaned_text, (patch, needs_retry, retry_question) = await asyncio.gather(
+            rewrite_raw_text(raw_text),
+            _apply_clarify_answer_patch_llm(plan_for_apply, user_answer, canonical),
+        )
+        logger.info("clarify_flow apply_answer: patch=%s needs_retry=%s", bool(patch), needs_retry)
+        if needs_retry and retry_question:
+            new_entry = {
+                "role": "assistant",
+                "kind": "clarify_question",
+                "target_type": plan_for_apply.target_type,
+                "target_field": plan_for_apply.target_field,
+                "target_child_type": plan_for_apply.target_child_type,
+                "text": retry_question,
+            }
+            return _clarify_result(
+                clarifying_question=retry_question,
+                should_stop=False,
+                target_type=plan_for_apply.target_type,
+                target_field=plan_for_apply.target_field,
+                target_child_type=plan_for_apply.target_child_type,
+                progress={"parent_asked": parent_asked_count, "child_asked": child_asked_count, "max_parent": max_parent, "max_child": max_child},
+                missing_fields=compute_missing_fields(canonical),
+                asked_history_entry=new_entry,
+                canonical_family=canonical,
+            )
+        if patch:
+            canonical = merge_patch_into_card_family(canonical, patch, plan_for_apply)
+            canonical = normalize_after_patch(canonical)
+            logger.debug(
+                "clarify_flow apply_answer: patch applied to canonical time_after=%s",
+                canonical.get("parent", {}).get("time"),
+            )
+    else:
+        cleaned_text = await rewrite_raw_text(raw_text)
+
+    # 4) Plan -> validate -> ask or autofill or stop
+    plan = None
+    for _ in range(5):  # cap autofill loop
+        raw_plan = await _plan_next_clarify_step_llm(
+            cleaned_text, canonical, asked_history,
+            parent_asked_count, child_asked_count, max_parent, max_child,
+        )
+        validated_plan, used_fallback = validate_clarify_plan(
+            raw_plan, canonical, asked_history,
+            parent_asked_count=parent_asked_count,
+            child_asked_count=child_asked_count,
+            max_parent=max_parent,
+            max_child=max_child,
+        )
+        logger.info(
+            "clarify_flow planner: raw_action=%s validated_action=%s used_fallback=%s target_type=%s target_field=%s",
+            raw_plan.action if raw_plan else None,
+            validated_plan.action,
+            used_fallback,
+            validated_plan.target_type,
+            validated_plan.target_field or validated_plan.target_child_type,
+        )
+        plan = validated_plan
+
+        if validated_plan.action == "stop":
+            stop_reason = validated_plan.reason or "Done"
+            logger.info("clarify_flow stop: %s", stop_reason)
+            flat_parent = canonical_parent_to_flat_response(canonical.get("parent") or {})
+            logger.debug(
+                "clarify_flow stop filled: start_date=%s end_date=%s time_text=%s",
+                flat_parent.get("start_date"), flat_parent.get("end_date"), flat_parent.get("time_text"),
+            )
+            return _clarify_result(
+                filled=flat_parent,
+                should_stop=True,
+                stop_reason=stop_reason,
+                progress={"parent_asked": parent_asked_count, "child_asked": child_asked_count, "max_parent": max_parent, "max_child": max_child},
+                missing_fields=compute_missing_fields(canonical),
+                canonical_family=canonical,
+            )
+        if validated_plan.action == "autofill" and validated_plan.autofill_patch:
+            canonical = merge_patch_into_card_family(canonical, validated_plan.autofill_patch, validated_plan)
+            canonical = normalize_after_patch(canonical)
+            logger.info("clarify_flow autofill applied for %s", validated_plan.target_field or validated_plan.target_child_type)
+            continue
+        if validated_plan.action == "ask":
+            question = await _generate_clarify_question_llm(validated_plan, canonical)
+            if not question:
+                question = _fallback_question_for_plan(validated_plan)
+            # Ban generic onboarding/discovery questions in post-extraction clarify
+            if question and is_question_generic_onboarding(question):
+                logger.warning("clarify_flow: rejected generic question, using fallback: %s", question[:60])
+                question = _fallback_question_for_plan(validated_plan)
+            logger.info("clarify_flow ask: target=%s question=%s", validated_plan.target_field or validated_plan.target_child_type, question[:50] if question else "")
+            new_entry = {
+                "role": "assistant",
+                "kind": "clarify_question",
+                "target_type": validated_plan.target_type,
+                "target_field": validated_plan.target_field,
+                "target_child_type": validated_plan.target_child_type,
+                "text": question,
+            }
+            return _clarify_result(
+                clarifying_question=question,
+                should_stop=False,
+                target_type=validated_plan.target_type,
+                target_field=validated_plan.target_field,
+                target_child_type=validated_plan.target_child_type,
+                progress={"parent_asked": parent_asked_count, "child_asked": child_asked_count, "max_parent": max_parent, "max_child": max_child},
+                missing_fields=compute_missing_fields(canonical),
+                asked_history_entry=new_entry,
+                canonical_family=canonical,
+            )
+    # Loop exhausted (autofill only)
+    flat_parent = canonical_parent_to_flat_response(canonical.get("parent") or {})
+    return _clarify_result(
+        filled=flat_parent,
+        should_stop=True,
+        stop_reason="Max autofill iterations",
+        progress={"parent_asked": parent_asked_count, "child_asked": child_asked_count, "max_parent": max_parent, "max_child": max_child},
+        missing_fields=compute_missing_fields(canonical),
+        canonical_family=canonical,
+    )
+
+
+def _fallback_question_for_plan(plan: ClarifyPlan) -> str:
+    """Deterministic fallback when LLM question writer fails. Field-targeted, not generic."""
+    _PARENT_QUESTIONS = {
+        "headline": "What would you call this role or experience in one line?",
+        "role": "What was your job title or role?",
+        "summary": "Can you summarize what you did there in a sentence or two?",
+        "company_name": "Which company or organization was this at?",
+        "team": "Which team or group were you in?",
+        "time": "Roughly when did you do this? (e.g. 2020–2022 or Jan 2021)",
+        "location": "Where was this based? (city or country)",
+        "domain": "What domain or industry was this in?",
+        "sub_domain": "Any specific sub-domain or focus?",
+        "intent_primary": "What best describes this experience—work, project, education, or something else?",
+    }
+    if plan.target_type == "parent":
+        return _PARENT_QUESTIONS.get(
+            plan.target_field or "", "Which of these can you add: company name, time period, or location?"
+        )
+    if plan.target_type == "child":
+        return f"What specific {plan.target_child_type or 'detail'} do you want to add?"
+    return "Which detail can you add—company, time, or location?"
+
+
+def _build_choose_focus_options_from_detected(detected_experiences: list[dict]) -> list[dict]:
+    """Build options for choose_focus from detect-experiences response (index + label)."""
+    options = []
+    for item in detected_experiences:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("index")
+        label = (item.get("label") or "").strip() or f"Experience {idx}"
+        if idx is not None:
+            options.append({"parent_id": str(idx), "label": label[:80]})
+    return options
+
+
+async def clarify_experience_interactive(
+    raw_text: str,
+    current_card: dict,
+    card_type: str,
+    conversation_history: list[dict],
+    *,
+    card_family: Optional[dict] = None,
+    asked_history_structured: Optional[list[dict]] = None,
+    last_question_target: Optional[dict] = None,
+    max_parent: int = DEFAULT_MAX_PARENT_CLARIFY,
+    max_child: int = DEFAULT_MAX_CHILD_CLARIFY,
+    card_families: Optional[list[dict]] = None,
+    focus_parent_id: Optional[str] = None,
+    detected_experiences: Optional[list[dict]] = None,
+) -> dict:
+    """
+    Interactive clarification: opening question when raw_text empty; when multiple
+    experiences detected (no focus) return choose_focus so user picks one to extract; otherwise 4-part flow.
+    """
+    # Multiple experiences detected (before extraction): return choose_focus so user picks one first
+    if detected_experiences and len(detected_experiences) > 1 and not focus_parent_id:
+        options = _build_choose_focus_options_from_detected(detected_experiences)
+        logger.info("clarify_flow choose_focus: detected_experiences (%s), no focus", len(detected_experiences))
+        return {
+            "action": "choose_focus",
+            "message": CHOOSE_FOCUS_MESSAGE,
+            "options": options,
+            "focus_parent_id": None,
+            **_clarify_result(),
+        }
+    if not raw_text or not raw_text.strip():
+        chat = get_chat_provider()
+        try:
+            response = await chat.chat(PROMPT_OPENING_QUESTION, max_tokens=256)
+            if response and response.strip():
+                json_str = _extract_json_from_text(response)
+                data = json.loads(json_str)
+                if isinstance(data, dict) and data.get("clarifying_question"):
+                    return _clarify_result(
+                        clarifying_question=str(data["clarifying_question"]).strip(),
+                    )
+        except (ChatServiceError, ValueError, json.JSONDecodeError) as e:
+            logger.warning("clarify_experience: opening question LLM failed, using fallback: %s", e)
+        return _clarify_result(
+            clarifying_question="What's one experience you'd like to add? Tell me in your own words.",
+        )
+
+    family = card_family if isinstance(card_family, dict) and (card_family.get("parent") is not None or (card_family.get("children") is not None)) else None
+    if not family:
+        family = {"parent": current_card or {}, "children": []}
+    elif not family.get("parent"):
+        family = {**family, "parent": current_card or {}}
+    if focus_parent_id and card_families:
+        for f in card_families:
+            p = f.get("parent") or {}
+            if str(p.get("id")) == str(focus_parent_id):
+                family = f
+                break
+    result = await _run_clarify_flow(
+        raw_text=raw_text,
+        card_family=family,
+        conversation_history=conversation_history,
+        asked_history_structured=asked_history_structured,
+        last_question_target=last_question_target,
+        max_parent=max_parent,
+        max_child=max_child,
+        card_families=card_families,
+        focus_parent_id=focus_parent_id,
+    )
+    filled = result.get("filled") or {}
+    if filled:
+        for key in ("start_date", "end_date"):
+            if key in filled and filled[key] is not None:
+                parsed = _parse_date_field_for_clarify(filled[key])
+                if parsed:
+                    filled[key] = parsed
+        result["filled"] = filled
+    return result
+
+
+# =============================================================================
+# PUBLIC API — Rewrite, detect, draft, run pipeline
+# =============================================================================
+
 async def rewrite_raw_text(raw_text: str) -> str:
     """
-    Clean and rewrite raw input text.
-    
+    Clean and rewrite raw input text. Cached in-process by SHA-256 of input so
+    repeated calls (e.g. detect → draft → clarify on same message) hit the LLM once.
+
     Raises:
-        HTTPException: If input is empty
-        PipelineError: If LLM fails
+        HTTPException: If input is empty.
+        PipelineError: If LLM fails.
     """
     if not raw_text or not raw_text.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="raw_text is required and cannot be empty",
         )
-    
+
+    cached = await _rewrite_cache_get(raw_text)
+    if cached:
+        logger.debug("rewrite_raw_text: cache hit")
+        return cached
+
     try:
         chat = get_chat_provider()
         prompt = fill_prompt(PROMPT_REWRITE, user_text=raw_text)
         rewritten = await chat.chat(prompt, max_tokens=2048)
-        
+
         cleaned = " ".join((rewritten or "").split()).strip()
-        
+
         if not cleaned:
             raise PipelineError(
                 PipelineStage.REWRITE,
                 "Rewrite returned empty text",
             )
-        
+
+        await _rewrite_cache_set(raw_text, cleaned)
         return cleaned
-    
+
     except ChatServiceError as e:
         raise PipelineError(
             PipelineStage.REWRITE,
             f"Chat service failed: {str(e)}",
             cause=e,
         )
+
+
+async def detect_experiences(raw_text: str) -> dict:
+    """
+    Analyze cleaned text and return count + list of distinct experiences (labels + suggested).
+    Returns {"count": int, "experiences": [{"index": int, "label": str, "suggested": bool}]}.
+    """
+    if not raw_text or not raw_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="raw_text is required and cannot be empty",
+        )
+    cleaned = await rewrite_raw_text(raw_text)
+    prompt = fill_prompt(PROMPT_DETECT_EXPERIENCES, cleaned_text=cleaned)
+    chat = get_chat_provider()
+    try:
+        response = await chat.chat(prompt, max_tokens=1024)
+    except ChatServiceError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    if not response or not response.strip():
+        return {"count": 0, "experiences": []}
+    try:
+        json_str = _extract_json_from_text(response)
+        data = json.loads(json_str)
+        if not isinstance(data, dict):
+            return {"count": 0, "experiences": []}
+        count = int(data.get("count", 0)) if data.get("count") is not None else 0
+        experiences = data.get("experiences") if isinstance(data.get("experiences"), list) else []
+        out = []
+        for i, item in enumerate(experiences):
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("index")
+            if idx is None and i + 1 <= count:
+                idx = i + 1
+            elif isinstance(idx, (int, float)):
+                idx = int(idx)
+            else:
+                continue
+            label = (item.get("label") or "").strip() or f"Experience {idx}"
+            suggested = bool(item.get("suggested"))
+            out.append({"index": idx, "label": label, "suggested": suggested})
+        if out and not any(e.get("suggested") for e in out):
+            out[0]["suggested"] = True
+        return {"count": count, "experiences": out}
+    except (ValueError, json.JSONDecodeError):
+        logger.warning("detect_experiences: could not parse LLM response")
+        return {"count": 0, "experiences": []}
 
 
 async def next_draft_run_version(db: AsyncSession, raw_experience_id: str, person_id: str) -> int:
@@ -1349,46 +1927,29 @@ async def next_draft_run_version(db: AsyncSession, raw_experience_id: str, perso
     return (max_version or 0) + 1
 
 
-# =============================================================================
-# MAIN PIPELINE
-# =============================================================================
-
-async def run_draft_v1_pipeline(
+async def run_draft_v1_single(
     db: AsyncSession,
     person_id: str,
-    body: RawExperienceCreate,
+    raw_text: str,
+    experience_index: int,
+    experience_count: int,
 ) -> tuple[str, str, list[dict]]:
     """
-    Execute the complete draft pipeline with proper error handling.
-    
-    Pipeline stages:
-    1. Rewrite - Clean input text
-    2. Extract - LLM extraction to structured families
-    3. Validate - LLM validation and enrichment
-    4. Persist - Save to database
-    5. Embed - Generate embeddings
-    
-    Returns:
-        (draft_set_id, raw_experience_id, card_families)
-    
-    Raises:
-        HTTPException: For client errors (400)
-        PipelineError: For pipeline failures with stage context
-        ChatServiceError: For unrecoverable LLM errors
-        EmbeddingServiceError: For embedding errors
+    Run draft pipeline for ONE experience only (by 1-based index).
+    Returns (draft_set_id, raw_experience_id, card_families) with at most one family.
     """
-    raw_text_original = body.raw_text or ""
-    
-    logger.info(f"Starting pipeline for person_id={person_id}, text_len={len(raw_text_original)}")
-    
-    # =========================================================================
-    # STAGE 1: REWRITE
-    # =========================================================================
-    
+    raw_text_original = (raw_text or "").strip()
+    if not raw_text_original:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="raw_text is required and cannot be empty",
+        )
+    idx = max(1, min(experience_index, experience_count or 1))
+    total = max(1, experience_count)
+
+    logger.info(f"Starting single-experience pipeline person_id={person_id}, index={idx}/{total}")
+
     raw_text_cleaned = await rewrite_raw_text(raw_text_original)
-    logger.info(f"Rewrite complete: {len(raw_text_original)} → {len(raw_text_cleaned)} chars")
-    
-    # Create RawExperience record
     raw = RawExperience(
         person_id=person_id,
         raw_text=raw_text_original,
@@ -1398,8 +1959,6 @@ async def run_draft_v1_pipeline(
     db.add(raw)
     await db.flush()
     raw_experience_id = str(raw.id)
-    
-    # Create DraftSet
     run_version = await next_draft_run_version(db, raw_experience_id, person_id)
     draft_set = DraftSet(
         person_id=person_id,
@@ -1409,111 +1968,49 @@ async def run_draft_v1_pipeline(
     db.add(draft_set)
     await db.flush()
     draft_set_id = str(draft_set.id)
-    
-    logger.info(f"Created raw_experience_id={raw_experience_id}, draft_set_id={draft_set_id}")
-    
-    # =========================================================================
-    # STAGE 2: EXTRACT
-    # =========================================================================
-    
+
     chat = get_chat_provider()
-    
     extract_prompt = fill_prompt(
-        PROMPT_EXTRACT_ALL_CARDS,
+        PROMPT_EXTRACT_SINGLE_CARDS,
         user_text=raw_text_cleaned,
         person_id=person_id,
+        experience_index=idx,
+        experience_count=total,
     )
-    
     try:
         extract_response = await chat.chat(extract_prompt, max_tokens=8192)
-        extracted_families = parse_llm_response_to_families(
+        # Run CPU-bound parsing in thread pool to avoid blocking the event loop
+        extracted_families = await asyncio.to_thread(
+            parse_llm_response_to_families,
             extract_response,
-            stage=PipelineStage.EXTRACT,
+            PipelineStage.EXTRACT,
         )
-        logger.info(f"Extraction complete: {len(extracted_families)} families")
-    
-    except ChatServiceError:
+    except (ChatServiceError, PipelineError):
         raise
-    except PipelineError:
-        raise
-    
-    # Inject metadata
+    # Keep only the first family (single-experience extract)
+    extracted_families = extracted_families[:1]
     for family in extracted_families:
         inject_metadata_into_family(family, person_id)
-    
-    # =========================================================================
-    # STAGE 3: VALIDATE
-    # =========================================================================
-    
-    validate_payload = {
-        "raw_text_original": raw_text_original,
-        "raw_text_cleaned": raw_text_cleaned,
-        "families": [
-            {
-                "parent": family.parent.dict(),
-                "children": [c.dict() for c in family.children],
-            }
-            for family in extracted_families
-        ],
-    }
-    
-    validate_prompt = fill_prompt(
-        PROMPT_VALIDATE_ALL_CARDS,
-        parent_and_children_json=json.dumps(validate_payload),
-    )
-    
-    try:
-        validate_response = await chat.chat(validate_prompt, max_tokens=8192)
-        validated_families = parse_llm_response_to_families(
-            validate_response,
-            stage=PipelineStage.VALIDATE,
-        )
-        logger.info(f"Validation complete: {len(validated_families)} families")
-    
-    except (PipelineError, ChatServiceError) as e:
-        # Validation is optional enhancement - fall back to extraction
-        logger.warning(f"Validation failed, using extraction output: {e}")
-        validated_families = extracted_families
-    
-    # Re-inject metadata after validation (LLM may have modified/removed fields)
-    for family in validated_families:
-        inject_metadata_into_family(family, person_id)
-    
-    # =========================================================================
-    # STAGE 4: PERSIST
-    # =========================================================================
-    
+
     parents, children = await persist_families(
         db,
-        validated_families,
+        extracted_families,
         person_id=person_id,
         raw_experience_id=raw_experience_id,
         draft_set_id=draft_set_id,
     )
-    
-    logger.info(f"Persisted {len(parents)} parents, {len(children)} children")
-    
-    # =========================================================================
-    # STAGE 5: EMBED
-    # =========================================================================
-    
-    await embed_cards(db, parents, children)
-    
-    # =========================================================================
-    # BUILD RESPONSE
-    # =========================================================================
-    
-    card_families: list[dict] = []
-    
-    for parent in parents:
-        # Find children for this parent
-        parent_children = [c for c in children if c.parent_experience_id == parent.id]
+    # Embedding: build search-document text per card, fetch vectors, assign and flush
+    await embed_experience_cards(db, parents, children)
 
-        card_families.append({
+    # Group children by parent_id once (O(n)) instead of per-parent scan (O(n*m))
+    children_by_parent_id: dict[str, list] = {}
+    for c in children:
+        children_by_parent_id.setdefault(c.parent_experience_id, []).append(c)
+    card_families = [
+        {
             "parent": serialize_card_for_response(parent),
-            "children": [serialize_card_for_response(c) for c in parent_children],
-        })
-
-    logger.info(f"Pipeline complete: {len(card_families)} families ready")
-    
+            "children": [serialize_card_for_response(c) for c in children_by_parent_id.get(parent.id, [])],
+        }
+        for parent in parents
+    ]
     return draft_set_id, raw_experience_id, card_families

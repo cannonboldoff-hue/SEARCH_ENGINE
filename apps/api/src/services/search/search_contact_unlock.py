@@ -16,7 +16,7 @@ from src.services.credits import (
     get_idempotent_response,
     save_idempotent_response,
 )
-from src.services.search_logic import _validate_search_session
+from .search_logic import _validate_search_session
 
 
 def unlock_endpoint(person_id: str) -> str:

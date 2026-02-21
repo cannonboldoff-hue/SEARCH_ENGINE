@@ -108,26 +108,30 @@ export default function UnlockedCardsPage() {
                       </div>
                       <ExternalLink className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
                     </div>
-                    {card.current_location && (
-                      <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-1">
-                        <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span className="truncate">{card.current_location}</span>
-                      </p>
-                    )}
+                    <div className="flex items-center justify-between gap-2 mt-1">
+                      {card.current_location ? (
+                        <p className="text-sm text-muted-foreground flex items-center gap-1.5 min-w-0">
+                          <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
+                          <span className="truncate">{card.current_location}</span>
+                        </p>
+                      ) : (
+                        <span />
+                      )}
+                      <div className="flex gap-2 flex-wrap flex-shrink-0 justify-end">
+                        {card.open_to_work && (
+                          <span className="inline-flex items-center rounded-md bg-success/10 px-2 py-0.5 text-xs font-medium text-success ring-1 ring-inset ring-success/20">
+                            Open to work
+                          </span>
+                        )}
+                        {card.open_to_contact && (
+                          <span className="inline-flex items-center rounded-md bg-info/10 px-2 py-0.5 text-xs font-medium text-info ring-1 ring-inset ring-info/20">
+                            Open to contact
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardContent className="pt-0 space-y-2">
-                    <div className="flex gap-2 flex-wrap">
-                      {card.open_to_work && (
-                        <span className="inline-flex items-center rounded-md bg-success/10 px-2 py-0.5 text-xs font-medium text-success ring-1 ring-inset ring-success/20">
-                          Open to work
-                        </span>
-                      )}
-                      {card.open_to_contact && (
-                        <span className="inline-flex items-center rounded-md bg-info/10 px-2 py-0.5 text-xs font-medium text-info ring-1 ring-inset ring-info/20">
-                          Open to contact
-                        </span>
-                      )}
-                    </div>
                     {card.experience_summaries.length > 0 ? (
                       <ul className="space-y-1">
                         {card.experience_summaries.slice(0, 3).map((summary, i) => (

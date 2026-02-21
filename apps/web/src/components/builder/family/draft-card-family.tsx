@@ -1,10 +1,10 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { TiltCard } from "@/components/tilt-card";
-import { CardTypeIcon } from "@/components/builder/card-type-icon";
-import { V1CardDetails, v1CardTopics } from "@/components/builder/v1-card-details";
-import { ParentCardEditForm } from "@/components/builder/parent-card-edit-form";
-import { ChildCardEditForm } from "@/components/builder/child-card-edit-form";
+import { CardTypeIcon } from "../card/card-type-icon";
+import { V1CardDetails, v1CardTopics } from "../card/v1-card-details";
+import { ParentCardEditForm } from "../forms/parent-card-edit-form";
+import { ChildCardEditForm } from "../forms/child-card-edit-form";
 import { PenLine, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CardFamilyV1Response, ExperienceCardV1 } from "@/types";
@@ -27,6 +27,7 @@ interface DraftCardFamilyProps {
   onUpdateParentFromMessyText?: (text: string) => Promise<void>;
   onUpdateChildFromMessyText?: (text: string) => Promise<void>;
   isUpdatingFromMessyText?: boolean;
+  translateRawText?: (text: string) => Promise<string>;
   isCardSubmitting: boolean;
   isCardDeleting: boolean;
   isChildSubmitting: boolean;
@@ -50,6 +51,7 @@ export function DraftCardFamily({
   onUpdateParentFromMessyText,
   onUpdateChildFromMessyText,
   isUpdatingFromMessyText = false,
+  translateRawText,
   isCardSubmitting,
   isCardDeleting,
   isChildSubmitting,
@@ -73,7 +75,6 @@ export function DraftCardFamily({
       style={{ transformStyle: "preserve-3d", perspective: 800 }}
       className="relative max-w-full min-w-0"
     >
-      {/* ── Parent card ── */}
       <TiltCard
         disabled
         maxTilt={6}
@@ -95,9 +96,7 @@ export function DraftCardFamily({
                 <CardTypeIcon tags={tags} title={(parent as { title?: string })?.title ?? parent?.headline ?? null} />
               </span>
               <span className="font-semibold text-sm truncate text-foreground">
-                {isEditingParent
-                  ? "Editing experience"
-                  : (parent as { title?: string })?.title || parent?.headline || "Untitled"}
+                {(parent as { title?: string })?.title || parent?.headline || "Untitled"}
               </span>
               {children.length > 0 && (
                 <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
@@ -150,6 +149,7 @@ export function DraftCardFamily({
               showDeleteButton={false}
               onUpdateFromMessyText={onUpdateParentFromMessyText}
               isUpdatingFromMessyText={isUpdatingFromMessyText}
+              translateRawText={translateRawText}
             />
           ) : (
             <>
@@ -171,15 +171,12 @@ export function DraftCardFamily({
         </div>
       </TiltCard>
 
-      {/* ── Thread children ── */}
       {children.length > 0 && (
         <div className="relative pl-7 pt-0 mt-0">
-          {/* Vertical thread line */}
           <span
             className="thread-line thread-line-animated top-0 bottom-3"
             aria-hidden
           />
-
           <ul className="relative space-y-0">
             {children.map((child, childIdx) => {
               const childId = child?.id ?? "";
@@ -195,7 +192,6 @@ export function DraftCardFamily({
                   transition={{ delay: childIdx * 0.06, duration: 0.2 }}
                   className="relative py-2 first:pt-3"
                 >
-                  {/* Thread node */}
                   <span
                     className={cn(
                       "thread-node thread-node-sm thread-node-animated",
@@ -205,29 +201,25 @@ export function DraftCardFamily({
                     style={{ animationDelay: `${childIdx * 60 + 100}ms` }}
                     aria-hidden
                   />
-
-                  {/* Child block */}
                   <div className="ml-5 rounded-lg border border-border/40 bg-accent/30 px-3 py-2.5 transition-colors hover:bg-accent/50">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        {childRelationType && (
-                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
-                            {relationDisplay(childRelationType)}
+                    {!isEditingThisChild && (
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          {childRelationType && (
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
+                              {relationDisplay(childRelationType)}
+                            </p>
+                          )}
+                          <p className="font-medium text-sm text-foreground">
+                            {childTitle}
                           </p>
-                        )}
-                        <p className="font-medium text-sm text-foreground">
-                          {isEditingThisChild ? "Editing detail" : childTitle}
-                        </p>
-                      </div>
-                      {isEditingThisChild ? (
-                        <span className="flex-shrink-0" />
-                      ) : (
+                        </div>
                         <div className="flex gap-0.5 flex-shrink-0">
                           <Button
                             size="sm"
                             variant="ghost"
                             className="text-muted-foreground hover:text-foreground h-7 w-7 p-0"
-                            onClick={() => onStartEditingChild(child as any)}
+                            onClick={() => onStartEditingChild(child as ExperienceCardV1)}
                           >
                             <PenLine className="h-3.5 w-3.5" />
                           </Button>
@@ -241,8 +233,8 @@ export function DraftCardFamily({
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                     {isEditingThisChild ? (
                       <ChildCardEditForm
                         form={childEditForm}
@@ -255,7 +247,7 @@ export function DraftCardFamily({
                         isUpdatingFromMessyText={isUpdatingFromMessyText}
                       />
                     ) : (
-                      <V1CardDetails card={child as any} compact />
+                      <V1CardDetails card={child} compact />
                     )}
                   </div>
                 </motion.li>

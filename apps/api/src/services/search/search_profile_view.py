@@ -20,7 +20,7 @@ from src.schemas import (
     PastCompanyItem,
 )
 from src.serializers import experience_card_to_response
-from src.services.search_logic import _validate_search_session, _card_families_from_parents_and_children
+from .search_logic import _validate_search_session, _card_families_from_parents_and_children
 
 
 async def get_person_profile(

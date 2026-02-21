@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
+import { Camera, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +15,7 @@ import { FormField } from "@/components/ui/form-field";
 import { BackLink } from "@/components/back-link";
 import { PageLoading, PageError, ErrorMessage } from "@/components/feedback";
 import { VisibilitySection, type VisibilityMode } from "@/components/onboarding/visibility-section";
-import { api, type ApiOptions } from "@/lib/api";
+import { api, apiUpload, type ApiOptions } from "@/lib/api";
 import { bioSchema, bioFormDefaultValues, type BioForm } from "@/lib/bio-schema";
 import type { PatchVisibilityRequest, VisibilitySettingsResponse } from "@/types";
 import { useBio, useVisibility, BIO_QUERY_KEY, VISIBILITY_QUERY_KEY } from "@/hooks";
@@ -64,10 +65,15 @@ export default function OnboardingBioPage() {
     }
   }, [visibility]);
 
-  const { register, control, handleSubmit, formState: { errors }, setValue } = useForm<BioForm>({
+  const { register, control, handleSubmit, formState: { errors }, setValue, watch } = useForm<BioForm>({
     resolver: zodResolver(bioSchema),
     defaultValues: bioFormDefaultValues,
   });
+
+  const profilePhotoUrl = watch("profile_photo_url");
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { fields, append, remove } = useFieldArray({ control, name: "past_companies" });
 
@@ -138,6 +144,30 @@ export default function OnboardingBioPage() {
     };
   };
 
+  const handlePhotoClick = () => fileInputRef.current?.click();
+
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    const prevPreview = photoPreview;
+    setPhotoPreview(URL.createObjectURL(file));
+    if (prevPreview) URL.revokeObjectURL(prevPreview);
+    setPhotoUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const data = await apiUpload<{ profile_photo_url: string }>("/me/bio/photo", formData);
+      setValue("profile_photo_url", data.profile_photo_url);
+    } catch (err) {
+      setServerError(err instanceof Error ? err.message : "Failed to upload photo");
+      setPhotoPreview(null);
+    } finally {
+      setPhotoUploading(false);
+      e.target.value = "";
+    }
+  };
+
   const onSubmit = async (data: BioForm) => {
     setServerError(null);
     try {
@@ -205,6 +235,40 @@ export default function OnboardingBioPage() {
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
             {serverError && <ErrorMessage message={serverError} />}
 
+            {/* Optional profile photo: clickable circle at top */}
+            <div className="flex flex-col items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                aria-hidden
+                onChange={handlePhotoChange}
+              />
+              <button
+                type="button"
+                onClick={handlePhotoClick}
+                disabled={photoUploading}
+                className="relative w-24 h-24 rounded-full overflow-hidden bg-muted border-2 border-border hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-colors flex items-center justify-center"
+                aria-label="Select profile photo (optional)"
+              >
+                {(photoPreview || profilePhotoUrl) ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={photoPreview ?? profilePhotoUrl ?? ""}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <User className="h-10 w-10 text-muted-foreground" />
+                )}
+                <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
+                  <Camera className="h-8 w-8 text-white" />
+                </span>
+              </button>
+              <p className="text-xs text-muted-foreground">Profile photo (optional — click to select)</p>
+            </div>
+
             <section className="space-y-4">
               <h3 className="text-sm font-semibold text-foreground tracking-tight">Profile basics</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -237,12 +301,6 @@ export default function OnboardingBioPage() {
                 placeholder="San Francisco"
                 error={errors.current_city?.message}
                 {...register("current_city")}
-              />
-              <FormField
-                id="profile_photo_url"
-                label="Profile photo URL (optional)"
-                placeholder="https://..."
-                {...register("profile_photo_url")}
               />
             </section>
 
@@ -351,7 +409,7 @@ export default function OnboardingBioPage() {
                 {putBio.isPending || patchVisibility.isPending ? "Saving..." : "Save & continue to Experience Builder"}
               </Button>
               <p className="text-xs text-muted-foreground self-center leading-relaxed">
-                Next: you'll add your experience in the builder.
+                Next: add your experience in the builder, or go to Home from the menu.
               </p>
             </div>
           </form>

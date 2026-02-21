@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Check } from "lucide-react";
-import { MessyTextVoiceInput } from "@/components/builder/messy-text-voice-input";
+import { MessyTextVoiceInput } from "../voice/messy-text-voice-input";
 
 interface ChildCardEditFormProps {
   form: {
@@ -101,23 +101,25 @@ export function ChildCardEditForm({
             placeholder="e.g. 2021-2022, Python, AWS..."
             rows={2}
           />
-          <div className="flex justify-end">
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={handleUpdateFromMessy}
-              disabled={!messyText.trim() || isUpdatingFromMessyText}
-            >
-              {isUpdatingFromMessyText ? "Updating..." : "Update"}
-            </Button>
-          </div>
         </div>
       )}
 
       <div className="mt-3 space-y-3">
         <div className="space-y-1.5">
-          <Label className="text-xs font-medium">Title</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-xs font-medium">Title</Label>
+            {onUpdateFromMessyText && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={handleUpdateFromMessy}
+                disabled={!messyText.trim() || isUpdatingFromMessyText}
+              >
+                {isUpdatingFromMessyText ? "Updating..." : "Update"}
+              </Button>
+            )}
+          </div>
           <Input
             value={form.title}
             onChange={(e) => onChange({ title: e.target.value })}

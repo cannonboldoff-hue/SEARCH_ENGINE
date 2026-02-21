@@ -18,14 +18,14 @@ from src.schemas import (
     UnlockedCardsResponse,
     SavedSearchesResponse,
 )
-from src.services.search_logic import run_search, load_search_more, list_searches
-from src.services.search_profile_view import (
+from .search_logic import run_search, load_search_more, list_searches
+from .search_profile_view import (
     get_person_profile,
     list_people_for_discover,
     list_unlocked_cards_for_searcher,
     get_public_profile_impl,
 )
-from src.services.search_contact_unlock import unlock_contact
+from .search_contact_unlock import unlock_contact
 
 
 class SearchService:

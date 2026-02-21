@@ -1,0 +1,41 @@
+# Secrets
+.env
+.env.*
+
+# VCS
+.git
+.gitignore
+
+# Python caches / artifacts
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor/OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Non-runtime project files (Dockerfile copies only what it needs)
+docs/
+scripts/
+README.md
+run_migrations.sh
+.env.example

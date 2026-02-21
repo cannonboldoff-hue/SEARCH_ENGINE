@@ -11,6 +11,8 @@ export function getPostAuthPath(step: OnboardingStep | null): string {
 
 export function isPathAllowedForStep(pathname: string, step: OnboardingStep | null): boolean {
   if (step == null) return true;
+  if (step === "bio") return pathname === "/onboarding/bio";
+  if (step === "builder") return true;
   return pathname === getPostAuthPath(step);
 }
 

@@ -107,7 +107,7 @@ export function SearchForm({
               </Button>
               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Coins className="h-3.5 w-3.5" />
-                1 credit per search
+                1 credit per card shown (e.g. "give me 2 cards" → 2 credits)
                 <span className="text-foreground font-medium tabular-nums">
                   ({credits?.balance ?? "--"} remaining)
                 </span>

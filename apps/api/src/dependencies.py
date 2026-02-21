@@ -7,7 +7,7 @@ from sqlalchemy import select
 from src.db.session import async_session
 from src.db.models import Person, ExperienceCard, ExperienceCardChild
 from src.core import decode_access_token, get_settings
-from src.services.experience_card import experience_card_service
+from src.services.experience import experience_card_service
 
 security = HTTPBearer(auto_error=False)
 
@@ -54,6 +54,27 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Email not verified",
         )
+    return user
+
+
+async def get_current_user_optional(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Person | None:
+    """Like get_current_user but returns None when not authenticated (no 401)."""
+    if not credentials:
+        return None
+    token = credentials.credentials
+    user_id = decode_access_token(token)
+    if not user_id:
+        return None
+    result = await db.execute(select(Person).where(Person.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        return None
+    settings = get_settings()
+    if settings.email_verification_required and not user.email_verified_at:
+        return None
     return user
 
 

@@ -1,4 +1,4 @@
-﻿# CONXA â€” Backend (API)
+# CONXA â€” Backend (API)
 
 Step-by-step documentation of the FastAPI backend: every module and function, in order of use.
 
@@ -207,9 +207,10 @@ Prompts for the Experience Card pipeline (messy text â†’ rewrite â†’ c
 | Prompt | Purpose |
 |--------|---------|
 | **`PROMPT_REWRITE`** | Rewrite messy user message into clear English. Placeholder: `{{USER_TEXT}}`. |
-| **`PROMPT_CLEANUP`** | Light cleanup for extraction. Placeholder: `{{USER_TEXT}}`. |
-| **`PROMPT_EXTRACT_ALL_CARDS`** | Extract all parent + child cards in one pass. Placeholders: `{{USER_TEXT}}`, `{{PERSON_ID}}`. |
-| **`PROMPT_VALIDATE_ALL_CARDS`** | Validate and correct parent + children. Placeholder: `{{PARENT_AND_CHILDREN_JSON}}`. |
+| **`PROMPT_DETECT_EXPERIENCES`** | From cleaned text, return count + labels of distinct experiences. Placeholder: `{{CLEANED_TEXT}}`. |
+| **`PROMPT_EXTRACT_SINGLE_CARDS`** | Extract one experience by index (parent + children). Placeholders: `{{USER_TEXT}}`, `{{EXPERIENCE_INDEX}}`, `{{EXPERIENCE_COUNT}}`. |
+| **`PROMPT_FILL_MISSING_FIELDS`** | Fill only missing fields from text. Used by edit-form "Update from text". |
+| **`PROMPT_CLARIFY_*`** | Post-extraction: planner, question writer, apply answer. |
 
 Use `fill_prompt(template, user_text=..., person_id=..., parent_and_children_json=...)` to substitute placeholders. Pipeline implemented in `services/experience_card_pipeline.py`.
 
@@ -305,7 +306,8 @@ Prefix `/me` (mounted with profile). Requires `get_current_user`.
 All require `get_current_user` and `get_db`. Tags: builder.
 
 - **POST /experiences/raw** â€” Body: RawExperienceCreate. Creates raw experience; returns RawExperienceResponse.
-- **POST /experience-cards/draft-v1** â€” Body: RawExperienceCreate. Runs Experience Card v1 pipeline (atomize â†’ parent extract â†’ child gen â†’ validate); on ChatServiceError â†’ 503. Returns DraftSetV1Response (draft_set_id, raw_experience_id, card_families: list of { parent, children }).
+- **POST /experience-cards/detect-experiences** â€" Body: RawExperienceCreate. Returns count + list of distinct experiences (index, label, suggested).
+- **POST /experience-cards/draft-v1-single** â€” Body: DraftSingleRequest (raw_text, experience_index, experience_count). Single-experience pipeline (rewrite, extract one, validate, persist, embed); on ChatServiceError â†’â†’â†’â†’ 503. Returns DraftSetV1Response (draft_set_id, raw_experience_id, card_families: list of { parent, children }).
 - **POST /experience-cards** â€” Body: ExperienceCardCreate. Creates card; returns ExperienceCardResponse (via serializer).
 - **PATCH /experience-cards/{card_id}** â€” Body: ExperienceCardPatch. Load card for user; 404 if not found; apply_card_patch(card, body); return serialized card.
 - **POST /experience-cards/{card_id}/approve** â€” Load card; 404 if not found; approve (compute embedding); on EmbeddingServiceError â†’ 503; return serialized card.
@@ -337,6 +339,6 @@ Require `get_current_user` and `get_db`.
 3. **Search** â†’ validate body â†’ (optional) idempotency â†’ credits check â†’ chat parse query â†’ embed query â†’ pgvector similarity â†’ filters (open_to_work, company/team, locations, salary) â†’ create Search + SearchResult â†’ deduct credit â†’ return people.
 4. **View profile** â†’ validate search_id + searcher + not expired â†’ ensure person in results â†’ load person, visibility, approved cards; if unlock already done, include contact.
 5. **Unlock contact** â†’ same search validation â†’ open_to_contact check â†’ if already unlocked return cached; else deduct credit, create UnlockContact, return contact details.
-6. **Builder: draft cards** â†’ POST /experience-cards/draft-v1 runs v1 pipeline (atomize â†’ parent â†’ children â†’ validate); cards persisted as DRAFT. **Approve card** â†’ set APPROVED â†’ embed card text â†’ save embedding on card.
+6. **Builder: draft cards** â†’ POST /experience-cards/detect-experiences then POST /experience-cards/draft-v1-single (one experience at a time) (atomize â†’ parent â†’ children â†’ validate); cards persisted as DRAFT. **Approve card** â†’ set APPROVED â†’ embed card text â†’ save embedding on card.
 
 This README documents each backend step and function as implemented in the codebase.

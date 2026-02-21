@@ -329,7 +329,7 @@ apps/web/
 1. **Auth:** Token in `localStorage` + AuthContext. Login sets token and redirects to `/home`. Signup does not create a session immediately; it marks pending onboarding and routes to `/verify-email`, then login starts the session.
 2. **Search:** Home page → SearchForm POST `/search` (idempotent) → SearchResponse → SearchResults + PersonResultCard links to `/people/[id]?search_id=...`.
 3. **Profile:** GET `/me/bio` and `/me/experience-cards`; profile page shows them; builder and onboarding/bio mutate and invalidate these.
-4. **Builder:** POST `/experience-cards/draft-v1` → card families (parent + children); approve all via POST `/experience-cards/:id/approve`; hide via POST on card id.
+4. **Builder:** POST `/experience-cards/detect-experiences` then POST `/experience-cards/draft-v1-single` → one card family (parent + children); approve via POST `/experience-cards/:id/approve`; hide via POST on card id.
 5. **Person profile:** GET `/people/:id?search_id=...`; unlock contact via POST with idempotency key; balance from `/me/credits`.
 
 All API calls use **lib/api.ts** with Bearer token and **API_BASE** from **lib/utils.ts**.

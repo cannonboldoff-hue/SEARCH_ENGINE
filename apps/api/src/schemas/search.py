@@ -48,6 +48,20 @@ class ParsedConstraintsExclude(BaseModel):
     keywords: list[str] = []
 
 
+def _int_or_none(v: Any, min_val: int | None = None, max_val: int | None = None) -> Optional[int]:
+    if v is None:
+        return None
+    try:
+        n = int(v)
+        if min_val is not None and n < min_val:
+            return min_val
+        if max_val is not None and n > max_val:
+            return max_val
+        return n
+    except (TypeError, ValueError):
+        return None
+
+
 class ParsedConstraintsPayload(BaseModel):
     """Single extraction output stored in Search.parsed_constraints_json. Executed against experience_cards + person_profiles."""
     query_original: str = ""
@@ -58,6 +72,7 @@ class ParsedConstraintsPayload(BaseModel):
     search_phrases: list[str] = []
     query_embedding_text: str = ""
     confidence_score: float = 0.0
+    num_cards: Optional[int] = None  # number of result cards to return (1-24); null = use default 6
 
     @classmethod
     def from_llm_dict(cls, data: dict[str, Any]) -> "ParsedConstraintsPayload":
@@ -97,6 +112,7 @@ class ParsedConstraintsPayload(BaseModel):
             search_phrases=_list(data, "search_phrases"),
             query_embedding_text=data.get("query_embedding_text") or "",
             confidence_score=float(data.get("confidence_score") or 0.0),
+            num_cards=_int_or_none(data.get("num_cards"), min_val=1, max_val=24),
         )
 
 
@@ -120,11 +136,18 @@ class SearchRequest(BaseModel):
     preferred_locations: Optional[list[str]] = None  # preferred_locations_any when open_to_work_only
     salary_min: Optional[Decimal] = None  # recruiter min (INR/year), for display only
     salary_max: Optional[Decimal] = None  # recruiter offer budget INR/year; candidates matched where work_preferred_salary_min <= salary_max (NULL = keep but downrank)
+    num_cards: Optional[int] = None  # result count (1-24); if set, overrides query parsing; else derived from query or default 6
 
     @model_validator(mode="after")
     def _validate_salary_bounds(self) -> "SearchRequest":
         if self.salary_min is not None and self.salary_max is not None and self.salary_min > self.salary_max:
             raise ValueError("salary_min must be <= salary_max")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_num_cards(self) -> "SearchRequest":
+        if self.num_cards is not None and (self.num_cards < 1 or self.num_cards > 24):
+            raise ValueError("num_cards must be between 1 and 24")
         return self
 
 class PersonSearchResult(BaseModel):
@@ -148,6 +171,7 @@ class PersonSearchResult(BaseModel):
 class SearchResponse(BaseModel):
     search_id: str
     people: list[PersonSearchResult]
+    num_cards: Optional[int] = None  # limit applied for this search (1-24); credits charged = num_cards when non-empty
 
 
 class PersonProfileResponse(BaseModel):

@@ -6,7 +6,7 @@ import { useSearch } from "@/contexts/search-context";
 import { SearchResults } from "@/components/search";
 import { ErrorMessage } from "@/components/feedback";
 import { Button } from "@/components/ui/button";
-import { useVoiceInput } from "@/components/builder/messy-text-voice-input";
+import { useVoiceInput } from "@/components/builder";
 
 const SUGGESTIONS = [
   "Software engineers in San Francisco",

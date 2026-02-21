@@ -1,5 +1,5 @@
 from .auth import auth_service
-from .experience_card import experience_card_service
+from .experience import experience_card_service
 from .profile import profile_service
 from .search import search_service
 

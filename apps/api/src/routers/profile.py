@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, UploadFile, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core import create_photo_token, decode_access_token
 from src.db.models import Person
-from src.dependencies import get_current_user, get_db
+from src.dependencies import get_current_user, get_current_user_optional, get_db
 from src.schemas import (
     PersonResponse,
     PatchProfileRequest,
@@ -19,7 +21,7 @@ from src.schemas import (
 from src.domain import PersonSchema, ExperienceCardV1Schema
 from src.serializers import experience_card_to_response, experience_card_to_v1_schema, experience_card_child_to_response
 from src.services.profile import profile_service
-from src.services.experience_card import experience_card_service
+from src.services.experience import experience_card_service
 
 router = APIRouter(prefix="/me", tags=["profile"])
 
@@ -81,6 +83,44 @@ async def put_bio(
     db: AsyncSession = Depends(get_db),
 ):
     return await profile_service.put_bio(db, current_user, body)
+
+
+@router.post("/bio/photo")
+async def upload_bio_photo(
+    request: Request,
+    file: UploadFile,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload profile photo; returns { profile_photo_url } with a signed token so <img> can load it."""
+    base = str(request.base_url).rstrip("/")
+    token = create_photo_token(str(current_user.id))
+    photo_url = f"{base}/me/bio/photo?t={token}"
+    await profile_service.upload_profile_photo(db, current_user, file, photo_url)
+    await db.commit()
+    return {"profile_photo_url": photo_url}
+
+
+@router.get("/bio/photo")
+async def get_bio_photo(
+    request: Request,
+    current_user: Person | None = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve profile photo from DB. Use ?t=TOKEN (from upload response) for <img>; otherwise requires auth."""
+    person_id: str | None = None
+    t = request.query_params.get("t")
+    if t:
+        person_id = decode_access_token(t)
+    if not person_id and current_user:
+        person_id = current_user.id
+    if not person_id:
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    photo = await profile_service.get_profile_photo_from_db(db, person_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail="No profile photo")
+    content, media_type = photo
+    return Response(content=content, media_type=media_type)
 
 
 @router.get("/credits", response_model=CreditsResponse)

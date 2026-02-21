@@ -1,11 +1,11 @@
 """Profile (visibility, bio, credits, contact) business logic."""
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from src.services.credits import add_credits as add_credits_to_wallet
 from src.db.models import Person, PersonProfile, CreditLedger
+from src.services.credits import add_credits as add_credits_to_wallet
 from src.serializers import person_to_person_schema
 from src.domain import PersonSchema
 from src.schemas import (
@@ -106,6 +106,51 @@ async def _patch_visibility(
         work_preferred_salary_min=profile.work_preferred_salary_min,
         open_to_contact=profile.open_to_contact,
     )
+
+
+async def upload_profile_photo(
+    db: AsyncSession,
+    person: Person,
+    file: UploadFile,
+    photo_url: str,
+) -> str:
+    """Save uploaded image to DB (profile_photo, profile_photo_media_type) and set profile_photo_url. Returns profile_photo_url."""
+    allowed = ("image/jpeg", "image/png", "image/gif", "image/webp")
+    media_type = (file.content_type or "").strip().lower()
+    if media_type and media_type not in allowed:
+        raise HTTPException(status_code=400, detail="Only JPEG, PNG, GIF, or WebP images are allowed")
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:  # 5MB
+        raise HTTPException(status_code=400, detail="Image must be under 5MB")
+    if not media_type:
+        media_type = "image/jpeg"
+    result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person.id))
+    profile = result.scalar_one_or_none()
+    if not profile:
+        profile = PersonProfile(person_id=person.id)
+        db.add(profile)
+        await db.flush()
+    profile.profile_photo = content
+    profile.profile_photo_media_type = media_type
+    profile.profile_photo_url = photo_url
+    return photo_url
+
+
+async def get_profile_photo_from_db(
+    db: AsyncSession,
+    person_id: str,
+) -> tuple[bytes, str] | None:
+    """Return (image_bytes, media_type) for the profile photo if stored in DB, else None."""
+    result = await db.execute(
+        select(PersonProfile.profile_photo, PersonProfile.profile_photo_media_type).where(
+            PersonProfile.person_id == person_id
+        )
+    )
+    row = result.one_or_none()
+    if not row or row[0] is None:
+        return None
+    media_type = (row[1] or "image/jpeg").strip() or "image/jpeg"
+    return (bytes(row[0]), media_type)
 
 
 async def get_bio_response(db: AsyncSession, person: Person) -> BioResponse:
@@ -327,6 +372,9 @@ class ProfileService:
         body: BioCreateUpdate,
     ) -> BioResponse:
         return await update_bio(db, person, body)
+
+    upload_profile_photo = staticmethod(upload_profile_photo)
+    get_profile_photo_from_db = staticmethod(get_profile_photo_from_db)
 
     @staticmethod
     async def get_credits(db: AsyncSession, person_id: str) -> CreditsResponse:

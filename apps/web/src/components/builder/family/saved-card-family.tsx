@@ -1,9 +1,9 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { TiltCard } from "@/components/tilt-card";
-import { ParentCardEditForm } from "@/components/builder/parent-card-edit-form";
-import { ChildCardEditForm } from "@/components/builder/child-card-edit-form";
-import { V1CardDetails } from "@/components/builder/v1-card-details";
+import { ParentCardEditForm } from "../forms/parent-card-edit-form";
+import { ChildCardEditForm } from "../forms/child-card-edit-form";
+import { V1CardDetails } from "../card/v1-card-details";
 import { PenLine, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ExperienceCard, ExperienceCardChild } from "@/types";
@@ -31,6 +31,7 @@ interface SavedCardFamilyProps {
   onUpdateParentFromMessyText?: (text: string) => Promise<void>;
   onUpdateChildFromMessyText?: (text: string) => Promise<void>;
   isUpdatingFromMessyText?: boolean;
+  translateRawText?: (text: string) => Promise<string>;
 }
 
 export function SavedCardFamily({
@@ -55,6 +56,7 @@ export function SavedCardFamily({
   onUpdateParentFromMessyText,
   onUpdateChildFromMessyText,
   isUpdatingFromMessyText = false,
+  translateRawText,
 }: SavedCardFamilyProps) {
   const parentId = String(
     (parent as { id?: string })?.id ?? (parent as Record<string, unknown>)?.card_id ?? ""
@@ -70,7 +72,6 @@ export function SavedCardFamily({
       style={{ transformStyle: "preserve-3d", perspective: 800 }}
       className={cn("relative max-w-full min-w-0", deletedId === parentId && "opacity-50")}
     >
-      {/* ── Parent card ── */}
       <TiltCard
         disabled
         maxTilt={6}
@@ -84,13 +85,8 @@ export function SavedCardFamily({
           <div className="flex items-start justify-between gap-2 w-full min-w-0">
             <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
               <span className="font-semibold text-sm truncate text-foreground">
-                {isEditingParent ? "Editing experience" : parent.title || parent.company_name || "Untitled"}
+                {parent.title || parent.company_name || "Untitled"}
               </span>
-              {children.length > 0 && (
-                <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
-                  {children.length} thread{children.length !== 1 ? "s" : ""}
-                </span>
-              )}
             </span>
             {isEditingParent ? (
               <span className="flex-shrink-0" />
@@ -126,33 +122,37 @@ export function SavedCardFamily({
               </div>
             )}
           </div>
-            {isEditingParent ? (
-              <ParentCardEditForm
-                form={editForm}
-                onChange={onEditFormChange}
-                onSubmit={onSubmitEdit}
-                onCancel={onCancelEditing}
-                isSubmitting={isSubmitting}
-                checkboxIdPrefix={`edit-saved-${parentId}`}
-                showDeleteButton={false}
-                onUpdateFromMessyText={onUpdateParentFromMessyText}
-                isUpdatingFromMessyText={isUpdatingFromMessyText}
-              />
-            ) : (
-            <V1CardDetails card={parent as unknown as Record<string, unknown>} summaryFullWidth />
+          {!isEditingParent && (parent.start_date != null || parent.end_date != null || parent.is_current) && (
+            <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+              {[parent.start_date, parent.end_date ?? (parent.is_current ? "Ongoing" : null)].filter(Boolean).join(" – ")}
+            </p>
+          )}
+          {isEditingParent ? (
+            <ParentCardEditForm
+              form={editForm}
+              onChange={onEditFormChange}
+              onSubmit={onSubmitEdit}
+              onCancel={onCancelEditing}
+              isSubmitting={isSubmitting}
+              checkboxIdPrefix={`edit-saved-${parentId}`}
+              showDeleteButton={false}
+              onUpdateFromMessyText={onUpdateParentFromMessyText}
+              isUpdatingFromMessyText={isUpdatingFromMessyText}
+              clarifyCardId={parentId}
+              translateRawText={translateRawText}
+            />
+          ) : (
+            <V1CardDetails card={parent as unknown as Record<string, unknown>} summaryFullWidth hideInternalFields />
           )}
         </div>
       </TiltCard>
 
-      {/* ── Thread children ── */}
       {children.length > 0 && (
         <div className="relative pl-7 pt-0 mt-0">
-          {/* Vertical thread line */}
           <span
             className="thread-line top-0 bottom-3"
             aria-hidden
           />
-
           <ul className="relative space-y-0">
             {children.map((child, childIdx) => {
               const isEditingThisChild = editingSavedChildId === child.id;
@@ -170,7 +170,6 @@ export function SavedCardFamily({
                     deletedId === child.id && "opacity-50"
                   )}
                 >
-                  {/* Thread node */}
                   <span
                     className={cn(
                       "thread-node thread-node-sm",
@@ -179,23 +178,19 @@ export function SavedCardFamily({
                     )}
                     aria-hidden
                   />
-
-                  {/* Child block */}
                   <div className="ml-5 rounded-lg border border-border/40 bg-accent/30 px-3 py-2.5 transition-colors hover:bg-accent/50">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        {relationDisplay && (
-                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
-                            {relationDisplay}
+                    {!isEditingThisChild && (
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          {relationDisplay && (
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
+                              {relationDisplay}
+                            </p>
+                          )}
+                          <p className="font-medium text-sm text-foreground">
+                            {child.title || child.summary || "Detail"}
                           </p>
-                        )}
-                        <p className="font-medium text-sm text-foreground">
-                          {isEditingThisChild ? "Editing detail" : child.title || child.summary || "Detail"}
-                        </p>
-                      </div>
-                      {isEditingThisChild ? (
-                        <span className="flex-shrink-0" />
-                      ) : (
+                        </div>
                         <div className="flex gap-0.5 flex-shrink-0">
                           <Button
                             size="sm"
@@ -214,8 +209,8 @@ export function SavedCardFamily({
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                     {isEditingThisChild ? (
                       <ChildCardEditForm
                         form={childEditForm}

@@ -213,11 +213,24 @@ export type CardFamilyV1Response = {
   children: ExperienceCardV1[];
 };
 
-/** Result of POST /experience-cards/draft-v1. Matches backend DraftSetV1Response. */
+/** Result of POST /experience-cards/draft-v1-single. Matches backend DraftSetV1Response. */
 export type DraftSetV1Response = {
   draft_set_id: string;
   raw_experience_id: string;
   card_families: CardFamilyV1Response[];
+};
+
+/** One detected experience from POST /experience-cards/detect-experiences. */
+export type DetectedExperienceItem = {
+  index: number;
+  label: string;
+  suggested?: boolean;
+};
+
+/** Result of POST /experience-cards/detect-experiences. */
+export type DetectExperiencesResponse = {
+  count: number;
+  experiences: DetectedExperienceItem[];
 };
 
 /** Result of POST /experiences/rewrite. Matches backend RewriteTextResponse. */
