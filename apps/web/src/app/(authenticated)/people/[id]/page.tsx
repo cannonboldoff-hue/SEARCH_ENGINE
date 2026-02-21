@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -249,6 +250,14 @@ function CardFamilyBlock({
 }
 
 export default function PersonProfilePage() {
+  return (
+    <Suspense fallback={<PageLoading message="Loading profile..." />}>
+      <PersonProfilePageContent />
+    </Suspense>
+  );
+}
+
+function PersonProfilePageContent() {
   const params = useParams();
   const searchParams = useSearchParams();
   const personId = params.id as string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AuthLayout } from "@/components/auth";
-import { ErrorMessage } from "@/components/feedback";
+import { ErrorMessage, LoadingScreen } from "@/components/feedback";
 import { api } from "@/lib/api";
 
 const schema = z.object({
@@ -23,6 +23,14 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={<LoadingScreen message="Loading..." />}>
+      <VerifyEmailPageContent />
+    </Suspense>
+  );
+}
+
+function VerifyEmailPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);

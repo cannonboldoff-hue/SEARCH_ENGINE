@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
 import { getPostAuthPath, isPathAllowedForStep } from "@/lib/auth-flow";
@@ -55,7 +55,9 @@ function AuthenticatedLayoutBody({ children }: { children: ReactNode }) {
 
   return (
     <div className="overflow-x-hidden">
-      <AppNav />
+      <Suspense fallback={null}>
+        <AppNav />
+      </Suspense>
       <div style={{ paddingLeft: sidebarWidth }} className="min-w-0 overflow-x-hidden">
         <main className="container mx-auto px-4 py-6 min-h-[calc(100vh-3.5rem)] max-w-full overflow-x-hidden">
           {children}

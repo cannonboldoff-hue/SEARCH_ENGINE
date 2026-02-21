@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -14,6 +15,14 @@ import { PersonResultCard } from "@/components/search/person-result-card";
 const MAX_STORED_RESULTS = 24;
 
 export default function SearchesPage() {
+  return (
+    <Suspense fallback={<PageLoading message="Loading search history..." />}>
+      <SearchesPageContent />
+    </Suspense>
+  );
+}
+
+function SearchesPageContent() {
   const searchParams = useSearchParams();
   const selectedSearchId = searchParams.get("id");
 
