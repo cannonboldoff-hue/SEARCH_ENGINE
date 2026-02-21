@@ -6,6 +6,7 @@ import { useSearch } from "@/contexts/search-context";
 import { SearchResults } from "@/components/search";
 import { ErrorMessage } from "@/components/feedback";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { useVoiceInput } from "@/components/builder";
 
 const SUGGESTIONS = [
@@ -23,6 +24,8 @@ export default function HomePage() {
     searchId,
     people: searchPeople,
     error: searchError,
+    openToWorkOnly,
+    setOpenToWorkOnly,
     performSearch,
     performSearchWithQuery,
     isSearching,
@@ -132,6 +135,18 @@ export default function HomePage() {
             onSubmit={handleSubmit}
             className="relative flex items-end gap-2 rounded-2xl border border-border bg-muted/30 hover:bg-muted/50 focus-within:bg-muted/50 focus-within:ring-1 focus-within:ring-ring/30 transition-all shadow-sm"
           >
+            <div className="absolute left-4 bottom-3 flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="home_open_to_work"
+                checked={openToWorkOnly}
+                onChange={(e) => setOpenToWorkOnly(e.target.checked)}
+                className="rounded border-border accent-foreground h-3.5 w-3.5"
+              />
+              <Label htmlFor="home_open_to_work" className="text-xs text-muted-foreground cursor-pointer">
+                Open to work only
+              </Label>
+            </div>
             <textarea
               ref={inputRef}
               value={query}
@@ -139,7 +154,7 @@ export default function HomePage() {
               onKeyDown={handleKeyDown}
               placeholder="Describe who you're looking for..."
               rows={1}
-              className="flex-1 min-h-[52px] max-h-[200px] resize-none rounded-2xl bg-transparent px-5 py-3.5 pr-24 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none overflow-y-auto"
+              className="flex-1 min-h-[52px] max-h-[200px] resize-none rounded-2xl bg-transparent pl-36 pr-24 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none overflow-y-auto"
               style={{ maxHeight: 200 }}
             />
             <div className="absolute right-2 bottom-2 flex items-center gap-1">

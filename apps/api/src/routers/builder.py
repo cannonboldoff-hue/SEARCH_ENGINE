@@ -611,24 +611,10 @@ async def clarify_experience(
     current = body.current_card or {}
     if filled and body.card_id and body.card_type == "parent":
         merged = _merged_form(current, filled, _PARENT_MERGE_KEYS)
-        # #region agent log
-        import json as _json; _ts = int(__import__('datetime').datetime.now().timestamp()*1000)
-        try:
-            with open(r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log", "a") as _f:
-                _f.write(_json.dumps({"hypothesisId":"A-C-merge","location":"builder.py:clarify_merge","message":"merge filled into current","data":{"filled_start":filled.get("start_date"),"filled_end":filled.get("end_date"),"current_start":current.get("start_date"),"current_end":current.get("end_date"),"merged_start":merged.get("start_date"),"merged_end":merged.get("end_date")},"timestamp":_ts})+"\n")
-        except Exception: pass
-        # #endregion
         card = await experience_card_service.get_card(db, body.card_id, current_user.id)
         if card:
             patch = _parent_merged_to_patch(merged)
             apply_card_patch(card, patch)
-            # #region agent log
-            import json as _json; _ts2 = int(__import__('datetime').datetime.now().timestamp()*1000)
-            try:
-                with open(r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log", "a") as _f:
-                    _f.write(_json.dumps({"hypothesisId":"D-db-patch","location":"builder.py:after_patch","message":"card after patch","data":{"patch_start":str(patch.start_date),"patch_end":str(patch.end_date),"card_start":str(card.start_date),"card_end":str(card.end_date)},"timestamp":_ts2})+"\n")
-            except Exception: pass
-            # #endregion
             await db.flush()
             await _reembed_cards_after_update(db, parents=[card], context="clarify (parent)")
 

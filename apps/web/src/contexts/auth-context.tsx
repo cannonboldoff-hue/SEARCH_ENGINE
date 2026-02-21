@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import {
   AUTH_TOKEN_KEY,
+  getPostAuthPath,
   ONBOARDING_STEP_KEY,
   PENDING_ONBOARDING_STEP_KEY,
   readPendingOnboardingStep,
@@ -19,7 +20,7 @@ const AuthContext = createContext<{
   isAuthLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (payload: { email: string; password: string; displayName?: string }) => Promise<void>;
+  signup: (payload: { email: string; password: string; displayName?: string }) => Promise<{ emailVerificationRequired: boolean }>;
   logout: () => void;
   setOnboardingStep: (step: OnboardingStep | null) => void;
 } | null>(null);
@@ -118,7 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signup = useCallback(
     async (payload: { email: string; password: string; displayName?: string }) => {
-      await api<{ access_token?: string | null; email_verification_required: boolean }>("/auth/signup", {
+      const res = await api<{ access_token?: string | null; email_verification_required: boolean }>("/auth/signup", {
         method: "POST",
         body: {
           email: payload.email,
@@ -126,9 +127,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           display_name: payload.displayName ?? null,
         },
       });
+      if (res?.access_token) {
+        const pendingStep = readPendingOnboardingStep();
+        startSession(res.access_token, pendingStep ?? "bio");
+        setPendingOnboardingStep(null);
+        router.replace(getPostAuthPath(pendingStep ?? "bio"));
+        return { emailVerificationRequired: false };
+      }
       setPendingOnboardingStep("bio");
+      return { emailVerificationRequired: res?.email_verification_required ?? true };
     },
-    []
+    [router, startSession]
   );
 
   const logout = useCallback(() => {

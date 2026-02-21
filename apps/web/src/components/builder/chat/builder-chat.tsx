@@ -484,7 +484,9 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
 
     if (stage === "awaiting_choice") {
       const num = parseInt(text.replace(/\D/g, ""), 10);
-      const exp = detectedExperiences?.experiences?.find((e) => e.index === num);
+      const experiences = detectedExperiences?.experiences ?? [];
+      // User sees "1.", "2.", ... so match by 1-based position (avoids API 0-based index mismatch)
+      const exp = num >= 1 && num <= experiences.length ? experiences[num - 1] : undefined;
       if (!exp || !detectedExperiences) {
           addMessage({
             role: "assistant",

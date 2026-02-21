@@ -52,12 +52,14 @@ export default function SignupPage() {
   const onSubmitDetails = async (data: SignupFormData) => {
     setError(null);
     try {
-      await signup({
+      const result = await signup({
         email: data.email,
         password: data.password,
         displayName: data.display_name || undefined,
       });
-      router.replace(`/verify-email?email=${encodeURIComponent(data.email)}`);
+      if (result.emailVerificationRequired) {
+        router.replace(`/verify-email?email=${encodeURIComponent(data.email)}`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign up failed");
     }

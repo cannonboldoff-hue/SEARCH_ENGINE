@@ -451,9 +451,13 @@ async def _update_why_matched_async(
     people_evidence: list[dict[str, Any]],
     person_ids: list[str],
 ) -> None:
-    """Best-effort async refresh of why_matched in SearchResult.extra."""
+    """Best-effort async refresh of why_matched in SearchResult.extra.
+    Delays briefly so the request transaction can commit before we read SearchResult rows.
+    """
     if not people_evidence or not person_ids:
         return
+    # Let the request session commit before we query (task is started before response returns).
+    await asyncio.sleep(1.0)
     try:
         chat = get_chat_provider()
     except Exception as e:

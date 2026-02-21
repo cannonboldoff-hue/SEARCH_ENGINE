@@ -3,6 +3,7 @@
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from src.db.models import Person, PersonProfile, CreditLedger
 from src.services.credits import add_credits as add_credits_to_wallet
@@ -91,7 +92,17 @@ async def _patch_visibility(
     if not profile:
         profile = PersonProfile(person_id=person_id)
         db.add(profile)
-        await db.flush()
+        try:
+            await db.flush()
+        except IntegrityError:
+            # Concurrent request created the profile; re-load it.
+            await db.rollback()
+            result = await db.execute(
+                select(PersonProfile).where(PersonProfile.person_id == person_id)
+            )
+            profile = result.scalar_one_or_none()
+            if not profile:
+                raise
     if body.open_to_work is not None:
         profile.open_to_work = body.open_to_work
     if body.work_preferred_locations is not None:
