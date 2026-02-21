@@ -58,7 +58,7 @@ function AuthenticatedLayoutBody({ children }: { children: ReactNode }) {
       <Suspense fallback={null}>
         <AppNav />
       </Suspense>
-      <div style={{ paddingLeft: sidebarWidth }} className="min-w-0 overflow-x-hidden transition-[padding-left] duration-200 ease-in-out">
+      <div style={{ paddingLeft: sidebarWidth }} className="min-w-0 overflow-x-hidden">
         <main className="container mx-auto px-4 py-6 min-h-[calc(100vh-3.5rem)] max-w-full overflow-x-hidden">
           {children}
         </main>

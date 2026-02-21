@@ -6,32 +6,33 @@ import type { ReactNode } from "react";
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 520;
 
-export const SIDEBAR_WIDTH_EXPANDED = 260;
-export const SIDEBAR_WIDTH_COLLAPSED = 64;
+/** Width when sidebar is collapsed (icon-only) */
+export const COLLAPSED_SIDEBAR_WIDTH = 64;
+
+/** Width when sidebar is expanded */
+const EXPANDED_SIDEBAR_WIDTH = 260;
 
 interface SidebarWidthContextValue {
   sidebarWidth: number;
-  isCollapsed: boolean;
   setSidebarWidth: (value: number) => void;
-  setIsCollapsed: (collapsed: boolean) => void;
-  toggleSidebar: () => void;
+  collapsed: boolean;
+  setCollapsed: (value: boolean) => void;
+  toggleCollapsed: () => void;
 }
 
 const SidebarWidthContext = createContext<SidebarWidthContextValue | undefined>(undefined);
 
 export function SidebarWidthProvider({ children }: { children: ReactNode }) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const sidebarWidth = isCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
-
+  const [collapsed, setCollapsed] = useState(false);
+  const sidebarWidth = collapsed ? COLLAPSED_SIDEBAR_WIDTH : EXPANDED_SIDEBAR_WIDTH;
   const setSidebarWidth = useCallback((_value: number) => {
-    // Sidebar width is derived from isCollapsed; no-op to keep API stable
+    // Sidebar is fixed width; no-op to keep API stable
   }, []);
-
-  const toggleSidebar = useCallback(() => setIsCollapsed((c) => !c), []);
+  const toggleCollapsed = useCallback(() => setCollapsed((c) => !c), []);
 
   const contextValue = useMemo(
-    () => ({ sidebarWidth, isCollapsed, setSidebarWidth, setIsCollapsed, toggleSidebar }),
-    [sidebarWidth, isCollapsed, setSidebarWidth, setIsCollapsed, toggleSidebar]
+    () => ({ sidebarWidth, setSidebarWidth, collapsed, setCollapsed, toggleCollapsed }),
+    [sidebarWidth, setSidebarWidth, collapsed, setCollapsed, toggleCollapsed]
   );
 
   return <SidebarWidthContext.Provider value={contextValue}>{children}</SidebarWidthContext.Provider>;

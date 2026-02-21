@@ -29,7 +29,7 @@ export function AppNav() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const selectedSearchId = searchParams.get("id");
-  const { sidebarWidth, isCollapsed, toggleSidebar } = useSidebarWidth();
+  const { sidebarWidth, collapsed, toggleCollapsed } = useSidebarWidth();
 
   const { data: profile } = useProfileV1();
   const accountName = (profile?.display_name || profile?.username || "Account").trim();
@@ -54,35 +54,41 @@ export function AppNav() {
     <>
       {/* Left sidebar - permanent, GPT-style */}
       <aside
-        className="fixed inset-y-0 left-0 z-50 flex-shrink-0 bg-background border-r border-border overflow-x-hidden min-w-0 transition-[width] duration-200 ease-in-out"
+        className="fixed inset-y-0 left-0 z-50 flex-shrink-0 bg-background border-r border-border overflow-x-hidden min-w-0"
         style={{ width: sidebarWidth }}
         aria-label="Main navigation"
       >
         <div className="flex flex-col h-full min-w-0 overflow-hidden">
-          {/* Logo at top + collapse toggle */}
-          <div className={cn(
-            "flex-shrink-0 flex items-center border-b border-border min-h-[3.5rem]",
-            isCollapsed ? "justify-center px-2 py-4" : "justify-between gap-2 px-3 py-4"
-          )}>
-            {!isCollapsed && (
+          {/* Logo at top + collapse toggle (logo hidden when collapsed) */}
+          <div
+            className={cn(
+              "flex-shrink-0 flex border-b border-border",
+              collapsed ? "items-center justify-center py-2 min-h-[2.5rem]" : "flex-row items-center gap-1 px-2 py-4 min-h-[3.5rem]"
+            )}
+          >
+            {!collapsed && (
               <Link
                 href="/home"
-                className="flex items-center gap-2.5 text-foreground hover:opacity-90 transition-opacity min-w-0"
+                className="flex flex-1 items-center text-foreground hover:opacity-90 transition-opacity min-w-0"
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-semibold">
                   C
                 </span>
-                <span className="font-semibold text-sm truncate">CONXA</span>
+                <span className="font-semibold text-sm truncate ml-2.5">CONXA</span>
               </Link>
             )}
             <button
               type="button"
-              onClick={toggleSidebar}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-              aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              onClick={toggleCollapsed}
+              className="p-2 rounded-lg text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors shrink-0"
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
-              {isCollapsed ? <PanelLeft className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+              {collapsed ? (
+                <PanelLeft className="h-5 w-5" />
+              ) : (
+                <PanelLeftClose className="h-5 w-5" />
+              )}
             </button>
           </div>
 
@@ -101,20 +107,21 @@ export function AppNav() {
                   href={href}
                   className={cn(
                     "flex items-center rounded-lg text-sm font-medium transition-colors",
-                    isCollapsed ? "justify-center gap-0 px-2 py-2.5" : "gap-3 px-3 py-2.5",
+                    collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
                     isActive
                       ? "bg-accent text-foreground"
                       : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
-                  title={isCollapsed ? label : undefined}
+                  title={collapsed ? label : undefined}
                 >
                   <Icon className="h-5 w-5 shrink-0" />
-                  {!isCollapsed && label}
+                  {!collapsed && <span>{label}</span>}
                 </Link>
               );
             })}
 
-            {!isCollapsed && (
+            {/* Your searches - section header (hidden when collapsed) */}
+            {!collapsed && (
               <div className="pt-4 pb-1">
                 <p className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Your searches
@@ -123,60 +130,60 @@ export function AppNav() {
             )}
           </nav>
 
-          {/* Your searches list - only this section scrolls; hidden when collapsed */}
-          {!isCollapsed && (
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-theme px-2 pb-2">
-              {searches.length === 0 ? (
-                <p className="px-3 py-2 text-xs text-muted-foreground/80">
-                  No searches yet
-                </p>
-              ) : (
-                <ul className="space-y-0.5">
-                  {searches.map((search) => {
-                    const isSearchActive =
-                      pathname.startsWith("/searches") && selectedSearchId === search.id;
-                    const content = (
-                      <>
-                        <span className="truncate font-medium block">
-                          {truncateQuery(search.query_text)}
+          {/* Your searches list - only this section scrolls (hidden when collapsed) */}
+          {!collapsed && (
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-theme px-2 pb-2">
+            {searches.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground/80">
+                No searches yet
+              </p>
+            ) : (
+              <ul className="space-y-0.5">
+                {searches.map((search) => {
+                  const isSearchActive =
+                    pathname.startsWith("/searches") && selectedSearchId === search.id;
+                  const content = (
+                    <>
+                      <span className="truncate font-medium block">
+                        {truncateQuery(search.query_text)}
+                      </span>
+                      <span className="text-xs opacity-80">
+                        {search.expired
+                          ? `Expired · ${formatSearchDate(search.created_at)}`
+                          : `${search.result_count} results · ${formatSearchDate(search.created_at)}`}
+                      </span>
+                    </>
+                  );
+                  return (
+                    <li key={search.id} className="min-w-0">
+                      {search.expired ? (
+                        <span
+                          className={cn(
+                            "flex flex-col gap-0.5 px-3 py-2 rounded-lg text-sm block min-w-0",
+                            "text-muted-foreground/60 opacity-70 cursor-not-allowed"
+                          )}
+                        >
+                          {content}
                         </span>
-                        <span className="text-xs opacity-80">
-                          {search.expired
-                            ? `Expired · ${formatSearchDate(search.created_at)}`
-                            : `${search.result_count} results · ${formatSearchDate(search.created_at)}`}
-                        </span>
-                      </>
-                    );
-                    return (
-                      <li key={search.id} className="min-w-0">
-                        {search.expired ? (
-                          <span
-                            className={cn(
-                              "flex flex-col gap-0.5 px-3 py-2 rounded-lg text-sm block min-w-0",
-                              "text-muted-foreground/60 opacity-70 cursor-not-allowed"
-                            )}
-                          >
-                            {content}
-                          </span>
-                        ) : (
-                          <Link
-                            href={`/searches?id=${encodeURIComponent(search.id)}`}
-                            className={cn(
-                              "flex flex-col gap-0.5 px-3 py-2 rounded-lg text-sm transition-colors block min-w-0",
-                              isSearchActive
-                                ? "bg-accent text-foreground font-medium"
-                                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                            )}
-                          >
-                            {content}
-                          </Link>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+                      ) : (
+                        <Link
+                          href={`/searches?id=${encodeURIComponent(search.id)}`}
+                          className={cn(
+                            "flex flex-col gap-0.5 px-3 py-2 rounded-lg text-sm transition-colors block min-w-0",
+                            isSearchActive
+                              ? "bg-accent text-foreground font-medium"
+                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                          )}
+                        >
+                          {content}
+                        </Link>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
           )}
 
           {/* Account + Settings at bottom */}
@@ -185,12 +192,12 @@ export function AppNav() {
               href="/profile"
               className={cn(
                 "flex items-center rounded-lg text-sm font-medium transition-colors min-w-0",
-                isCollapsed ? "justify-center px-2 py-2.5" : "gap-3 px-3 py-2.5",
+                collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
                 pathname === "/profile" || pathname.startsWith("/profile")
                   ? "bg-accent text-foreground"
                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
               )}
-              title={isCollapsed ? accountName : undefined}
+              title={accountName}
               aria-label="Account"
             >
               {profile?.photo_url ? (
@@ -205,22 +212,22 @@ export function AppNav() {
                   {accountInitial}
                 </span>
               )}
-              {!isCollapsed && <span className="truncate">{accountName}</span>}
+              {!collapsed && <span className="truncate">{accountName}</span>}
             </Link>
 
             <Link
               href="/settings"
               className={cn(
                 "flex items-center rounded-lg text-sm font-medium transition-colors",
-                isCollapsed ? "justify-center px-2 py-2.5" : "gap-3 px-3 py-2.5",
+                collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
                 pathname === "/settings" || pathname.startsWith("/settings")
                   ? "bg-accent text-foreground"
                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
               )}
-              title={isCollapsed ? "Settings" : undefined}
+              title={collapsed ? "Settings" : undefined}
             >
               <Settings className="h-5 w-5 shrink-0" />
-              {!isCollapsed && "Settings"}
+              {!collapsed && <span>Settings</span>}
             </Link>
           </div>
         </div>
@@ -228,7 +235,7 @@ export function AppNav() {
 
       {/* Top bar - CONXA centered in the main content area (right of sidebar) */}
       <header
-        className="sticky top-0 z-40 flex h-14 items-center border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 transition-[margin-left] duration-200 ease-in-out"
+        className="sticky top-0 z-40 flex h-14 items-center border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
         style={{ marginLeft: sidebarWidth }}
       >
         <div className="grid h-full w-full grid-cols-3 items-center px-4">
