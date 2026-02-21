@@ -82,21 +82,19 @@ export function SearchForm({
                 placeholder="Describe who you're looking for..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="flex h-10 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-foreground/30 transition-colors"
+                className="flex h-11 min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 focus-visible:border-foreground/30 transition-colors"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 min-h-[44px] cursor-pointer text-muted-foreground touch-manipulation">
               <input
                 type="checkbox"
                 id="open_to_work"
                 checked={openToWorkOnly}
                 onChange={(e) => setOpenToWorkOnly(e.target.checked)}
-                className="rounded border-border accent-foreground h-3.5 w-3.5"
+                className="rounded border-border accent-foreground h-4 w-4 shrink-0"
               />
-              <Label htmlFor="open_to_work" className="text-sm cursor-pointer text-muted-foreground">
-                Open to work only
-              </Label>
-            </div>
+              <span className="text-sm">Open to work only</span>
+            </label>
             {error && <ErrorMessage message={error} />}
             <div className="flex flex-wrap items-center gap-3">
               <Button

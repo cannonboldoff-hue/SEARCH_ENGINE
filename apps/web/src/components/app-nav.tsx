@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { LockOpen, Settings, Compass, LayoutGrid, Hammer, Globe, PanelLeftClose, PanelLeft } from "lucide-react";
-import { useSidebarWidth } from "@/contexts/sidebar-width-context";
+import { LockOpen, Settings, Compass, LayoutGrid, Hammer, Globe, PanelLeftClose, PanelLeft, Menu } from "lucide-react";
+import { useSidebarWidth, MOBILE_DRAWER_WIDTH } from "@/contexts/sidebar-width-context";
 import { useProfileV1 } from "@/hooks/use-profile-v1";
 import { cn } from "@/lib/utils";
 import { CreditsBadge } from "@/components/credits-badge";
@@ -29,7 +29,15 @@ export function AppNav() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const selectedSearchId = searchParams.get("id");
-  const { sidebarWidth, collapsed, toggleCollapsed } = useSidebarWidth();
+  const {
+    sidebarWidth,
+    collapsed,
+    toggleCollapsed,
+    isMobile,
+    mobileSidebarOpen,
+    closeMobileSidebar,
+    toggleMobileSidebar,
+  } = useSidebarWidth();
 
   const { data: profile } = useProfileV1();
   const accountName = (profile?.display_name || profile?.username || "Account").trim();
@@ -50,26 +58,54 @@ export function AppNav() {
 
   const searches = data?.searches ?? [];
 
+  const navLinkClass = (isActive: boolean) =>
+    cn(
+      "flex items-center rounded-lg text-sm font-medium transition-colors min-h-[44px] min-w-[44px]",
+      collapsed && !isMobile ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
+      isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+    );
+
+  const handleNavClick = () => {
+    if (isMobile) closeMobileSidebar();
+  };
+
   return (
     <>
-      {/* Left sidebar - permanent, GPT-style */}
+      {/* Mobile backdrop - close drawer when tapping outside */}
+      {isMobile && mobileSidebarOpen && (
+        <button
+          type="button"
+          aria-label="Close menu"
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] md:hidden"
+          onClick={closeMobileSidebar}
+        />
+      )}
+
+      {/* Left sidebar - overlay on mobile, permanent on desktop */}
       <aside
-        className="fixed inset-y-0 left-0 z-50 flex-shrink-0 bg-background border-r border-border overflow-x-hidden min-w-0"
-        style={{ width: sidebarWidth }}
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex-shrink-0 bg-background border-r border-border overflow-x-hidden min-w-0 transition-[transform] duration-200 ease-out",
+          isMobile && "shadow-xl md:shadow-none",
+          isMobile && !mobileSidebarOpen && "-translate-x-full"
+        )}
+        style={{
+          width: isMobile ? MOBILE_DRAWER_WIDTH : sidebarWidth,
+        }}
         aria-label="Main navigation"
       >
         <div className="flex flex-col h-full min-w-0 overflow-hidden">
-          {/* Logo at top + collapse toggle (logo hidden when collapsed) */}
+          {/* Logo at top + collapse toggle (desktop) / menu close (mobile) */}
           <div
             className={cn(
               "flex-shrink-0 flex border-b border-border",
-              collapsed ? "items-center justify-center py-2 min-h-[2.5rem]" : "flex-row items-center gap-1 px-2 py-4 min-h-[3.5rem]"
+              collapsed && !isMobile ? "items-center justify-center py-2 min-h-[2.5rem]" : "flex-row items-center gap-1 px-2 py-4 min-h-[3.5rem]"
             )}
           >
-            {!collapsed && (
+            {(!collapsed || isMobile) && (
               <Link
                 href="/home"
-                className="flex flex-1 items-center text-foreground hover:opacity-90 transition-opacity min-w-0"
+                onClick={handleNavClick}
+                className="flex flex-1 items-center text-foreground hover:opacity-90 transition-opacity min-w-0 min-h-[44px]"
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-semibold">
                   C
@@ -77,19 +113,30 @@ export function AppNav() {
                 <span className="font-semibold text-sm truncate ml-2.5">CONXA</span>
               </Link>
             )}
-            <button
-              type="button"
-              onClick={toggleCollapsed}
-              className="p-2 rounded-lg text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors shrink-0"
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              {collapsed ? (
-                <PanelLeft className="h-5 w-5" />
-              ) : (
+            {isMobile ? (
+              <button
+                type="button"
+                onClick={closeMobileSidebar}
+                className="p-2.5 rounded-lg text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Close menu"
+              >
                 <PanelLeftClose className="h-5 w-5" />
-              )}
-            </button>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={toggleCollapsed}
+                className="p-2 rounded-lg text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              >
+                {collapsed ? (
+                  <PanelLeft className="h-5 w-5" />
+                ) : (
+                  <PanelLeftClose className="h-5 w-5" />
+                )}
+              </button>
+            )}
           </div>
 
           {/* Nav links - fixed, not scrollable */}
@@ -105,23 +152,18 @@ export function AppNav() {
                 <Link
                   key={href}
                   href={href}
-                  className={cn(
-                    "flex items-center rounded-lg text-sm font-medium transition-colors",
-                    collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
-                    isActive
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                  )}
-                  title={collapsed ? label : undefined}
+                  onClick={handleNavClick}
+                  className={navLinkClass(isActive)}
+                  title={collapsed && !isMobile ? label : undefined}
                 >
                   <Icon className="h-5 w-5 shrink-0" />
-                  {!collapsed && <span>{label}</span>}
+                  {(!collapsed || isMobile) && <span>{label}</span>}
                 </Link>
               );
             })}
 
-            {/* Your searches - section header (hidden when collapsed) */}
-            {!collapsed && (
+            {/* Your searches - section header (hidden when collapsed on desktop) */}
+            {(!collapsed || isMobile) && (
               <div className="pt-4 pb-1">
                 <p className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Your searches
@@ -130,8 +172,8 @@ export function AppNav() {
             )}
           </nav>
 
-          {/* Your searches list - only this section scrolls (hidden when collapsed) */}
-          {!collapsed && (
+          {/* Your searches list - only this section scrolls (hidden when collapsed on desktop) */}
+          {(!collapsed || isMobile) && (
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-theme px-2 pb-2">
             {searches.length === 0 ? (
               <p className="px-3 py-2 text-xs text-muted-foreground/80">
@@ -168,8 +210,9 @@ export function AppNav() {
                       ) : (
                         <Link
                           href={`/searches?id=${encodeURIComponent(search.id)}`}
+                          onClick={handleNavClick}
                           className={cn(
-                            "flex flex-col gap-0.5 px-3 py-2 rounded-lg text-sm transition-colors block min-w-0",
+                            "flex flex-col gap-0.5 px-3 py-2.5 rounded-lg text-sm transition-colors block min-w-0 min-h-[44px] justify-center",
                             isSearchActive
                               ? "bg-accent text-foreground font-medium"
                               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
@@ -190,13 +233,8 @@ export function AppNav() {
           <div className="flex-shrink-0 border-t border-border px-2 py-3 space-y-0.5">
             <Link
               href="/profile"
-              className={cn(
-                "flex items-center rounded-lg text-sm font-medium transition-colors min-w-0",
-                collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
-                pathname === "/profile" || pathname.startsWith("/profile")
-                  ? "bg-accent text-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-              )}
+              onClick={handleNavClick}
+              className={navLinkClass(pathname === "/profile" || pathname.startsWith("/profile"))}
               title={accountName}
               aria-label="Account"
             >
@@ -212,41 +250,47 @@ export function AppNav() {
                   {accountInitial}
                 </span>
               )}
-              {!collapsed && <span className="truncate">{accountName}</span>}
+              {(!collapsed || isMobile) && <span className="truncate">{accountName}</span>}
             </Link>
 
             <Link
               href="/settings"
-              className={cn(
-                "flex items-center rounded-lg text-sm font-medium transition-colors",
-                collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
-                pathname === "/settings" || pathname.startsWith("/settings")
-                  ? "bg-accent text-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-              )}
-              title={collapsed ? "Settings" : undefined}
+              onClick={handleNavClick}
+              className={navLinkClass(pathname === "/settings" || pathname.startsWith("/settings"))}
+              title={collapsed && !isMobile ? "Settings" : undefined}
             >
               <Settings className="h-5 w-5 shrink-0" />
-              {!collapsed && <span>Settings</span>}
+              {(!collapsed || isMobile) && <span>Settings</span>}
             </Link>
           </div>
         </div>
       </aside>
 
-      {/* Top bar - CONXA centered in the main content area (right of sidebar) */}
+      {/* Top bar - hamburger on mobile, CONXA centered, credits on right */}
       <header
-        className="sticky top-0 z-40 flex h-14 items-center border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+        className="sticky top-0 z-40 flex h-14 min-h-[44px] items-center border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
         style={{ marginLeft: sidebarWidth }}
       >
-        <div className="grid h-full w-full grid-cols-3 items-center px-4">
-          <div />
+        <div className="grid h-full w-full grid-cols-3 items-center px-3 sm:px-4 gap-2">
+          <div className="flex items-center min-w-0">
+            {isMobile && (
+              <button
+                type="button"
+                onClick={toggleMobileSidebar}
+                className="p-2.5 rounded-lg text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Open menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+            )}
+          </div>
           <Link
             href="/home"
-            className="justify-self-center font-semibold text-sm text-foreground hover:text-foreground/90 transition-colors"
+            className="justify-self-center font-semibold text-sm text-foreground hover:text-foreground/90 transition-colors min-h-[44px] flex items-center"
           >
             CONXA
           </Link>
-          <div className="flex items-center justify-self-end">
+          <div className="flex items-center justify-self-end min-h-[44px]">
             <CreditsBadge />
           </div>
         </div>
