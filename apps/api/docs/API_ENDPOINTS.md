@@ -64,6 +64,7 @@ Overview of all CONXA API endpoints, grouped by area. Base URL is your API origi
 |--------|------|-------------|
 | `GET` | `/people` | List people for discover grid: name, location, top 5 experience titles. Returns `PersonListResponse`. |
 | `GET` | `/me/searches` | List search history for current user with result counts. Query: `limit` (1–200, default 50). Returns `SavedSearchesResponse`. |
+| `DELETE` | `/me/searches/{search_id}` | Delete a saved search. Returns 204 on success, 404 if not found. |
 | `GET` | `/me/unlocked-cards` | List all unique people whose contact details were unlocked by current user. Returns `UnlockedCardsResponse`. |
 | `GET` | `/people/{person_id}/profile` | Public profile for person detail: full bio + all experience card families (parent → children). Returns `PersonPublicProfileResponse`. |
 | `POST` | `/search` | Run search. Body: `SearchRequest`. Optional header: `Idempotency-Key`. Returns `SearchResponse`. Rate limited. |
@@ -84,6 +85,7 @@ Overview of all CONXA API endpoints, grouped by area. Base URL is your API origi
 | `POST` | `/experiences/raw` | Create a raw experience (store free-text). Body: `RawExperienceCreate`. Returns `RawExperienceResponse`. |
 | `POST` | `/experiences/rewrite` | Rewrite messy input into clear English for extraction. No persistence. Body: `RawExperienceCreate`. Returns `RewriteTextResponse`. |
 | `POST` | `/experiences/translate` | Translate multilingual input to English (e.g. Sarvam Translate). Body: `RawExperienceCreate`. Returns `TranslateTextResponse`. |
+| `POST` | `/experiences/tts` | Text-to-speech for AI replies (Sarvam TTS). Body: `TextToSpeechRequest` (`text`). Returns `TextToSpeechResponse` (`audio_base64`). Requires `SARVAM_API_KEY`. |
 | `WS` | `/experiences/transcribe/stream` | WebSocket: stream audio chunks for STT; receive transcript events. Query: `token` (JWT), optional `language_code`/`lang`. Client messages: `audio_chunk`, `flush`, `stop`. |
 
 ### Experience card pipeline

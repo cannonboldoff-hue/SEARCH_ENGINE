@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, and_, text
+from sqlalchemy import delete, select, func, or_, and_, text
 
 from src.core import SEARCH_RESULT_EXPIRY_HOURS
 from src.db.models import (
@@ -1548,19 +1548,23 @@ async def run_search(
         vis_map=vis_map,
     )
 
+    # Only persist the first num_cards results so search history result_count matches what we returned/charged for.
+    pending_to_persist = pending_search_rows[:num_cards]
+    llm_evidence_to_persist = llm_people_evidence[:num_cards] if llm_people_evidence else []
+
     why_matched_by_person = _persist_search_results(
         db=db,
         search_id=search_rec.id,
-        pending_search_rows=pending_search_rows,
+        pending_search_rows=pending_to_persist,
         llm_why_by_person={},
     )
-    if llm_people_evidence:
+    if llm_evidence_to_persist:
         asyncio.create_task(
             _update_why_matched_async(
                 search_id=str(search_rec.id),
                 payload=payload,
-                people_evidence=llm_people_evidence,
-                person_ids=[row.person_id for row in pending_search_rows],
+                people_evidence=llm_evidence_to_persist,
+                person_ids=[row.person_id for row in pending_to_persist],
             )
         )
 
@@ -1716,4 +1720,12 @@ async def list_searches(
             )
         )
     return SavedSearchesResponse(searches=out)
+
+
+async def delete_search(db: AsyncSession, searcher_id: str, search_id: str) -> bool:
+    """Delete a search owned by the searcher. Returns True if deleted, False if not found."""
+    result = await db.execute(
+        delete(Search).where(Search.id == search_id, Search.searcher_id == searcher_id)
+    )
+    return result.rowcount > 0
 

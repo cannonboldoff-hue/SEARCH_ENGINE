@@ -27,6 +27,18 @@ class TranslateTextResponse(BaseModel):
     source_language_code: Optional[str] = None
 
 
+class TextToSpeechRequest(BaseModel):
+    """Body for POST /experiences/tts: text to speak (Sarvam TTS)."""
+
+    text: str
+
+
+class TextToSpeechResponse(BaseModel):
+    """Result of POST /experiences/tts: base64-encoded WAV audio."""
+
+    audio_base64: str
+
+
 class CardFamilyV1Response(BaseModel):
     """One parent Experience Card v1 + its child cards (validated)."""
 

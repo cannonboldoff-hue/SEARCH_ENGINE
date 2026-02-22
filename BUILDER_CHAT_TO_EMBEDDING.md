@@ -209,7 +209,7 @@ DB: experience_cards.search_document, .embedding; experience_card_children.searc
 |----------|-----------|---------|
 | `fill_missing_fields_from_text` | `async (raw_text, current_card, card_type) -> dict` | rewrite_raw_text → PROMPT_FILL_MISSING_FIELDS → chat.chat → parse JSON; normalizes intent_secondary_str, tagsStr, dates; returns filled dict. |
 | `_parse_date_field_for_clarify` | `(val: Any) -> Optional[str]` | parse_date_field → ISO string or None. |
-| `clarify_experience_interactive` | `async (raw_text, current_card, card_type, conversation_history) -> dict` | If raw_text empty: PROMPT_OPENING_QUESTION → chat.chat → return clarifying_question or fallback. Else: rewrite_raw_text → PROMPT_CLARIFY_EXPERIENCE (with current_card, allowed_keys, conversation_history) → chat.chat → return clarifying_question and/or filled (with key normalization). |
+| `clarify_experience_interactive` | `async (raw_text, current_card, card_type, conversation_history) -> dict` | If raw_text empty: return fixed opening question. Else: rewrite_raw_text → PROMPT_CLARIFY_EXPERIENCE (with current_card, allowed_keys, conversation_history) → chat.chat → return clarifying_question and/or filled (with key normalization). |
 | `rewrite_raw_text` | `async (raw_text: str) -> str` | Uses PROMPT_REWRITE; get_chat_provider().chat(prompt, max_tokens=2048); normalizes whitespace. Raises HTTPException 400 if empty, PipelineError on empty result or ChatServiceError. |
 | `detect_experiences` | `async (raw_text: str) -> dict` | rewrite_raw_text → PROMPT_DETECT_EXPERIENCES → chat.chat → parse JSON to {"count", "experiences": [{index, label, suggested}]}. Normalizes indices; ensures one suggested. Returns {"count": 0, "experiences": []} on parse failure. |
 | `next_draft_run_version` | `async (db, raw_experience_id, person_id) -> int` | MAX(draft_sets.run_version) + 1 for that raw_experience + person. |
@@ -354,23 +354,10 @@ Extract ONLY the {{EXPERIENCE_INDEX}}-th experience (of {{EXPERIENCE_COUNT}}). R
 
 ---
 
-### LLM call 5: Opening question (clarify with empty input)
+### Opening question (clarify with empty input) — no LLM
 
 - **Where:** `clarify_experience_interactive(raw_text="", ...)` when user has not shared anything.  
-- **Prompt:** `PROMPT_OPENING_QUESTION` (no fill).  
-- **Invocation:** `chat.chat(PROMPT_OPENING_QUESTION, max_tokens=256)`  
-- **Output:** JSON `{"clarifying_question": "..."}`. Fallback string if parse fails.
-
-**PROMPT_OPENING_QUESTION** (full):
-
-```
-You are having a friendly conversation to help someone add an experience (e.g. a job, project, or something they're proud of). They have not shared anything yet.
-
-Your task: Ask ONE short, natural question to invite them to share. Be curious and human—like a colleague or coach. Do NOT sound like a form or instructions (e.g. no "Please describe", "Please provide", or listing fields like "role, company, dates"). Just ask a single, conversational question.
-
-Return ONLY valid JSON with this exact shape, nothing else:
-{"clarifying_question": "Your one short question here?"}
-```
+- **Behavior:** Returns a fixed clarifying question (no LLM call): *"What's one experience you'd like to add? Tell me in your own words."*
 
 ---
 

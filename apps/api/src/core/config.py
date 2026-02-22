@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     sarvam_stt_sample_rate: int = 16000
     sarvam_stt_input_audio_codec: str = "pcm_s16le"
 
+    # Sarvam text-to-speech (optional; for speaking AI replies in builder chat)
+    sarvam_tts_url: str = "https://api.sarvam.ai/text-to-speech"
+    sarvam_tts_model: str = "bulbul:v3"
+    sarvam_tts_speaker: str = "shubh"
+    sarvam_tts_language_code: str = "en-IN"
+    sarvam_tts_max_chars: int = 2500
+
     # Sarvam text translation (for multilingual-to-English normalization)
     sarvam_translate_url: str = "https://api.sarvam.ai/translate"
     sarvam_text_lid_url: str = "https://api.sarvam.ai/text-lid"

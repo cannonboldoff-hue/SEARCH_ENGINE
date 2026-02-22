@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isPlaceholderChildCard } from "@/components/builder/card/v1-card-details";
 import type { SavedCardFamily } from "@/types";
 
 interface ExpandableExperienceCardProps {
@@ -14,7 +15,8 @@ interface ExpandableExperienceCardProps {
 export function ExpandableExperienceCard({ family, index }: ExpandableExperienceCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const { parent, children } = family;
-  const hasChildren = children.length > 0;
+  const visibleChildren = children.filter((c) => !isPlaceholderChildCard(c as Record<string, unknown>));
+  const hasChildren = visibleChildren.length > 0;
 
   return (
     <motion.li
@@ -98,7 +100,7 @@ export function ExpandableExperienceCard({ family, index }: ExpandableExperience
               />
 
               <ul className="relative space-y-0">
-                {children.map((child, childIdx) => (
+                {visibleChildren.map((child, childIdx) => (
                   <motion.li
                     key={child.id}
                     initial={{ opacity: 0, x: -8 }}

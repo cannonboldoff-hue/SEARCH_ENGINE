@@ -2,7 +2,12 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { TiltCard } from "@/components/tilt-card";
 import { CardTypeIcon } from "../card/card-type-icon";
-import { V1CardDetails, v1CardTopics } from "../card/v1-card-details";
+import {
+  V1CardDetails,
+  v1CardTopics,
+  displayCardTitle,
+  isPlaceholderChildCard,
+} from "../card/v1-card-details";
 import { ParentCardEditForm } from "../forms/parent-card-edit-form";
 import { ChildCardEditForm } from "../forms/child-card-edit-form";
 import { PenLine, Trash2 } from "lucide-react";
@@ -58,7 +63,8 @@ export function DraftCardFamily({
   isChildDeleting,
 }: DraftCardFamilyProps) {
   const parent = family.parent as ExperienceCardV1;
-  const children = (family.children ?? []) as ExperienceCardV1[];
+  const allChildren = (family.children ?? []) as ExperienceCardV1[];
+  const children = allChildren.filter((c) => !isPlaceholderChildCard(c));
   const parentId = String(parent?.id ?? (parent as Record<string, unknown>)?.card_id ?? "").trim();
   const tags = parent ? v1CardTopics(parent) : [];
   const isEditingParent = editingKind === "parent" && editingCardId === parentId;
@@ -93,10 +99,10 @@ export function DraftCardFamily({
           <div className="flex items-start justify-between gap-2 w-full min-w-0">
             <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
               <span className="text-muted-foreground flex-shrink-0">
-                <CardTypeIcon tags={tags} title={(parent as { title?: string })?.title ?? parent?.headline ?? null} />
+                <CardTypeIcon tags={tags} title={displayCardTitle((parent as { title?: string })?.title ?? parent?.headline, "Untitled")} />
               </span>
               <span className="font-semibold text-sm truncate text-foreground">
-                {(parent as { title?: string })?.title || parent?.headline || "Untitled"}
+                {displayCardTitle((parent as { title?: string })?.title ?? parent?.headline, "Untitled")}
               </span>
               {children.length > 0 && (
                 <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
@@ -181,7 +187,7 @@ export function DraftCardFamily({
             {children.map((child, childIdx) => {
               const childId = child?.id ?? "";
               const childRelationType = (child?.relation_type ?? "").toString().trim();
-              const childTitle = (child as { title?: string })?.title ?? child?.headline ?? "Untitled";
+              const childTitle = displayCardTitle((child as { title?: string })?.title ?? child?.headline, "Untitled");
               const isEditingThisChild = editingKind === "child" && editingCardId === childId;
 
               return (

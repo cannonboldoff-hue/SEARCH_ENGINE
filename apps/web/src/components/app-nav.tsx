@@ -1,13 +1,15 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { LockOpen, Settings, Compass, LayoutGrid, Hammer, Globe, PanelLeftClose, PanelLeft, Menu } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LockOpen, Settings, Compass, LayoutGrid, Hammer, Globe, PanelLeftClose, PanelLeft, Menu, MoreVertical, Trash2 } from "lucide-react";
 import { useSidebarWidth, MOBILE_DRAWER_WIDTH } from "@/contexts/sidebar-width-context";
 import { useProfileV1 } from "@/hooks/use-profile-v1";
 import { cn } from "@/lib/utils";
 import { CreditsBadge } from "@/components/credits-badge";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import type { SavedSearchesResponse } from "@/types";
 
@@ -43,10 +45,49 @@ export function AppNav() {
   const accountName = (profile?.display_name || profile?.username || "Account").trim();
   const accountInitial = accountName ? accountName[0]?.toUpperCase() : "U";
 
+  const queryClient = useQueryClient();
   const { data } = useQuery({
     queryKey: ["me", "searches"],
-    queryFn: () => api<SavedSearchesResponse>("/me/searches"),
+    queryFn: () => api<SavedSearchesResponse>("/me/searches?limit=200"),
   });
+
+  const deleteSearchMutation = useMutation({
+    mutationFn: (searchId: string) =>
+      api(`/me/searches/${encodeURIComponent(searchId)}`, { method: "DELETE" }),
+    onMutate: async (searchId: string) => {
+      setOpenDropdownId(null);
+      await queryClient.cancelQueries({ queryKey: ["me", "searches"] });
+      const prev = queryClient.getQueryData<SavedSearchesResponse>(["me", "searches"]);
+      if (prev?.searches) {
+        queryClient.setQueryData<SavedSearchesResponse>(["me", "searches"], {
+          ...prev,
+          searches: prev.searches.filter((s) => s.id !== searchId),
+        });
+      }
+      return { prev };
+    },
+    onError: (_err, _searchId, context) => {
+      if (context?.prev) {
+        queryClient.setQueryData(["me", "searches"], context.prev);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["me", "searches"] });
+    },
+  });
+
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (openDropdownId === null) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current?.contains(e.target as Node)) return;
+      setOpenDropdownId(null);
+    };
+    document.addEventListener("click", handleClickOutside, true);
+    return () => document.removeEventListener("click", handleClickOutside, true);
+  }, [openDropdownId]);
 
   const sidebarItems = [
     { href: "/home", label: "Home", icon: Compass },
@@ -190,37 +231,65 @@ export function AppNav() {
                         {truncateQuery(search.query_text)}
                       </span>
                       <span className="text-xs opacity-80">
-                        {search.expired
-                          ? `Expired · ${formatSearchDate(search.created_at)}`
-                          : `${search.result_count} results · ${formatSearchDate(search.created_at)}`}
+                        {`${search.result_count} results · ${formatSearchDate(search.created_at)}`}
                       </span>
                     </>
                   );
+                  const rowClass = cn(
+                    "flex flex-col gap-0.5 px-3 py-2.5 rounded-lg text-sm min-w-0 min-h-[44px] justify-center",
+                    isSearchActive ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                  );
                   return (
                     <li key={search.id} className="min-w-0">
-                      {search.expired ? (
-                        <span
-                          className={cn(
-                            "flex flex-col gap-0.5 px-3 py-2 rounded-lg text-sm block min-w-0",
-                            "text-muted-foreground/60 opacity-70 cursor-not-allowed"
-                          )}
-                        >
-                          {content}
-                        </span>
-                      ) : (
+                      <div
+                        ref={openDropdownId === search.id ? dropdownRef : undefined}
+                        className="flex items-stretch min-w-0 gap-0.5 rounded-lg"
+                      >
                         <Link
                           href={`/searches?id=${encodeURIComponent(search.id)}`}
                           onClick={handleNavClick}
-                          className={cn(
-                            "flex flex-col gap-0.5 px-3 py-2.5 rounded-lg text-sm transition-colors block min-w-0 min-h-[44px] justify-center",
-                            isSearchActive
-                              ? "bg-accent text-foreground font-medium"
-                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                          )}
+                          className={cn("flex-1 min-w-0 search-row-link", rowClass)}
                         >
                           {content}
                         </Link>
-                      )}
+                        <div className="relative flex-shrink-0 flex items-center">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-foreground"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setOpenDropdownId((id) => (id === search.id ? null : search.id));
+                            }}
+                            aria-label="Search options"
+                            aria-expanded={openDropdownId === search.id}
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                          {openDropdownId === search.id && (
+                            <div
+                              className="absolute right-0 top-full z-50 mt-0.5 rounded-md border border-border bg-background px-1 py-1 shadow-md min-w-[8rem]"
+                              role="menu"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent hover:text-destructive"
+                                onClick={() => {
+                                  deleteSearchMutation.mutate(search.id);
+                                  setOpenDropdownId(null);
+                                }}
+                                disabled={deleteSearchMutation.isPending}
+                              >
+                                <Trash2 className="h-4 w-4 shrink-0" />
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </li>
                   );
                 })}

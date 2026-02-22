@@ -28,7 +28,7 @@ function SearchesPageContent() {
 
   const { data: searchesData, isLoading: isLoadingSearches, error } = useQuery({
     queryKey: ["me", "searches"],
-    queryFn: () => api<SavedSearchesResponse>("/me/searches"),
+    queryFn: () => api<SavedSearchesResponse>("/me/searches?limit=200"),
   });
 
   const selectedSearch = searchesData?.searches?.find((s) => s.id === selectedSearchId);

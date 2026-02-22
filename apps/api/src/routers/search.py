@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +41,19 @@ async def list_saved_searches(
 ):
     """List search history for the current user with result counts."""
     return await search_service.list_search_history(db, current_user.id, limit=limit)
+
+
+@router.delete("/me/searches/{search_id}", status_code=204)
+async def delete_saved_search(
+    search_id: str,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a saved search. Returns 204 on success, 404 if not found."""
+    deleted = await search_service.delete_saved_search(db, current_user.id, search_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Search not found")
+    return Response(status_code=204)
 
 
 @router.get("/me/unlocked-cards", response_model=UnlockedCardsResponse)

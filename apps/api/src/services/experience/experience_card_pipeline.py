@@ -60,7 +60,6 @@ from src.prompts.experience_card import (
     PROMPT_DETECT_EXPERIENCES,
     PROMPT_EXTRACT_SINGLE_CARDS,
     PROMPT_FILL_MISSING_FIELDS,
-    PROMPT_OPENING_QUESTION,
     PROMPT_CLARIFY_PLANNER,
     PROMPT_CLARIFY_QUESTION_WRITER,
     PROMPT_CLARIFY_APPLY_ANSWER,
@@ -1770,18 +1769,6 @@ async def clarify_experience_interactive(
             **_clarify_result(),
         }
     if not raw_text or not raw_text.strip():
-        chat = get_chat_provider()
-        try:
-            response = await chat.chat(PROMPT_OPENING_QUESTION, max_tokens=256)
-            if response and response.strip():
-                json_str = _extract_json_from_text(response)
-                data = json.loads(json_str)
-                if isinstance(data, dict) and data.get("clarifying_question"):
-                    return _clarify_result(
-                        clarifying_question=str(data["clarifying_question"]).strip(),
-                    )
-        except (ChatServiceError, ValueError, json.JSONDecodeError) as e:
-            logger.warning("clarify_experience: opening question LLM failed, using fallback: %s", e)
         return _clarify_result(
             clarifying_question="What's one experience you'd like to add? Tell me in your own words.",
         )

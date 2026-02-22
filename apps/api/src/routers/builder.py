@@ -7,6 +7,7 @@ import wave
 from datetime import date
 from typing import Any, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,8 @@ from src.schemas import (
     RawExperienceResponse,
     RewriteTextResponse,
     TranslateTextResponse,
+    TextToSpeechRequest,
+    TextToSpeechResponse,
     DraftSetV1Response,
     DetectExperiencesResponse,
     DraftSingleRequest,
@@ -42,6 +45,7 @@ from src.schemas import (
     ExperienceCardChildResponse,
 )
 from src.core import decode_access_token
+from src.core.config import get_settings
 from src.providers import (
     ChatServiceError,
     ChatRateLimitError,
@@ -172,6 +176,61 @@ async def translate_experience_text(
         raise HTTPException(status_code=503, detail=str(e))
     except TranslationServiceError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/experiences/tts", response_model=TextToSpeechResponse)
+async def text_to_speech_experience(
+    body: TextToSpeechRequest,
+    current_user: Person = Depends(get_current_user),
+):
+    """Convert text to speech using Sarvam TTS (for speaking AI replies in builder chat)."""
+    settings = get_settings()
+    if not settings.sarvam_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Text-to-speech is not configured. Set SARVAM_API_KEY.",
+        )
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    max_chars = getattr(settings, "sarvam_tts_max_chars", 2500)
+    if len(text) > max_chars:
+        text = text[:max_chars]
+    payload = {
+        "text": text,
+        "target_language_code": getattr(settings, "sarvam_tts_language_code", "en-IN"),
+        "speaker": getattr(settings, "sarvam_tts_speaker", "shubh"),
+        "model": getattr(settings, "sarvam_tts_model", "bulbul:v3"),
+    }
+    url = getattr(settings, "sarvam_tts_url", "https://api.sarvam.ai/text-to-speech")
+    headers = {
+        "api-subscription-key": settings.sarvam_api_key,
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.warning("Sarvam TTS HTTP error %s: %s", e.response.status_code, e.response.text[:500])
+        raise HTTPException(
+            status_code=503,
+            detail="Text-to-speech service unavailable. Please try again.",
+        ) from e
+    except httpx.RequestError as e:
+        logger.warning("Sarvam TTS request error: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Text-to-speech service unavailable. Please try again.",
+        ) from e
+    audios = data.get("audios") if isinstance(data, dict) else None
+    if not audios or not isinstance(audios, list):
+        raise HTTPException(status_code=503, detail="Invalid TTS response.")
+    audio_base64 = "".join(audios) if audios else ""
+    if not audio_base64:
+        raise HTTPException(status_code=503, detail="No audio returned.")
+    return TextToSpeechResponse(audio_base64=audio_base64)
 
 
 async def _get_ws_user(token: str | None) -> Person | None:

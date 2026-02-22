@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { TiltCard } from "@/components/tilt-card";
 import { ParentCardEditForm } from "../forms/parent-card-edit-form";
 import { ChildCardEditForm } from "../forms/child-card-edit-form";
-import { V1CardDetails } from "../card/v1-card-details";
+import { V1CardDetails, displayCardTitle, isPlaceholderChildCard } from "../card/v1-card-details";
 import { PenLine, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ExperienceCard, ExperienceCardChild } from "@/types";
@@ -62,6 +62,7 @@ export function SavedCardFamily({
     (parent as { id?: string })?.id ?? (parent as Record<string, unknown>)?.card_id ?? ""
   ).trim();
   const isEditingParent = editingSavedCardId === parentId;
+  const visibleChildren = children.filter((c) => !isPlaceholderChildCard(c as Record<string, unknown>));
 
   return (
     <motion.div
@@ -85,7 +86,7 @@ export function SavedCardFamily({
           <div className="flex items-start justify-between gap-2 w-full min-w-0">
             <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
               <span className="font-semibold text-sm truncate text-foreground">
-                {parent.title || parent.company_name || "Untitled"}
+                {displayCardTitle(parent.title, parent.company_name || "Untitled")}
               </span>
             </span>
             {isEditingParent ? (
@@ -147,14 +148,14 @@ export function SavedCardFamily({
         </div>
       </TiltCard>
 
-      {children.length > 0 && (
+      {visibleChildren.length > 0 && (
         <div className="relative pl-7 pt-0 mt-0">
           <span
             className="thread-line top-0 bottom-3"
             aria-hidden
           />
           <ul className="relative space-y-0">
-            {children.map((child, childIdx) => {
+            {visibleChildren.map((child, childIdx) => {
               const isEditingThisChild = editingSavedChildId === child.id;
               const relationType = (child.relation_type ?? "").toString().trim();
               const relationDisplay = relationType ? relationType.replace(/_/g, " ").toUpperCase() : "";
@@ -188,7 +189,7 @@ export function SavedCardFamily({
                             </p>
                           )}
                           <p className="font-medium text-sm text-foreground">
-                            {child.title || child.summary || "Detail"}
+                            {displayCardTitle(child.title, child.summary || "Detail")}
                           </p>
                         </div>
                         <div className="flex gap-0.5 flex-shrink-0">

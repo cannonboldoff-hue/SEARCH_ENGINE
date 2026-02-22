@@ -18,7 +18,7 @@ from src.schemas import (
     UnlockedCardsResponse,
     SavedSearchesResponse,
 )
-from .search_logic import run_search, load_search_more, list_searches
+from .search_logic import run_search, load_search_more, list_searches, delete_search
 from .search_profile_view import (
     get_person_profile,
     list_people_for_discover,
@@ -87,6 +87,11 @@ class SearchService:
     async def list_search_history(db: AsyncSession, searcher_id: str, limit: int = 50) -> SavedSearchesResponse:
         """Alias for listing search history (kept under SavedSearchesResponse for backward compatibility)."""
         return await list_searches(db, searcher_id, limit=limit)
+
+    @staticmethod
+    async def delete_saved_search(db: AsyncSession, searcher_id: str, search_id: str) -> bool:
+        """Delete a saved search. Returns True if deleted, False if not found."""
+        return await delete_search(db, searcher_id, search_id)
 
     @staticmethod
     async def get_public_profile(db: AsyncSession, person_id: str) -> PersonPublicProfileResponse:

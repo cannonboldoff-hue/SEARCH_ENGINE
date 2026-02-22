@@ -7,6 +7,43 @@ function toText(value: unknown): string | null {
   return null;
 }
 
+/** Titles that indicate an empty/placeholder card; show fallback instead. */
+const GENERIC_CARD_TITLES = new Set([
+  "experience",
+  "tools experience",
+  "tools",
+  "tools detail",
+  "general experience",
+  "unspecified experience",
+]);
+
+export function displayCardTitle(
+  title: string | null | undefined,
+  fallback = "Untitled"
+): string {
+  const t = (title ?? "").trim().toLowerCase();
+  if (!t || GENERIC_CARD_TITLES.has(t)) return fallback;
+  return (title ?? "").trim();
+}
+
+/** True if child card has only a generic/empty title and no content; such cards should not be shown. */
+export function isPlaceholderChildCard(
+  child: ExperienceCardV1 | Record<string, unknown>
+): boolean {
+  const c = child as Record<string, unknown>;
+  const title = (c.title ?? c.headline ?? (c.value as Record<string, unknown> | undefined)?.headline ?? "")
+    .toString()
+    .trim()
+    .toLowerCase();
+  const summary = (
+    (c.summary ?? (c.value as Record<string, unknown> | undefined)?.summary) ?? ""
+  )
+    .toString()
+    .trim();
+  const hasGenericOrEmptyTitle = !title || GENERIC_CARD_TITLES.has(title);
+  return hasGenericOrEmptyTitle && !summary;
+}
+
 export function v1CardTopics(card: ExperienceCardV1 | Record<string, unknown>): string[] {
   const topics = (card as Record<string, unknown>).topics;
   if (!Array.isArray(topics)) return [];
@@ -131,7 +168,11 @@ export function V1CardDetails({
   const locationRange = [toText(locationObj?.city), toText(locationObj?.region), toText(locationObj?.country)]
     .filter(Boolean)
     .join(", ");
-  const locationStr = toText(locationValue) || toText(locationObj?.text) || locationRange || null;
+  const locationStrRaw = toText(locationValue) || toText(locationObj?.text) || locationRange || null;
+  const locationStr =
+    locationStrRaw && locationStrRaw !== "{}" && locationStrRaw.trim()
+      ? locationStrRaw.trim()
+      : null;
 
   const lang =
     cardAny.language && typeof cardAny.language === "object"
@@ -178,7 +219,7 @@ export function V1CardDetails({
   const valueClass = compact ? "text-xs" : "text-sm";
 
   function Row({ label, value }: { label: string; value: React.ReactNode }) {
-    if (value == null || value === "") return null;
+    if (value == null || value === "" || value === "{}") return null;
     return (
       <div className="min-w-0">
         <span className={labelClass}>{label}</span>

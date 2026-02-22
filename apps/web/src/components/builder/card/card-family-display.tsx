@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { TiltCard } from "@/components/tilt-card";
-import { V1CardDetails } from "./v1-card-details";
+import { V1CardDetails, isPlaceholderChildCard } from "./v1-card-details";
 import { cn } from "@/lib/utils";
 import type { ExperienceCard, ExperienceCardChild } from "@/types";
 
@@ -18,6 +18,7 @@ export function CardFamilyDisplay({
   index = 0,
 }: CardFamilyDisplayProps) {
   const parentObj = parent as Record<string, unknown>;
+  const visibleChildren = children.filter((c) => !isPlaceholderChildCard(c as Record<string, unknown>));
   const title =
     (parentObj.title as string) ??
     (parentObj.company_name as string) ??
@@ -52,9 +53,9 @@ export function CardFamilyDisplay({
               <span className="font-semibold text-sm truncate text-foreground">
                 {title}
               </span>
-              {children.length > 0 && (
+              {visibleChildren.length > 0 && (
                 <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
-                  {children.length} thread{children.length !== 1 ? "s" : ""}
+                  {visibleChildren.length} thread{visibleChildren.length !== 1 ? "s" : ""}
                 </span>
               )}
             </span>
@@ -67,14 +68,14 @@ export function CardFamilyDisplay({
         </div>
       </TiltCard>
 
-      {children.length > 0 && (
+      {visibleChildren.length > 0 && (
         <div className="relative pl-7 pt-0 mt-0">
           <span
             className="thread-line top-0 bottom-3"
             aria-hidden
           />
           <ul className="relative space-y-0">
-            {children.map((child, childIdx) => {
+            {visibleChildren.map((child, childIdx) => {
               const relationType = (child.relation_type ?? "")
                 .toString()
                 .trim();

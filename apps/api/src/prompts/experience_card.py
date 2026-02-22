@@ -139,18 +139,6 @@ Return valid JSON only:
 """
 
 # -----------------------------------------------------------------------------
-# 4b. Opening question when user has not shared anything yet (LLM-generated)
-# -----------------------------------------------------------------------------
-
-PROMPT_OPENING_QUESTION = """You are having a friendly conversation to help someone add an experience (e.g. a job, project, or something they're proud of). They have not shared anything yet.
-
-Your task: Ask ONE short, natural question to invite them to share. Be curious and human—like a colleague or coach. Do NOT sound like a form or instructions (e.g. no "Please describe", "Please provide", or listing fields like "role, company, dates"). Just ask a single, conversational question.
-
-Return ONLY valid JSON with this exact shape, nothing else:
-{"clarifying_question": "Your one short question here?"}
-"""
-
-# -----------------------------------------------------------------------------
 # 6. Clarify flow: Planner (JSON only)
 # -----------------------------------------------------------------------------
 
