@@ -1,7 +1,7 @@
 """Search service facade.
 
 Business logic is split across:
-- search pipeline: src.services.search_logic
+- search pipeline: src.services.search.search_logic
 - profile/public profile views: src.services.search_profile_view
 - contact unlock: src.services.search_contact_unlock
 """

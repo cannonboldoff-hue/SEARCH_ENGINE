@@ -26,7 +26,7 @@ export function displayCardTitle(
   return (title ?? "").trim();
 }
 
-/** True if child card has only a generic/empty title and no content; such cards should not be shown. */
+/** True if child card has no meaningful title or summary; such cards should not be shown. */
 export function isPlaceholderChildCard(
   child: ExperienceCardV1 | Record<string, unknown>
 ): boolean {
@@ -40,8 +40,8 @@ export function isPlaceholderChildCard(
   )
     .toString()
     .trim();
-  const hasGenericOrEmptyTitle = !title || GENERIC_CARD_TITLES.has(title);
-  return hasGenericOrEmptyTitle && !summary;
+  const hasTitle = !!title;
+  return !hasTitle && !summary;
 }
 
 export function v1CardTopics(card: ExperienceCardV1 | Record<string, unknown>): string[] {

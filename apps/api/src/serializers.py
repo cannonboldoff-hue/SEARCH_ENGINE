@@ -14,7 +14,6 @@ from src.domain import (
     PersonPrivacyDefaults,
     ExperienceCardV1Schema,
     Intent,
-    LanguageField,
     TimeField,
     LocationWithConfidence,
     RoleItem,
@@ -75,7 +74,6 @@ def experience_card_child_to_response(child: ExperienceCardChild) -> ExperienceC
         topics=topics if isinstance(topics, list) else [],
         time_range=time_obj.get("text"),
         role_title=None,
-        company=value.get("company"),
         location=location_obj.get("text"),
     )
 
@@ -116,7 +114,6 @@ def person_to_person_schema(
 
 def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema:
     """Map ExperienceCard (parent) to ExperienceCardV1Schema (domain v1). Uses stored intent if valid Intent else 'other'."""
-    language = LanguageField(raw_text=None, confidence="medium")
     time = TimeField(
         start=card.start_date.isoformat() if card.start_date else None,
         end=card.end_date.isoformat() if card.end_date else None,
@@ -158,11 +155,9 @@ def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema
         headline=card.title or "",
         summary=(card.summary or "")[:500],
         raw_text=card.raw_text or "",
-        language=language,
         time=time,
         location=location,
         roles=roles,
-        actions=[],
         topics=topics,
         entities=[],
         tooling=ToolingField(),

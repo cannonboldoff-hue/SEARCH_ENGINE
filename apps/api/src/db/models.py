@@ -189,7 +189,9 @@ class ExperienceCard(Base):
     normalized_role = Column(Text, nullable=True)
 
     domain = Column(Text, nullable=True)
+    domain_norm = Column(String(255), nullable=True, index=True)
     sub_domain = Column(Text, nullable=True)
+    sub_domain_norm = Column(String(255), nullable=True, index=True)
 
     company_name = Column(Text, nullable=True)
     company_norm = Column(String(255), nullable=True, index=True)  # lowercased trimmed for exact match
@@ -202,6 +204,9 @@ class ExperienceCard(Base):
     is_current = Column(Boolean, nullable=True)
 
     location = Column(Text, nullable=True)
+    city = Column(String(255), nullable=True)
+    country = Column(String(255), nullable=True)
+    is_remote = Column(Boolean, nullable=True)
     employment_type = Column(Text, nullable=True)
 
     summary = Column(Text, nullable=True)

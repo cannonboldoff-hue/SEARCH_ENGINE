@@ -136,6 +136,7 @@ class LocationInfo(BaseModel):
     text: Optional[str] = None
     city: Optional[str] = None
     country: Optional[str] = None
+    is_remote: Optional[bool] = None
 
 
 class RoleInfo(BaseModel):
@@ -487,27 +488,18 @@ def _get_parent_location(parent: dict) -> Any:
     return None
 
 
-def _get_parent_company(parent: dict) -> Optional[str]:
-    """Extract company name from parent."""
-    c = parent.get("company") or parent.get("company_name") or parent.get("organization")
-    if c and str(c).strip():
-        return str(c).strip()
-    return None
-
-
 def _inherit_parent_context_into_children(
     parent_dict: Optional[dict], children_list: list[dict]
 ) -> list[dict]:
     """
-    Fill each child's missing time_range, location, and company from the parent.
+    Fill each child's missing time_range and location from the parent.
     Only fills when the child has no explicit value—so user-stated values are preserved.
     """
     if not parent_dict or not isinstance(parent_dict, dict) or not children_list:
         return children_list
     p_time = _get_parent_time(parent_dict)
     p_location = _get_parent_location(parent_dict)
-    p_company = _get_parent_company(parent_dict)
-    if not p_time and not p_location and not p_company:
+    if not p_time and not p_location:
         return children_list
     result = []
     for child in children_list:
@@ -535,13 +527,6 @@ def _inherit_parent_context_into_children(
             if isinstance(val, dict):
                 val = dict(val)
                 val["location"] = c["location"]
-                c["value"] = val
-        if p_company and not (c.get("company") or "").strip():
-            c["company"] = p_company
-            val = c.get("value")
-            if isinstance(val, dict):
-                val = dict(val)
-                val["company"] = p_company
                 c["value"] = val
         result.append(c)
     return result
@@ -861,17 +846,22 @@ def extract_time_fields(card: V1Card) -> tuple[Optional[str], Optional[date], Op
     )
 
 
-def extract_location_fields(card: V1Card) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Extract location fields from card."""
+def extract_location_fields(card: V1Card) -> tuple[Optional[str], Optional[str], Optional[str], Optional[bool]]:
+    """Extract location fields from card. Returns (text, city, country, is_remote)."""
     loc_obj = card.location
     
     if isinstance(loc_obj, str):
-        return loc_obj, None, None
+        return loc_obj, None, None, None
     
     if not isinstance(loc_obj, LocationInfo):
-        return None, None, None
+        return None, None, None, None
     
-    return loc_obj.text or loc_obj.city, loc_obj.city, loc_obj.country
+    return (
+        loc_obj.text or loc_obj.city,
+        loc_obj.city,
+        loc_obj.country,
+        loc_obj.is_remote if isinstance(loc_obj.is_remote, bool) else None,
+    )
 
 
 def extract_company(card: V1Card) -> Optional[str]:
@@ -995,14 +985,19 @@ def card_to_experience_card_fields(
 ) -> dict:
     """Convert V1Card to ExperienceCard column values."""
     time_text, start_date, end_date, is_ongoing = extract_time_fields(card)
-    location_text, city, country = extract_location_fields(card)
+    location_text, city, country, is_remote = extract_location_fields(card)
     company = extract_company(card)
+    team = extract_team(card)
     role_title, role_seniority = extract_role_info(card)
     search_phrases = extract_search_phrases(card)
 
     raw_text = (card.raw_text or "").strip() or None
     summary = (card.summary or "")[:10000]
     title = normalize_card_title(card)
+    
+    # Extract domain fields
+    domain = (card.domain or "").strip()[:100] or None
+    sub_domain = (card.sub_domain or "").strip()[:100] or None
 
     tags = [t.label for t in card.topics]
     search_doc_parts = [
@@ -1020,21 +1015,31 @@ def card_to_experience_card_fields(
         "raw_text": raw_text,
         "title": title[:500],
         "normalized_role": role_title,
-        "domain": (card.domain or "").strip()[:100] or None,
-        "sub_domain": (card.sub_domain or "").strip()[:100] or None,
+        "domain": domain,
+        "domain_norm": domain.lower().strip()[:255] if domain else None,
+        "sub_domain": sub_domain,
+        "sub_domain_norm": sub_domain.lower().strip()[:255] if sub_domain else None,
         "company_name": company,
+        "company_norm": company.lower().strip()[:255] if company else None,
         "company_type": (card.company_type or "").strip()[:100] or None,
+        "team": team,
+        "team_norm": team.lower().strip()[:255] if team else None,
         "start_date": start_date,
         "end_date": end_date,
         "is_current": is_ongoing if isinstance(is_ongoing, bool) else None,
         "location": location_text[:255] if location_text else None,
+        "city": city[:255] if city else None,
+        "country": country[:255] if country else None,
+        "is_remote": is_remote if isinstance(is_remote, bool) else None,
         "employment_type": (card.employment_type or "").strip()[:100] or None,
         "summary": summary,
         "intent_primary": card.intent or card.intent_primary,
         "intent_secondary": [s for s in card.intent_secondary if isinstance(s, str) and s.strip()][:20],
         "seniority_level": role_seniority,
         "confidence_score": card.confidence_score,
-        "experience_card_visibility": True,
+        # Builder draft cards start as non-visible; they become visible only after
+        # the chat flow completes and the card is finalized.
+        "experience_card_visibility": False,
         "search_phrases": search_phrases,
         "search_document": (card.search_document or "").strip() or search_document,
     }
@@ -1050,7 +1055,7 @@ def card_to_child_fields(
 ) -> dict:
     """Convert V1Card to ExperienceCardChild column values."""
     time_text, start_date, end_date, is_ongoing = extract_time_fields(card)
-    location_text, city, country = extract_location_fields(card)
+    location_text, city, country, is_remote = extract_location_fields(card)
     company = extract_company(card)
     team = extract_team(card)
     role_title, role_seniority = extract_role_info(card)
@@ -1083,6 +1088,7 @@ def card_to_child_fields(
             "text": location_text,
             "city": city,
             "country": country,
+            "is_remote": is_remote if isinstance(is_remote, bool) else None,
         },
         "roles": [{"label": role_title, "seniority": role_seniority}] if role_title else [],
         "topics": [t.model_dump() for t in card.topics],
@@ -1219,7 +1225,6 @@ def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> d
             "topics": topics if isinstance(topics, list) else [{"label": t} for t in tags],
             "time_range": time_obj.get("text") if isinstance(time_obj, dict) else None,
             "role_title": None,
-            "company": value.get("company"),
             "location": location_obj.get("text") if isinstance(location_obj, dict) else None,
         }
     else:
@@ -1260,7 +1265,7 @@ FILL_MISSING_PARENT_KEYS = (
     "location, employment_type, start_date, end_date, is_current, intent_primary, "
     "intent_secondary_str, seniority_level, confidence_score"
 )
-FILL_MISSING_CHILD_KEYS = "title, summary, tagsStr, time_range, company, location"
+FILL_MISSING_CHILD_KEYS = "title, summary, tagsStr, time_range, location"
 
 
 async def fill_missing_fields_from_text(
@@ -1986,8 +1991,9 @@ async def run_draft_v1_single(
         raw_experience_id=raw_experience_id,
         draft_set_id=draft_set_id,
     )
-    # Embedding: build search-document text per card, fetch vectors, assign and flush
-    await embed_experience_cards(db, parents, children)
+    # NOTE: We intentionally do NOT embed cards here. Embedding (and making cards
+    # visible/searchable) is deferred until the builder chat flow completes and
+    # the user’s card is finalized.
 
     # Group children by parent_id once (O(n)) instead of per-parent scan (O(n*m))
     children_by_parent_id: dict[str, list] = {}

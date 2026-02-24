@@ -187,6 +187,12 @@ class CommitDraftSetRequest(BaseModel):
     card_ids: Optional[list[str]] = None
 
 
+class FinalizeExperienceCardRequest(BaseModel):
+    """Request body to finalize a drafted experience card (make visible + embed)."""
+
+    card_id: str
+
+
 class _ExperienceCardFields(BaseModel):
     """Shared optional fields for create/patch."""
 
@@ -260,7 +266,6 @@ class ExperienceCardChildPatch(BaseModel):
     summary: Optional[str] = None
     tags: Optional[list[str]] = None
     time_range: Optional[str] = None
-    company: Optional[str] = None
     location: Optional[str] = None
 
 
@@ -277,7 +282,6 @@ class ExperienceCardChildResponse(BaseModel):
     topics: list[dict] = []
     time_range: Optional[str] = None
     role_title: Optional[str] = None
-    company: Optional[str] = None
     location: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)

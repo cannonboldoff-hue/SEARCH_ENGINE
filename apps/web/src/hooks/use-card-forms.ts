@@ -87,7 +87,6 @@ export interface ChildCardForm {
   summary: string;
   tagsStr: string;
   time_range: string;
-  company: string;
   location: string;
 }
 
@@ -116,7 +115,6 @@ const initialChildForm: ChildCardForm = {
   summary: "",
   tagsStr: "",
   time_range: "",
-  company: "",
   location: "",
 };
 
@@ -172,7 +170,6 @@ export function useCardForms() {
       summary: (c.summary as string) ?? (c.context as string) ?? "",
       tagsStr: tags.join(", "),
       time_range: (c.time_range as string) ?? "",
-      company: (c.company as string) ?? "",
       location: (c.location as string) ?? "",
     });
   }, []);

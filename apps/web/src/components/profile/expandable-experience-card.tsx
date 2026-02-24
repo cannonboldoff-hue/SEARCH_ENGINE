@@ -133,7 +133,6 @@ export function ExpandableExperienceCard({ family, index }: ExpandableExperience
                         </p>
                       )}
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-xs text-muted-foreground">
-                        {child.company && <span>{child.company}</span>}
                         {child.time_range && <span>{child.time_range}</span>}
                         {child.location && <span>{child.location}</span>}
                       </div>

@@ -82,7 +82,6 @@ function childFormToPatch(form: {
   summary: string;
   tagsStr: string;
   time_range: string;
-  company: string;
   location: string;
 }): ExperienceCardChildPatch {
   const tags = form.tagsStr
@@ -94,7 +93,6 @@ function childFormToPatch(form: {
     summary: form.summary.trim() || null,
     tags: tags.length ? tags : null,
     time_range: form.time_range.trim() || null,
-    company: form.company.trim() || null,
     location: form.location.trim() || null,
   };
 }
@@ -340,7 +338,7 @@ export default function YourCardsPage() {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="max-w-3xl mx-auto space-y-6"
+      className="max-w-4xl lg:max-w-6xl mx-auto space-y-6"
     >
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3 min-w-0">
@@ -376,7 +374,7 @@ export default function YourCardsPage() {
           <h2 className="text-sm font-medium text-muted-foreground mb-3">
             Your experience
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {savedFamilies.map((family, i) => (
               <div
                 key={getParentId(family.parent) || `family-${i}`}
@@ -389,7 +387,7 @@ export default function YourCardsPage() {
                 <div
                   className={
                     savedFamilies.length === 1
-                      ? "w-full min-w-0 max-w-2xl"
+                      ? "w-full min-w-0 max-w-3xl"
                       : "w-full min-w-0"
                   }
                 >

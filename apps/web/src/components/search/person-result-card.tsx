@@ -21,16 +21,10 @@ export function PersonResultCard({ person, searchId, index = 0 }: PersonResultCa
     .map((item) => item?.trim() || "")
     .filter(Boolean)
     .slice(0, 3);
-  const whyFromMatchedCards = person.matched_cards
-    .map((card) => card.title?.trim() || card.summary?.trim() || "")
-    .filter(Boolean)
-    .slice(0, 3);
   const whyShown =
     whyFromApi.length > 0
       ? whyFromApi
-      : whyFromMatchedCards.length > 0
-        ? whyFromMatchedCards
-        : ["Matched your search intent and profile signals."];
+      : ["Matched your search intent and profile signals."];
 
   return (
     <motion.li
@@ -66,11 +60,11 @@ export function PersonResultCard({ person, searchId, index = 0 }: PersonResultCa
           </div>
           <div className="mt-3 border-t border-border/60 pt-3 space-y-1">
             <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground/90">Matched percentage:</span>{" "}
+              <span className="font-medium text-foreground/90">Match Percent :</span>{" "}
               {similarityPercent != null ? `${similarityPercent}%` : "N/A"}
             </p>
             <div className="text-xs text-muted-foreground">
-              <p className="font-medium text-foreground/90">Why this card was shown:</p>
+              <p className="font-medium text-foreground/90">Why {person.name || "this person"} :</p>
               <ul className="mt-1 list-disc pl-4 space-y-0.5">
                 {whyShown.map((reason, idx) => (
                   <li key={`${person.id}-why-${idx}`} className="leading-snug">

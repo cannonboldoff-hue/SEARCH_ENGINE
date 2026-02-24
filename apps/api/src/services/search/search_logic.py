@@ -2,7 +2,7 @@
 
 Pipeline: parse query -> embed -> hybrid candidates (vector + lexical) -> MUST/EXCLUDE filters
 (with fallback tiers if results < MIN_RESULTS) -> collapse by person with top-K blended scoring
--> penalties (missing date, location mismatch) -> explainability (fallback inline, LLM async) -> persist.
+-> penalties (missing date, location mismatch) -> explainability (LLM inline, async fallback) -> persist.
 """
 
 import asyncio
@@ -58,6 +58,11 @@ from src.providers import (
 from src.prompts.search_why_matched import get_why_matched_prompt
 from src.serializers import experience_card_to_response, experience_card_child_to_response
 from src.utils import normalize_embedding, strip_json_from_response
+from .why_matched_helpers import (
+    build_match_explanation_payload,
+    validate_why_matched_output,
+    fallback_build_why_matched,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -403,45 +408,107 @@ def _sanitize_why_matched_lines(raw_lines: Any, max_items: int = 3) -> list[str]
     return out
 
 
+def _why_matched_fallback_all(
+    cleaned_payloads: list[dict[str, Any]],
+    query_context: dict[str, Any],
+) -> dict[str, list[str]]:
+    """Build deterministic why_matched for all persons when LLM is not used."""
+    out: dict[str, list[str]] = {}
+    generic = ["Matched your search intent and profile signals."]
+    for p in cleaned_payloads:
+        person_id = str(p.get("person_id") or "").strip()
+        if not person_id:
+            continue
+        reasons = fallback_build_why_matched(p, p.get("query_context") or query_context)
+        out[person_id] = reasons if reasons else generic
+    return out
+
+
 async def _generate_llm_why_matched(
     chat: Any,
     payload: ParsedConstraintsPayload,
     people_evidence: list[dict[str, Any]],
 ) -> dict[str, list[str]]:
-    """Generate person-level why_matched lines from LLM in one batched call."""
+    """Generate person-level why_matched from LLM: cleaned payload -> prompt -> parse -> validate -> fallback where needed."""
     if not people_evidence:
         return {}
+    query_context = {
+        "query_original": payload.query_original or "",
+        "query_cleaned": payload.query_cleaned or payload.query_original or "",
+        "must": payload.must.model_dump(mode="json"),
+        "should": payload.should.model_dump(mode="json"),
+    }
+    cleaned_payloads = build_match_explanation_payload(query_context, people_evidence)
+    if not cleaned_payloads:
+        logger.info("why_matched: no cleaned payloads after dedup, skipping LLM")
+        return {}
+
     prompt = get_why_matched_prompt(
         query_original=payload.query_original,
         query_cleaned=payload.query_cleaned,
         must=payload.must.model_dump(mode="json"),
         should=payload.should.model_dump(mode="json"),
-        people_evidence=people_evidence,
+        people_evidence=cleaned_payloads,
+    )
+    payload_size = len(prompt)
+    people_count = len(cleaned_payloads)
+    logger.info(
+        "why_matched: LLM call start | people=%d payload_chars=%d query=%s",
+        people_count,
+        payload_size,
+        (payload.query_cleaned or payload.query_original or "")[:60],
     )
     try:
         raw = await chat.chat(prompt, max_tokens=1200, temperature=0.1)
+        logger.info("why_matched: LLM call success | response_chars=%d", len(raw or ""))
     except ChatServiceError as e:
-        logger.warning("why_matched LLM call failed, using deterministic fallback: %s", e)
-        return {}
+        logger.warning(
+            "why_matched: LLM call FAILED, using deterministic fallback for all | people=%d error=%s",
+            people_count,
+            e,
+        )
+        return _why_matched_fallback_all(cleaned_payloads, query_context)
+
     try:
         parsed = json.loads(strip_json_from_response(raw))
+        logger.info("why_matched: JSON parse success")
     except (TypeError, ValueError, json.JSONDecodeError) as e:
-        logger.warning("why_matched LLM JSON parse failed, using deterministic fallback: %s", e)
-        return {}
+        logger.warning(
+            "why_matched: JSON parse FAILED, using deterministic fallback for all | people=%d error=%s raw_preview=%s",
+            people_count,
+            e,
+            (raw or "")[:100],
+        )
+        return _why_matched_fallback_all(cleaned_payloads, query_context)
 
-    people = parsed.get("people")
-    if not isinstance(people, list):
-        return {}
+    validated, fallback_count = validate_why_matched_output(parsed)
+    by_person_cleaned = {p["person_id"]: p for p in cleaned_payloads}
+    generic = ["Matched your search intent and profile signals."]
     out: dict[str, list[str]] = {}
-    for item in people:
-        if not isinstance(item, dict):
-            continue
-        person_id = str(item.get("person_id") or "").strip()
+    for p in cleaned_payloads:
+        person_id = str(p.get("person_id") or "").strip()
         if not person_id:
             continue
-        lines = _sanitize_why_matched_lines(item.get("why_matched"))
-        if lines:
-            out[person_id] = lines
+        reasons = validated.get(person_id) or []
+        if not reasons:
+            reasons = fallback_build_why_matched(p, p.get("query_context") or query_context)
+            if not reasons:
+                reasons = generic
+            fallback_count += 1
+        out[person_id] = reasons
+
+    # Sample output for logging (first 2 people, first reason each)
+    sample_reasons = []
+    for reasons in list(out.values())[:2]:
+        for r in (reasons or [])[:1]:
+            sample_reasons.append((r[:60] + "...") if len(r) > 60 else r)
+    logger.info(
+        "why_matched: complete | people=%d llm_success=%d fallback_used=%d sample=%s",
+        people_count,
+        len(validated),
+        fallback_count,
+        sample_reasons,
+    )
     return out
 
 
@@ -570,15 +637,60 @@ def _apply_card_filters(stmt, ctx: _FilterContext):
     if ctx.must.intent_primary:
         stmt = stmt.where(ExperienceCard.intent_primary.in_(ctx.must.intent_primary))
     if ctx.must.domain:
-        stmt = stmt.where(ExperienceCard.domain.in_(ctx.must.domain))
+        # Prefer normalized domain for exact matching, but fall back to raw domain for older rows
+        raw_domains = [d.strip() for d in ctx.must.domain if (d or "").strip()]
+        domain_norms = [d.lower() for d in raw_domains]
+        if domain_norms:
+            norm_cond = ExperienceCard.domain_norm.in_(domain_norms)
+            fallback_raw_cond = None
+            if raw_domains:
+                fallback_raw_cond = and_(
+                    ExperienceCard.domain_norm.is_(None),
+                    or_(*[ExperienceCard.domain.ilike(f"%{d}%") for d in raw_domains]),
+                )
+            stmt = stmt.where(or_(norm_cond, fallback_raw_cond) if fallback_raw_cond is not None else norm_cond)
     if ctx.must.sub_domain:
-        stmt = stmt.where(ExperienceCard.sub_domain.in_(ctx.must.sub_domain))
+        # Prefer normalized sub_domain for exact matching, but fall back to raw sub_domain for older rows
+        raw_subdomains = [sd.strip() for sd in ctx.must.sub_domain if (sd or "").strip()]
+        sub_domain_norms = [sd.lower() for sd in raw_subdomains]
+        if sub_domain_norms:
+            norm_cond = ExperienceCard.sub_domain_norm.in_(sub_domain_norms)
+            fallback_raw_cond = None
+            if raw_subdomains:
+                fallback_raw_cond = and_(
+                    ExperienceCard.sub_domain_norm.is_(None),
+                    or_(*[ExperienceCard.sub_domain.ilike(f"%{sd}%") for sd in raw_subdomains]),
+                )
+            stmt = stmt.where(or_(norm_cond, fallback_raw_cond) if fallback_raw_cond is not None else norm_cond)
     if ctx.must.employment_type:
         stmt = stmt.where(ExperienceCard.employment_type.in_(ctx.must.employment_type))
     if ctx.must.seniority_level:
         stmt = stmt.where(ExperienceCard.seniority_level.in_(ctx.must.seniority_level))
     if ctx.apply_location and (ctx.must.city or ctx.must.country or ctx.must.location_text):
-        loc_conds = [ExperienceCard.location.ilike(f"%{t}%") for t in (ctx.must.city, ctx.must.country, ctx.must.location_text) if t]
+        # Prefer structured city/country fields, but always fall back to raw location text for older rows
+        loc_conds = []
+        if ctx.must.city:
+            city = ctx.must.city.strip()
+            if city:
+                loc_conds.append(
+                    or_(
+                        ExperienceCard.city.ilike(f"%{city}%"),
+                        ExperienceCard.location.ilike(f"%{city}%"),
+                    )
+                )
+        if ctx.must.country:
+            country = ctx.must.country.strip()
+            if country:
+                loc_conds.append(
+                    or_(
+                        ExperienceCard.country.ilike(f"%{country}%"),
+                        ExperienceCard.location.ilike(f"%{country}%"),
+                    )
+                )
+        if ctx.must.location_text:
+            loc_text = ctx.must.location_text.strip()
+            if loc_text:
+                loc_conds.append(ExperienceCard.location.ilike(f"%{loc_text}%"))
         if loc_conds:
             stmt = stmt.where(or_(*loc_conds))
     if ctx.apply_time and ctx.time_start and ctx.time_end:
@@ -1260,11 +1372,14 @@ def _prepare_pending_search_rows(
     child_best_parent_ids: dict[str, list[str]],
     children_by_id: dict[str, ExperienceCardChild],
     vis_map: dict[str, PersonProfile],
+    payload: ParsedConstraintsPayload | None = None,
 ) -> tuple[dict[str, int], list[_PendingSearchRow], list[dict[str, Any]]]:
-    """Prepare similarity, DB row payloads, and LLM evidence from ranked people."""
+    """Prepare similarity, DB row payloads, and LLM evidence from ranked people.
+    Uses deterministic fallback for why_matched (no raw labels); optional payload for query context."""
     similarity_by_person: dict[str, int] = {}
     pending_search_rows: list[_PendingSearchRow] = []
     llm_people_evidence: list[dict[str, Any]] = []
+    row_data: list[tuple[str, int, float, list[str], list[str]]] = []
 
     for rank, (person_id, score) in enumerate(ranked_people, 1):
         parent_list = person_cards.get(person_id, [])
@@ -1277,7 +1392,6 @@ def _prepare_pending_search_rows(
             for parent_id, child_id, sim in child_list[:MATCHED_CARDS_PER_PERSON]
             if child_id and child_id in children_by_id
         ]
-        fallback_why = _build_why_matched_bullets(parent_cards_for_bullets, child_evidence_for_bullets, 6)
 
         llm_people_evidence.append(
             _build_person_why_evidence(
@@ -1288,6 +1402,27 @@ def _prepare_pending_search_rows(
             )
         )
         similarity_by_person[person_id] = _score_to_similarity_percent(score)
+        row_data.append((person_id, rank, score, matched_parent_ids, matched_child_ids))
+
+    # Build cleaned payload and deterministic fallback per person (no raw labels)
+    query_context = {}
+    if payload:
+        query_context = {
+            "query_original": payload.query_original or "",
+            "query_cleaned": payload.query_cleaned or payload.query_original or "",
+            "must": payload.must.model_dump(mode="json"),
+            "should": payload.should.model_dump(mode="json"),
+        }
+    cleaned_payloads = build_match_explanation_payload(query_context, llm_people_evidence)
+    by_person_cleaned = {p["person_id"]: p for p in cleaned_payloads}
+    generic_fallback = ["Matched your search intent and profile signals."]
+    for person_id, rank, score, matched_parent_ids, matched_child_ids in row_data:
+        item = by_person_cleaned.get(person_id)
+        fallback_why = generic_fallback
+        if item:
+            reasons = fallback_build_why_matched(item, item.get("query_context") or query_context)
+            if reasons:
+                fallback_why = reasons
         pending_search_rows.append(
             _PendingSearchRow(
                 person_id=person_id,
@@ -1546,19 +1681,32 @@ async def run_search(
         child_best_parent_ids=child_best_parent_ids,
         children_by_id=children_by_id,
         vis_map=vis_map,
+        payload=payload,
     )
 
     # Only persist the first num_cards results so search history result_count matches what we returned/charged for.
     pending_to_persist = pending_search_rows[:num_cards]
     llm_evidence_to_persist = llm_people_evidence[:num_cards] if llm_people_evidence else []
 
+    # Generate why_matched (LLM or fallback) before persist so live response matches past searches (DB).
+    llm_why_by_person: dict[str, list[str]] = {}
+    if llm_evidence_to_persist:
+        try:
+            chat = get_chat_provider()
+            llm_why_by_person = await _generate_llm_why_matched(
+                chat, payload, llm_evidence_to_persist
+            )
+        except Exception as e:
+            logger.warning("why_matched sync LLM skipped (will use fallback and optional async): %s", e)
+
     why_matched_by_person = _persist_search_results(
         db=db,
         search_id=search_rec.id,
         pending_search_rows=pending_to_persist,
-        llm_why_by_person={},
+        llm_why_by_person=llm_why_by_person,
     )
-    if llm_evidence_to_persist:
+    # Only run async refresh when sync LLM didn't run or failed, so past searches get updated later.
+    if llm_evidence_to_persist and not llm_why_by_person:
         asyncio.create_task(
             _update_why_matched_async(
                 search_id=str(search_rec.id),

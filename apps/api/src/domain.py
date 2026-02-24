@@ -1,170 +1,126 @@
 """
-Domain types and schemas: enums and core entities (Person, Experience Card v1).
-Source of truth for API spec. Use for validation, docs, and future API alignment.
+Domain types and schemas for Experience Cards.
+Single source of truth for prompts, validation, and API.
 """
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 from pydantic import BaseModel, Field
 
 # -----------------------------------------------------------------------------
-# 1.1 Enums (Literal types for JSON schema / OpenAPI)
+# 1. Enums
 # -----------------------------------------------------------------------------
 
 Intent = Literal[
-    "work",
-    "education",
-    "project",
-    "business",
-    "research",
-    "practice",
-    "exposure",
-    "achievement",
-    "transition",
-    "learning",
-    "life_context",
-    "community",
-    "finance",
-    "other",
-    "mixed",
+    "work", "education", "project", "business", "research",
+    "practice", "exposure", "achievement", "transition", "learning",
+    "life_context", "community", "finance", "other", "mixed",
 ]
 
+ChildIntent = Literal[
+    "responsibility", "capability", "method", "outcome",
+    "learning", "challenge", "decision", "evidence",
+]
 
 ChildRelationType = Literal[
-    "describes",
-    "supports",
-    "demonstrates",
-    "results_in",
-    "learned_from",
-    "involves",
-    "part_of",
+    "describes", "supports", "demonstrates", "results_in",
+    "learned_from", "involves", "part_of",
 ]
 
-
-# Intents allowed only for child cards (subset of Intent)
-ChildIntent = Literal[
-    "responsibility",
-    "capability",
-    "method",
-    "outcome",
-    "learning",
-    "challenge",
-    "decision",
-    "evidence",
+SeniorityLevel = Literal[
+    "intern", "junior", "mid", "senior", "lead", "principal",
+    "staff", "manager", "director", "vp", "executive",
+    "founder", "independent", "volunteer", "student",
+    "apprentice",      # NEW — learning under a master/ustaad
+    "owner",           # NEW — family business / own shop
+    "other",
 ]
 
+EmploymentType = Literal[
+    "full_time", "part_time", "contract", "freelance",
+    "internship", "volunteer", "self_employed", "founder",
+    "apprenticeship",  # formal or informal, under a master
+    "family_business", # NEW — working in family-owned business
+    "daily_wage",      # NEW — informal daily wage / labour
+    "gig",             # NEW — gig economy (delivery, ride-share etc.)
+    "other",
+]
+
+CompanyType = Literal[
+    "startup", "scaleup", "mnc", "sme", "agency", "ngo",
+    "government", "university", "research_institution",
+    "self_employed", "cooperative",
+    "family_business",    # NEW — family-owned business
+    "informal",           # NEW — street vendor, local shop, dhaba etc.
+    "master_apprentice",  # NEW — ustaad/master-based learning or work
+    "other",
+]
+
+Confidence = Literal["high", "medium", "low"]
 
 Visibility = Literal["private", "profile_only", "searchable"]
 
 ClaimState = Literal["self_claim", "supported", "verified"]
 
-Confidence = Literal["high", "medium", "low"]
-
-Reaction = Literal["like", "respect", "insightful", "support", "curious"]
-
-VerificationStatus = Literal["unverified", "verified"]
-
-VerificationMethod = Literal["email_domain", "gov_id", "community", "document"]
-
 EvidenceType = Literal["link", "file", "reference"]
 
-ToolType = Literal["software", "equipment", "system", "platform", "instrument", "other"]
+ToolType = Literal[
+    "software", "equipment", "system",
+    "platform", "instrument", "other",
+]
 
-# Entity taxonomy for entities[].type
 EntityType = Literal[
-    "person",
-    "organization",
-    "company",
-    "school",
-    "team",
-    "community",
-    "place",
-    "event",
-    "program",
-    "domain",
-    "industry",
-    "product",
-    "service",
-    "artifact",
-    "document",
-    "portfolio_item",
-    "credential",
-    "award",
-    "tool",
-    "equipment",
-    "system",
-    "platform",
-    "instrument",
-    "method",
-    "process",
+    "person", "organization", "company", "school", "team",
+    "community", "place", "event", "program", "domain", "industry",
+    "product", "service", "artifact", "document", "portfolio_item",
+    "credential", "award", "tool", "equipment", "system", "platform",
+    "instrument", "method", "process",
+]
+
+# NEW — describes how two parallel experiences relate to each other
+ExperienceRelationType = Literal[
+    "parallel",       # running simultaneously (job + side business)
+    "sequential",     # one after the other
+    "nested",         # one within the other (project within a job)
+    "transitional",   # one led directly to the other
 ]
 
 # -----------------------------------------------------------------------------
-# 1.2 Core entities – nested models
+# 2. Constants
 # -----------------------------------------------------------------------------
 
+ALLOWED_CHILD_TYPES: tuple[str, ...] = (
+    "skills", "tools", "metrics", "achievements", "responsibilities",
+    "collaborations", "domain_knowledge", "exposure", "education", "certifications",
+)
 
-class LocationBasic(BaseModel):
+ENTITY_TAXONOMY: list[str] = list(get_args(EntityType))
+
+# -----------------------------------------------------------------------------
+# 3. Nested field models
+# -----------------------------------------------------------------------------
+
+class TimeField(BaseModel):
+    start: Optional[str] = None       # YYYY-MM | YYYY-MM-DD
+    end: Optional[str] = None
+    ongoing: Optional[bool] = None
+    text: Optional[str] = None        # user's original phrasing
+    confidence: Confidence
+
+
+class LocationField(BaseModel):
     city: Optional[str] = None
     region: Optional[str] = None
     country: Optional[str] = None
-
-
-class PersonVerification(BaseModel):
-    status: VerificationStatus
-    methods: list[VerificationMethod]
-
-
-class PersonPrivacyDefaults(BaseModel):
-    default_visibility: Visibility
-
-
-class PersonSchema(BaseModel):
-    """Person (user profile)."""
-
-    person_id: str
-    username: str
-    display_name: str
-    photo_url: Optional[str] = None
-    bio: Optional[str] = None
-    location: LocationBasic
-    verification: PersonVerification
-    privacy_defaults: PersonPrivacyDefaults
-    created_at: datetime
-    updated_at: datetime
-
-
-# --- Experience Card v1 nested models ---
-
-
-class LanguageField(BaseModel):
-    raw_text: Optional[str] = None
-    confidence: Confidence
-
-
-class TimeField(BaseModel):
-    start: Optional[str] = None  # YYYY-MM | YYYY-MM-DD
-    end: Optional[str] = None
-    ongoing: Optional[bool] = None
-    text: Optional[str] = None
-    confidence: Confidence
-
-
-class LocationWithConfidence(LocationBasic):
-    text: Optional[str] = None
+    text: Optional[str] = None        # user's original phrasing
+    is_remote: Optional[bool] = None  # NEW — explicit remote flag
     confidence: Confidence
 
 
 class RoleItem(BaseModel):
     label: str
-    seniority: Optional[str] = None
-    confidence: Confidence
-
-
-class ActionItem(BaseModel):
-    verb: str
-    verb_raw: Optional[str] = None
+    seniority: Optional[SeniorityLevel] = None
     confidence: Confidence
 
 
@@ -175,7 +131,7 @@ class TopicItem(BaseModel):
 
 
 class EntityItem(BaseModel):
-    type: str  # EntityType or extended
+    type: EntityType
     name: str
     entity_id: Optional[str] = None
     confidence: Confidence
@@ -187,14 +143,8 @@ class ToolItem(BaseModel):
     confidence: Confidence
 
 
-class ProcessItem(BaseModel):
-    name: str
-    confidence: Confidence
-
-
 class ToolingField(BaseModel):
     tools: list[ToolItem] = Field(default_factory=list)
-    processes: list[ProcessItem] = Field(default_factory=list)
     raw: Optional[str] = None
 
 
@@ -236,8 +186,62 @@ class IndexField(BaseModel):
     embedding_ref: Optional[str] = None
 
 
-# Shared fields for both parent and child cards (no parent_id/depth/relation_type/intent)
-class _ExperienceCardV1FieldsBase(BaseModel):
+# -----------------------------------------------------------------------------
+# Person (profile) domain types
+# -----------------------------------------------------------------------------
+
+class LocationBasic(BaseModel):
+    """Simple location for person profile."""
+    city: Optional[str] = None
+    region: Optional[str] = None
+    country: Optional[str] = None
+
+
+class PersonVerification(BaseModel):
+    status: str = "unverified"
+    methods: list = Field(default_factory=list)
+
+
+class PersonPrivacyDefaults(BaseModel):
+    default_visibility: str = "private"
+
+
+class PersonSchema(BaseModel):
+    """Person profile as domain v1 (for /profile-v1, serializers)."""
+    person_id: str
+    username: str
+    display_name: str
+    photo_url: Optional[str] = None
+    bio: Optional[str] = None
+    location: LocationBasic
+    verification: PersonVerification
+    privacy_defaults: PersonPrivacyDefaults
+    created_at: datetime
+    updated_at: datetime
+
+
+# Alias for API/serializers (same shape as LocationField).
+LocationWithConfidence = LocationField
+
+
+class LanguageField(BaseModel):
+    raw_text: Optional[str] = None
+    confidence: Confidence
+
+
+# NEW — links two experience cards that overlapped in time
+class ExperienceRelation(BaseModel):
+    related_card_id: str
+    relation_type: ExperienceRelationType
+    note: Optional[str] = None        # e.g. "ran this side business while employed at X"
+
+
+# -----------------------------------------------------------------------------
+# 4. Experience Card schemas
+# -----------------------------------------------------------------------------
+
+class _ExperienceCardV1Base(BaseModel):
+    """Shared fields for parent and child cards."""
     id: str
     person_id: str
     created_by: str
@@ -246,11 +250,9 @@ class _ExperienceCardV1FieldsBase(BaseModel):
     headline: str
     summary: str
     raw_text: str
-    language: LanguageField
     time: TimeField
-    location: LocationWithConfidence
+    location: LocationField
     roles: list[RoleItem] = Field(default_factory=list)
-    actions: list[ActionItem] = Field(default_factory=list)
     topics: list[TopicItem] = Field(default_factory=list)
     entities: list[EntityItem] = Field(default_factory=list)
     tooling: ToolingField = Field(default_factory=ToolingField)
@@ -263,105 +265,27 @@ class _ExperienceCardV1FieldsBase(BaseModel):
     updated_at: datetime
 
 
-class ExperienceCardParentV1Schema(_ExperienceCardV1FieldsBase):
-    """
-    Parent Experience Card: root of a card family.
-    depth=0, no parent, relation_type=null. intent is any Intent.
-    """
-
+class ExperienceCardParentV1Schema(_ExperienceCardV1Base):
+    """Parent card — root of a card family."""
     parent_id: Optional[str] = None
     depth: Literal[0] = 0
     relation_type: Optional[str] = None
     intent: Intent
+    intent_secondary: list[Intent] = Field(default_factory=list)
+    seniority_level: Optional[SeniorityLevel] = None
+    employment_type: Optional[EmploymentType] = None
+    company_type: Optional[CompanyType] = None
+    relations: list[ExperienceRelation] = Field(default_factory=list)  # NEW — parallel/overlapping experiences
 
 
-class ExperienceCardChildV1Schema(_ExperienceCardV1FieldsBase):
-    """
-    Child Experience Card: belongs to a parent card.
-    depth=1, parent_id and relation_type required. intent restricted to ChildIntent.
-    """
-
+class ExperienceCardChildV1Schema(_ExperienceCardV1Base):
+    """Child card — belongs to a parent."""
     parent_id: str
     depth: Literal[1] = 1
     relation_type: ChildRelationType
     intent: ChildIntent
+    child_type: str  # validated against ALLOWED_CHILD_TYPES at service layer
 
 
-class ExperienceCardV1Schema(BaseModel):
-    """
-    Experience Card v1 (universal content unit).
-    Use ExperienceCardParentV1Schema for parent cards, ExperienceCardChildV1Schema for children.
-    This union type remains for backward compatibility and generic validation.
-    """
-
-    id: str
-    person_id: str
-    created_by: str
-    version: Literal[1] = 1
-    edited_at: Optional[datetime] = None
-    parent_id: Optional[str] = None
-    depth: int = 0
-    relation_type: Optional[str] = None  # ChildRelationType when child
-    intent: Intent
-    headline: str
-    summary: str
-    raw_text: str
-    language: LanguageField
-    time: TimeField
-    location: LocationWithConfidence
-    roles: list[RoleItem] = Field(default_factory=list)
-    actions: list[ActionItem] = Field(default_factory=list)
-    topics: list[TopicItem] = Field(default_factory=list)
-    entities: list[EntityItem] = Field(default_factory=list)
-    tooling: ToolingField = Field(default_factory=ToolingField)
-    outcomes: list[OutcomeItem] = Field(default_factory=list)
-    evidence: list[EvidenceItem] = Field(default_factory=list)
-    privacy: PrivacyField
-    quality: QualityField
-    index: IndexField = Field(default_factory=IndexField)
-    created_at: datetime
-    updated_at: datetime
-
-
-# Allowed child_type values for ExperienceCardChild (prompts + validation)
-ALLOWED_CHILD_TYPES: tuple[str, ...] = (
-    "skills",
-    "tools",
-    "metrics",
-    "achievements",
-    "responsibilities",
-    "collaborations",
-    "domain_knowledge",
-    "exposure",
-    "education",
-    "certifications",
-)
-
-# Entity taxonomy as list (for validation / docs)
-ENTITY_TAXONOMY: list[str] = [
-    "person",
-    "organization",
-    "company",
-    "school",
-    "team",
-    "community",
-    "place",
-    "event",
-    "program",
-    "domain",
-    "industry",
-    "product",
-    "service",
-    "artifact",
-    "document",
-    "portfolio_item",
-    "credential",
-    "award",
-    "tool",
-    "equipment",
-    "system",
-    "platform",
-    "instrument",
-    "method",
-    "process",
-]
+# Alias for API (parent card as v1 response).
+ExperienceCardV1Schema = ExperienceCardParentV1Schema

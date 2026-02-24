@@ -76,7 +76,7 @@ function LoginPageContent() {
   return (
     <AuthLayout
       title="CONXA"
-      subtitle="Find people by what they've actually done. Trust-weighted, credit-governed search."
+      subtitle="The Human Search Layer for AI. Search for people using prompts not keywords."
     >
       <motion.div
         initial={{ opacity: 0, y: 8 }}

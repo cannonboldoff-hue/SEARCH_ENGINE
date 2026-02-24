@@ -250,7 +250,6 @@ export type ExperienceCardChildPatch = {
   summary?: string | null;
   tags?: string[] | null;
   time_range?: string | null;
-  company?: string | null;
   location?: string | null;
 };
 
@@ -266,7 +265,6 @@ export type ExperienceCardChild = {
   topics: { label: string }[];
   time_range: string | null;
   role_title: string | null;
-  company: string | null;
   location: string | null;
 };
 

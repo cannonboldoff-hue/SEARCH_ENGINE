@@ -120,8 +120,12 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
   const [recordingError, setRecordingError] = useState<string | null>(null);
   /** When true, speak each new assistant message (text-to-speech for conversation). Default on for voice-first flow. */
   const [speakReplies, setSpeakReplies] = useState(true);
+  const [sessionLocked, setSessionLocked] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastSpokenMessageIdRef = useRef<string | null>(null);
+  const ttsQueueRef = useRef<{ id: string; content: string }[]>([]);
+  const lastEnqueuedMessageIdRef = useRef<string | null>(null);
+  const isSpeakingTtsRef = useRef(false);
   const speechSynthRef = useRef<SpeechSynthesis | null>(null);
   const startRecordingRef = useRef<() => void>(() => {});
   const isRecordingRef = useRef(false);
@@ -134,20 +138,12 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
   /** Pre-warmed mic stream for near-instant start on next click. */
   const warmStreamRef = useRef<MediaStream | null>(null);
   /** Pre-opened transcribe WebSocket when stream is warmed (optional). */
+  const sessionLockedRef = useRef(false);
   const warmWsRef = useRef<WebSocket | null>(null);
   const warmRequestedRef = useRef(false);
   /** After this much silence (ms) with non-empty transcript, auto-stop and send. */
   const SILENCE_AUTO_SEND_MS = 10000;
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // #region agent log
-  const DEBUG_LOG = (msg: string, data: Record<string, unknown>) => {
-    fetch("http://127.0.0.1:7242/ingest/9cd54503-81ee-4381-aec3-f5256557b6dc", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location: "builder-chat.tsx", message: msg, data, timestamp: Date.now() }),
-    }).catch(() => {});
-  };
-  // #endregion agent log
   const sendMessageRef = useRef<((overrideText?: string) => Promise<void>) | null>(null);
   const stopRecordingRef = useRef<((onStopped?: (transcript: string) => void) => void) | null>(null);
   const scheduleSilenceAutoSendRef = useRef<() => void>(() => {});
@@ -266,15 +262,30 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
     [plainTextForSpeech]
   );
 
+  const processTtsQueue = useCallback(() => {
+    if (!speakReplies) return;
+    if (isSpeakingTtsRef.current) return;
+    const next = ttsQueueRef.current.shift();
+    if (!next) return;
+    isSpeakingTtsRef.current = true;
+    lastSpokenMessageIdRef.current = next.id;
+    speakText(next.content, () => {
+      isSpeakingTtsRef.current = false;
+      if (speakReplies && !sessionLockedRef.current && !isRecordingRef.current) {
+        startRecordingRef.current?.();
+      }
+      processTtsQueue();
+    });
+  }, [speakReplies, speakText]);
+
   useEffect(() => {
     if (!speakReplies || messages.length === 0) return;
     const last = messages[messages.length - 1];
-    if (last.role !== "assistant" || !last.content || last.id === lastSpokenMessageIdRef.current) return;
-    lastSpokenMessageIdRef.current = last.id;
-    speakText(last.content, () => {
-      if (speakReplies && !isRecordingRef.current) startRecordingRef.current?.();
-    });
-  }, [messages, speakReplies, speakText]);
+    if (last.role !== "assistant" || !last.content || last.id === lastEnqueuedMessageIdRef.current) return;
+    lastEnqueuedMessageIdRef.current = last.id;
+    ttsQueueRef.current.push({ id: last.id, content: last.content });
+    processTtsQueue();
+  }, [messages, speakReplies, processTtsQueue]);
 
   useEffect(() => {
     return () => {
@@ -388,13 +399,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           if (data.type === "transcript" && data.transcript) {
             lastTranscriptRef.current = appendTranscriptText(lastTranscriptRef.current, data.transcript);
             setLiveTranscript(lastTranscriptRef.current);
-            // #region agent log
-            DEBUG_LOG("transcript chunk (warm)", {
-              chunkLen: (data.transcript as string).length,
-              totalLen: lastTranscriptRef.current.length,
-              hypothesisId: "H2_H3",
-            });
-            // #endregion agent log
             scheduleSilenceAutoSendRef.current?.();
           }
         } catch {}
@@ -450,13 +454,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           if (data.type === "transcript" && data.transcript) {
             lastTranscriptRef.current = appendTranscriptText(lastTranscriptRef.current, data.transcript);
             setLiveTranscript(lastTranscriptRef.current);
-            // #region agent log
-            DEBUG_LOG("transcript chunk (cold)", {
-              chunkLen: (data.transcript as string).length,
-              totalLen: lastTranscriptRef.current.length,
-              hypothesisId: "H2_H3",
-            });
-            // #endregion agent log
             scheduleSilenceAutoSendRef.current?.();
           }
         } catch {}
@@ -490,6 +487,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
 
   isRecordingRef.current = isRecording;
   startRecordingRef.current = startRecording;
+  sessionLockedRef.current = sessionLocked;
 
   const toggleRecording = useCallback(() => {
     if (isRecording) stopRecording();
@@ -653,9 +651,20 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
             setStage("clarifying");
           } else if (firstClarify.should_stop || (firstClarify.filled && Object.keys(firstClarify.filled).length > 0)) {
             if (firstClarify.filled && Object.keys(firstClarify.filled).length > 0) mergeFilledIntoCard(firstClarify.filled);
+            const mergedParent = { ...parent, ...(firstClarify.filled || {}) } as CardFamilyV1Response["parent"];
+            const cardId = (mergedParent as { id?: string }).id;
+            if (cardId) {
+              try {
+                await api("/experience-cards/finalize", {
+                  method: "POST",
+                  body: { card_id: cardId },
+                });
+              } catch {
+                // If finalize fails, user can still edit later via manual flows.
+              }
+            }
             queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
             queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
-            const mergedParent = { ...parent, ...(firstClarify.filled || {}) } as CardFamilyV1Response["parent"];
             addMessage({
               role: "assistant",
               content: "Your experience card is ready. You can edit it anytime in **Your Cards**.",
@@ -664,7 +673,23 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
             setCurrentCardFamily(null);
             setStage("awaiting_experience");
             onCardsSaved?.();
+            sessionLockedRef.current = true;
+            setSessionLocked(true);
+            if (isRecordingRef.current) {
+              stopRecording();
+            }
           } else {
+            const cardId = (parent as { id?: string }).id;
+            if (cardId) {
+              try {
+                await api("/experience-cards/finalize", {
+                  method: "POST",
+                  body: { card_id: cardId },
+                });
+              } catch {
+                // Non-fatal; card will remain hidden until successfully finalized.
+              }
+            }
             addMessage({
               role: "assistant",
               content: "Your experience card is ready. You can edit it anytime in **Your Cards**.",
@@ -675,6 +700,11 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
             queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
             queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
             onCardsSaved?.();
+            sessionLockedRef.current = true;
+            setSessionLocked(true);
+            if (isRecordingRef.current) {
+              stopRecording();
+            }
           }
           setLoading(false);
           return;
@@ -764,9 +794,20 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           setStage("clarifying");
         } else if (firstClarify.should_stop || (firstClarify.filled && Object.keys(firstClarify.filled).length > 0)) {
           if (firstClarify.filled && Object.keys(firstClarify.filled).length > 0) mergeFilledIntoCard(firstClarify.filled);
+          const mergedParent = { ...parent, ...(firstClarify.filled || {}) } as CardFamilyV1Response["parent"];
+          const cardId = (mergedParent as { id?: string }).id;
+          if (cardId) {
+            try {
+              await api("/experience-cards/finalize", {
+                method: "POST",
+                body: { card_id: cardId },
+              });
+            } catch {
+              // Non-fatal; user can retry saving from Cards screen.
+            }
+          }
           queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
           queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
-          const mergedParent = { ...parent, ...(firstClarify.filled || {}) } as CardFamilyV1Response["parent"];
           addMessage({
             role: "assistant",
             content: "Your experience card is ready. You can edit it anytime in **Your Cards**.",
@@ -775,7 +816,23 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           setCurrentCardFamily(null);
           setStage("awaiting_experience");
           onCardsSaved?.();
+          sessionLockedRef.current = true;
+          setSessionLocked(true);
+          if (isRecordingRef.current) {
+            stopRecording();
+          }
         } else {
+          const cardId = (parent as { id?: string }).id;
+          if (cardId) {
+            try {
+              await api("/experience-cards/finalize", {
+                method: "POST",
+                body: { card_id: cardId },
+              });
+            } catch {
+              // Ignore finalize error; card remains draft until successful.
+            }
+          }
           addMessage({
             role: "assistant",
             content: "Your experience card is ready. You can edit it anytime in **Your Cards**.",
@@ -786,6 +843,11 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
           queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
           onCardsSaved?.();
+          sessionLockedRef.current = true;
+          setSessionLocked(true);
+          if (isRecordingRef.current) {
+            stopRecording();
+          }
         }
       } catch (e) {
         addMessage({
@@ -828,10 +890,21 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
         } else if (res.should_stop || (res.filled && Object.keys(res.filled).length > 0)) {
           if (res.filled && Object.keys(res.filled).length > 0) mergeFilledIntoCard(res.filled);
           setClarifyHistory([]);
-          queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
-          queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
           const parent = (currentCardFamily?.parent ?? {}) as Record<string, unknown>;
           const mergedParent = { ...parent, ...(res.filled || {}) } as CardFamilyV1Response["parent"];
+          const cardId = (mergedParent as { id?: string }).id;
+          if (cardId) {
+            try {
+              await api("/experience-cards/finalize", {
+                method: "POST",
+                body: { card_id: cardId },
+              });
+            } catch {
+              // Finalize failure won't block showing the card preview.
+            }
+          }
+          queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
+          queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
           const finalFamily: CardFamilyV1Response = currentCardFamily
             ? { ...currentCardFamily, parent: mergedParent }
             : { parent: mergedParent, children: [] };
@@ -843,7 +916,24 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           setCurrentCardFamily(null);
           setStage("awaiting_experience");
           onCardsSaved?.();
+          sessionLockedRef.current = true;
+          setSessionLocked(true);
+          if (isRecordingRef.current) {
+            stopRecording();
+          }
         } else {
+          const parent = (currentCardFamily?.parent ?? {}) as Record<string, unknown>;
+          const cardId = (parent as { id?: string }).id;
+          if (cardId) {
+            try {
+              await api("/experience-cards/finalize", {
+                method: "POST",
+                body: { card_id: cardId },
+              });
+            } catch {
+              // Ignore; card stays draft until finalize succeeds.
+            }
+          }
           addMessage({
             role: "assistant",
             content: "Your experience card is ready. You can edit it anytime in **Your Cards**.",
@@ -854,6 +944,11 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
           queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
           onCardsSaved?.();
+          sessionLockedRef.current = true;
+          setSessionLocked(true);
+          if (isRecordingRef.current) {
+            stopRecording();
+          }
         }
       } catch (e) {
         addMessage({
@@ -892,13 +987,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
       silenceTimeoutRef.current = setTimeout(() => {
         silenceTimeoutRef.current = null;
         const t = lastTranscriptRef.current.trim();
-        // #region agent log
-        DEBUG_LOG("silence timeout fired", {
-          transcriptLen: t.length,
-          hasText: !!t,
-          hypothesisId: "H1_H4_H5",
-        });
-        // #endregion agent log
         if (t) stopRecordingRef.current?.((transcript) => sendMessageRef.current?.(transcript));
         else stopRecordingRef.current?.();
       }, SILENCE_AUTO_SEND_MS);
@@ -1056,14 +1144,14 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           }}
           rows={2}
           className="flex-1 min-h-[44px] max-h-[120px] resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          disabled={loading}
+          disabled={loading || sessionLocked}
         />
         <Button
           type="button"
           variant={isRecording ? "destructive" : "outline"}
           size="icon"
           onClick={toggleRecording}
-          disabled={loading || isConnectingRecorder}
+          disabled={loading || isConnectingRecorder || sessionLocked}
           className="shrink-0 h-11 w-11"
           aria-label={isRecording ? "Stop recording" : "Voice input"}
         >
@@ -1074,7 +1162,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           variant={speakReplies ? "secondary" : "outline"}
           size="icon"
           onClick={() => setSpeakReplies((on) => !on)}
-          disabled={loading}
+          disabled={loading || sessionLocked}
           className="shrink-0 h-11 w-11"
           aria-label={speakReplies ? "Voice on — click to turn off" : "Voice off — click to hear AI replies"}
           title={speakReplies ? "Voice on — AI replies are spoken; mic auto-starts after each reply" : "Turn on to hear AI replies and auto-listen after each reply"}
@@ -1085,7 +1173,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           type="button"
           size="icon"
           onClick={() => sendMessage()}
-          disabled={(!input.trim() && !liveTranscript.trim()) || loading}
+          disabled={(!input.trim() && !liveTranscript.trim()) || loading || sessionLocked}
           className="shrink-0 h-11 w-11"
           aria-label="Send"
         >

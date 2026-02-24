@@ -43,6 +43,7 @@ from src.schemas import (
     ExperienceCardResponse,
     ExperienceCardChildPatch,
     ExperienceCardChildResponse,
+    FinalizeExperienceCardRequest,
 )
 from src.core import decode_access_token
 from src.core.config import get_settings
@@ -571,7 +572,6 @@ def _child_merged_to_patch(merged: dict) -> ExperienceCardChildPatch:
         summary=merged.get("summary") or None,
         tags=tags,
         time_range=merged.get("time_range") or None,
-        company=merged.get("company") or None,
         location=location_val,
     )
 
@@ -582,7 +582,7 @@ _PARENT_MERGE_KEYS = (
     "location", "employment_type", "start_date", "end_date", "intent_primary", "intent_secondary_str",
     "seniority_level", "confidence_score",
 )
-_CHILD_MERGE_KEYS = ("title", "summary", "tagsStr", "time_range", "company", "location")
+_CHILD_MERGE_KEYS = ("title", "summary", "tagsStr", "time_range", "location")
 
 
 @router.post("/experience-cards/fill-missing-from-text", response_model=FillFromTextResponse)
@@ -709,6 +709,44 @@ async def clarify_experience(
         asked_history_entry=result.get("asked_history_entry"),
         canonical_family=result.get("canonical_family"),
     )
+
+
+@router.post("/experience-cards/finalize", response_model=ExperienceCardResponse)
+async def finalize_experience_card(
+    body: FinalizeExperienceCardRequest,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Finalize a drafted experience card:
+    - Ensure it belongs to the current user
+    - Mark it visible
+    - Embed parent + children so it appears in search and \"Your Cards\".
+    """
+    card = await experience_card_service.get_card(db, body.card_id, current_user.id)
+    if not card:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found")
+
+    # Mark card as visible (was created as non-visible draft by the pipeline)
+    card.experience_card_visibility = True
+
+    # Load all children for this card so they are embedded together.
+    children_result = await db.execute(
+        select(ExperienceCardChild).where(
+            ExperienceCardChild.parent_experience_id == card.id,
+            ExperienceCardChild.person_id == current_user.id,
+        )
+    )
+    children = children_result.scalars().all()
+
+    await _reembed_cards_after_update(
+        db,
+        parents=[card],
+        children=children,
+        context="finalize",
+    )
+
+    return experience_card_to_response(card)
 
 
 @router.post("/experience-cards", response_model=ExperienceCardResponse)

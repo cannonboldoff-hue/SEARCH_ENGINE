@@ -170,10 +170,6 @@ def apply_child_patch(
         _apply_nested_text(value, "location", body.location)
         changed = True
 
-    if body.company is not None:
-        value["company"] = body.company
-        changed = True
-
     child.value = value
     if changed:
         child.search_document = build_child_search_document_from_value(child.label, value)
@@ -191,7 +187,10 @@ async def list_my_cards(
     """List experience cards for the user, newest first."""
     q = (
         select(ExperienceCard)
-        .where(ExperienceCard.user_id == person_id)
+        .where(
+            ExperienceCard.user_id == person_id,
+            ExperienceCard.experience_card_visibility.is_(True),
+        )
         .order_by(ExperienceCard.created_at.desc())
     )
     result = await db.execute(q)

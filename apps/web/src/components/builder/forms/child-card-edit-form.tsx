@@ -12,7 +12,6 @@ interface ChildCardEditFormProps {
     summary: string;
     tagsStr: string;
     time_range: string;
-    company: string;
     location: string;
   };
   onChange: (updates: Partial<ChildCardEditFormProps["form"]>) => void;
@@ -143,23 +142,13 @@ export function ChildCardEditForm({
             className="bg-background text-sm"
           />
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Time range</Label>
-            <Input
-              value={form.time_range}
-              onChange={(e) => onChange({ time_range: e.target.value })}
-              className="bg-background text-sm"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Company</Label>
-            <Input
-              value={form.company}
-              onChange={(e) => onChange({ company: e.target.value })}
-              className="bg-background text-sm"
-            />
-          </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium">Time range</Label>
+          <Input
+            value={form.time_range}
+            onChange={(e) => onChange({ time_range: e.target.value })}
+            className="bg-background text-sm"
+          />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs font-medium">Location</Label>

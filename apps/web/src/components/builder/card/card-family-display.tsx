@@ -109,13 +109,12 @@ export function CardFamilyDisplay({
                         {child.title || child.summary || "Detail"}
                       </p>
                     </div>
-                    {(child.summary || child.company || child.time_range) && (
+                    {(child.summary || child.time_range) && (
                       <div className="mt-1.5 pt-1.5 border-t border-border/30 text-xs text-muted-foreground space-y-0.5">
                         {child.summary && (
                           <p className="line-clamp-2">{child.summary}</p>
                         )}
                         <div className="flex flex-wrap gap-x-3">
-                          {child.company && <span>{child.company}</span>}
                           {child.time_range && (
                             <span>{child.time_range}</span>
                           )}
