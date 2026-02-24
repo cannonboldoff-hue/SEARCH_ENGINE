@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -30,6 +32,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_api_root = Path(__file__).resolve().parents[1]  # apps/api/
+_img_dir = _api_root / "img"
+if _img_dir.exists():
+    app.mount("/img", StaticFiles(directory=str(_img_dir)), name="img")
 
 for router in ROUTERS:
     app.include_router(router)

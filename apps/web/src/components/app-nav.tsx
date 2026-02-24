@@ -28,6 +28,9 @@ function formatSearchDate(value: string): string {
 }
 
 export function AppNav() {
+  const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+  const logoSrc = apiBase ? `${apiBase}/img/kana_icon_512.png` : "/img/kana_icon_512.png";
+
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const selectedSearchId = searchParams.get("id");
@@ -148,8 +151,8 @@ export function AppNav() {
                 onClick={handleNavClick}
                 className="flex flex-1 items-center text-foreground hover:opacity-90 transition-opacity min-w-0 min-h-[44px]"
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-semibold">
-                  C
+                <span className="inline-block h-9 w-9 shrink-0 overflow-hidden rounded-full bg-muted">
+                  <img src={logoSrc} alt="CONXA" className="block h-full w-full object-cover" style={{ borderRadius: '50%', transform: 'scale(1.25)' }} />
                 </span>
                 <span className="font-semibold text-sm truncate ml-2.5">CONXA</span>
               </Link>

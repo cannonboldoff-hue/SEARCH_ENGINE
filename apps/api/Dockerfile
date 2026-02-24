@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project files (context is apps/api)
 COPY pyproject.toml alembic.ini ./
 COPY alembic ./alembic
+COPY img ./img
 COPY src ./src
 
 RUN pip install --no-cache-dir -e .
