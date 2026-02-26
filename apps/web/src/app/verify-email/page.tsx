@@ -16,8 +16,11 @@ import { ErrorMessage, LoadingScreen } from "@/components/feedback";
 import { api } from "@/lib/api";
 
 const schema = z.object({
-  email: z.string().email("Invalid email"),
-  token: z.string().min(4, "Verification code required"),
+  email: z.string().email("Invalid email").transform((s) => s.trim().toLowerCase()),
+  token: z
+    .string()
+    .transform((s) => s.trim().replace(/\s/g, ""))
+    .pipe(z.string().regex(/^\d{6}$/, "Enter the 6-digit code")),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -48,14 +51,23 @@ function VerifyEmailPageContent() {
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
   const verify = useCallback(async (email: string, token: string) => {
+    const trimmedToken = token.trim().replace(/\s/g, "");
+    if (trimmedToken.length !== 6 || !/^\d{6}$/.test(trimmedToken)) {
+      setError("Enter the 6-digit code from your email");
+      return;
+    }
     setError(null);
     setSuccess(null);
     setIsVerifying(true);
     try {
-      await api("/auth/verify-email", { method: "POST", body: { email, token } });
+      await api("/auth/verify-email", {
+        method: "POST",
+        body: { email: email.trim().toLowerCase(), token: trimmedToken },
+      });
       router.replace(`/login?email=${encodeURIComponent(email)}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Verification failed");
+      const message = e instanceof Error ? e.message : "Verification failed";
+      setError(message);
     } finally {
       setIsVerifying(false);
     }
@@ -66,7 +78,7 @@ function VerifyEmailPageContent() {
   };
 
   const onResend = async () => {
-    const email = getValues("email")?.trim();
+    const email = getValues("email")?.trim().toLowerCase();
     if (!email) {
       setError("Enter your email to resend the verification email.");
       return;
@@ -78,7 +90,8 @@ function VerifyEmailPageContent() {
       await api("/auth/verify-email/resend", { method: "POST", body: { email } });
       setSuccess("Verification email sent. Check your inbox and spam folder.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to resend verification email");
+      const message = e instanceof Error ? e.message : "Failed to resend verification email";
+      setError(message);
     } finally {
       setIsResending(false);
     }
@@ -102,7 +115,7 @@ function VerifyEmailPageContent() {
   return (
     <AuthLayout
       title="Verify your email"
-      subtitle="We sent a verification link and code. Enter it below to activate your account."
+      subtitle="We sent a verification code to your email. Enter it below to activate your account."
     >
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -113,7 +126,7 @@ function VerifyEmailPageContent() {
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">Email verification</CardTitle>
             <CardDescription>
-              Paste the code from the email or use the link you received.
+              Paste the verification code from the email.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -140,7 +153,10 @@ function VerifyEmailPageContent() {
                 <Label htmlFor="token">Verification code</Label>
                 <Input
                   id="token"
-                  placeholder="Paste code from email"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="123456"
                   {...register("token")}
                 />
                 {errors.token && (

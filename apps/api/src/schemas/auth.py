@@ -40,6 +40,16 @@ class VerifyEmailRequest(BaseModel):
     email: EmailStr
     token: str
 
+    @field_validator("token")
+    @classmethod
+    def validate_token(cls, value: str) -> str:
+        trimmed = (value or "").strip()
+        if not trimmed:
+            raise ValueError("Verification code is required")
+        if not re.match(r"^\d{6}$", trimmed):
+            raise ValueError("Verification code must be exactly 6 digits")
+        return trimmed
+
 
 class VerifyEmailResponse(BaseModel):
     verified: bool

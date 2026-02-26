@@ -4,8 +4,6 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
-
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -38,11 +36,6 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _build_verification_link(base_url: str, email: str, token: str) -> str:
-    sep = "&" if "?" in base_url else "?"
-    return f"{base_url}{sep}token={quote(token)}&email={quote(email)}"
-
-
 async def _send_verification_email(db: AsyncSession, person: Person) -> None:
     try:
         provider = get_email_provider()
@@ -51,23 +44,17 @@ async def _send_verification_email(db: AsyncSession, person: Person) -> None:
         return
 
     settings = get_settings()
-    token = secrets.token_urlsafe(32)
+    token = str(secrets.randbelow(1_000_000)).zfill(6)
     now = datetime.now(timezone.utc)
     person.email_verification_token_hash = _hash_token(token)
     person.email_verification_expires_at = now + timedelta(minutes=settings.email_verify_expire_minutes)
     await db.flush()
 
-    verify_url = None
-    if settings.email_verify_url_base:
-        verify_url = _build_verification_link(settings.email_verify_url_base, person.email, token)
-
     lines = [
         "Verify your email for CONXA.",
         f"Verification code: {token}",
+        f"This code expires in {settings.email_verify_expire_minutes} minutes.",
     ]
-    if verify_url:
-        lines.insert(1, f"Verification link: {verify_url}")
-    lines.append(f"This code expires in {settings.email_verify_expire_minutes} minutes.")
     lines.append("If you did not request this, you can ignore this email.")
     text = "\n\n".join(lines)
 
@@ -150,10 +137,15 @@ async def verify_email(db: AsyncSession, body: VerifyEmailRequest) -> VerifyEmai
     if not person.email_verification_token_hash or not person.email_verification_expires_at:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification code")
     if person.email_verification_expires_at < now:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification code")
-
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code has expired. Please request a new one.",
+        )
     if _hash_token(body.token) != person.email_verification_token_hash:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification code")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid verification code. Please check and try again.",
+        )
 
     person.email_verified_at = now
     person.email_verification_token_hash = None
