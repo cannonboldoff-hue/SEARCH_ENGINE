@@ -53,7 +53,11 @@ export async function api<T>(
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    const message = normalizeErrorDetail(err.detail) || err.message || String(res.status);
+    let message = normalizeErrorDetail(err.detail) || err.message || String(res.status);
+    if (res.status === 421) {
+      message =
+        "Request temporarily unavailable. Please try again in a moment or refresh the page.";
+    }
     throw new Error(message);
   }
   if (res.status === 204) return undefined as T;
@@ -93,7 +97,11 @@ export async function apiUpload<T>(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    const message = normalizeErrorDetail(err.detail) || err.message || String(res.status);
+    let message = normalizeErrorDetail(err.detail) || err.message || String(res.status);
+    if (res.status === 421) {
+      message =
+        "Upload temporarily unavailable. Please try again in a moment or refresh the page.";
+    }
     throw new Error(message);
   }
   return res.json();
