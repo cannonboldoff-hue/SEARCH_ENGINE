@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select, func, or_, and_, text
 
-from src.core import SEARCH_RESULT_EXPIRY_HOURS
+from src.core import SEARCH_NEVER_EXPIRES
 from src.db.models import (
     Person,
     PersonProfile,
@@ -182,12 +182,12 @@ async def _validate_search_session(
 
 
 def _search_expired(search_rec: Search) -> bool:
-    """Return whether a search record is expired using explicit or derived expiry."""
+    """Return whether a search record is expired. Searches never expire until deleted."""
     now = datetime.now(timezone.utc)
-    if getattr(search_rec, "expires_at", None):
-        return search_rec.expires_at < now
-    cutoff = now - timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
-    return not search_rec.created_at or search_rec.created_at < cutoff
+    expires_at = getattr(search_rec, "expires_at", None)
+    if not expires_at:
+        return False
+    return expires_at < now
 
 
 def _extract_num_cards_from_query(query: str) -> int | None:
@@ -773,14 +773,13 @@ async def _create_search_record(
 ) -> Search:
     """Insert Search row and return the flushed ORM object."""
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS)
     search_rec = Search(
         searcher_id=searcher_id,
         query_text=query_text,
         parsed_constraints_json=filters_dict,
         filters=filters_dict,
         extra={"fallback_tier": fallback_tier} if fallback_tier is not None else None,
-        expires_at=expires_at,
+        expires_at=SEARCH_NEVER_EXPIRES,
     )
     db.add(search_rec)
     await db.flush()

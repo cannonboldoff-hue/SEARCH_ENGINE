@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core import SEARCH_RESULT_EXPIRY_HOURS
+from src.core import SEARCH_NEVER_EXPIRES
 from src.db.models import Person, PersonProfile, Search, UnlockContact
 from src.schemas import ContactDetailsResponse, UnlockContactResponse
 from src.services.credits import (
@@ -89,7 +89,7 @@ async def unlock_contact(
             parsed_constraints_json=None,
             filters={"source": "discover_profile"},
             extra={"source": "discover_profile"},
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=SEARCH_RESULT_EXPIRY_HOURS),
+            expires_at=SEARCH_NEVER_EXPIRES,
         )
         db.add(discover_search)
         await db.flush()
