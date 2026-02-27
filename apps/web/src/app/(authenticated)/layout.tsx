@@ -1,9 +1,6 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { useAuth } from "@/contexts/auth-context";
-import { getPostAuthPath, isPathAllowedForStep } from "@/lib/auth-flow";
+import { Suspense } from "react";
 import { SearchProvider } from "@/contexts/search-context";
 import { AppNav } from "@/components/app-nav";
 import { SidebarWidthProvider, useSidebarWidth } from "@/contexts/sidebar-width-context";
@@ -15,32 +12,6 @@ export default function AuthenticatedLayout({
 }: {
   children: ReactNode;
 }) {
-  const { isAuthenticated, onboardingStep, isAuthLoading } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
-  const requiredPath = getPostAuthPath(onboardingStep);
-  const routeAllowed = isPathAllowedForStep(pathname, onboardingStep);
-
-  useEffect(() => {
-    if (isAuthLoading) return;
-    if (!isAuthenticated) {
-      router.replace("/login");
-      return;
-    }
-    if (onboardingStep != null && !routeAllowed) {
-      router.replace(requiredPath);
-    }
-  }, [isAuthLoading, isAuthenticated, onboardingStep, requiredPath, routeAllowed, router]);
-
-  if (isAuthLoading || !isAuthenticated || !routeAllowed) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3">
-        <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      </div>
-    );
-  }
-
   return (
     <SearchProvider>
       <SidebarWidthProvider>

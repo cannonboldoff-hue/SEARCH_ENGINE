@@ -1,5 +1,4 @@
 import { API_BASE } from "./constants";
-import { AUTH_TOKEN_KEY } from "./auth-flow";
 
 function normalizeErrorDetail(detail: unknown): string | null {
   if (typeof detail === "string") return detail;
@@ -10,11 +9,6 @@ function normalizeErrorDetail(detail: unknown): string | null {
     return detail.map((d) => (d && typeof d === "object" && "msg" in d ? d.msg : String(d))).join(", ");
   }
   return null;
-}
-
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
 }
 
 export type ApiOptions = Omit<RequestInit, "body"> & { body?: unknown };
@@ -28,8 +22,6 @@ export async function api<T>(
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const url = `${API_BASE}${path}`;
   if (!url.startsWith("http")) {
     throw new Error("Set NEXT_PUBLIC_API_BASE_URL (e.g. http://localhost:8000) and ensure the API is running.");
@@ -82,9 +74,7 @@ export async function apiUpload<T>(
   formData: FormData,
   options: Omit<RequestInit, "body" | "headers"> = {}
 ): Promise<T> {
-  const token = getToken();
   const headers: HeadersInit = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const url = `${API_BASE}${path}`;
   if (!url.startsWith("http")) {
     throw new Error("Set NEXT_PUBLIC_API_BASE_URL and ensure the API is running.");
