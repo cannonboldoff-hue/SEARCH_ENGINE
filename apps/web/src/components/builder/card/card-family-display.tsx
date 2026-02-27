@@ -1,9 +1,10 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { TiltCard } from "@/components/tilt-card";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { V1CardDetails, isPlaceholderChildCard } from "./v1-card-details";
 import { cn } from "@/lib/utils";
+import { ChevronDown } from "lucide-react";
 import type { ExperienceCard, ExperienceCardChild } from "@/types";
 
 export interface CardFamilyDisplayProps {
@@ -12,122 +13,156 @@ export interface CardFamilyDisplayProps {
   index?: number;
 }
 
+// Category colors and icons
+const categoryConfig: Record<string, { bg: string; text: string; label: string }> = {
+  RESPONSIBILITIES: { bg: "bg-slate-100 dark:bg-slate-900", text: "text-slate-700 dark:text-slate-300", label: "✓ Responsibilities" },
+  COLLABORATIONS: { bg: "bg-blue-100 dark:bg-blue-900", text: "text-blue-700 dark:text-blue-300", label: "🤝 Collaborations" },
+  METRICS: { bg: "bg-amber-100 dark:bg-amber-900", text: "text-amber-700 dark:text-amber-300", label: "📊 Metrics" },
+  ACHIEVEMENTS: { bg: "bg-green-100 dark:bg-green-900", text: "text-green-700 dark:text-green-300", label: "🏆 Achievements" },
+};
+
+function getCategoryConfig(category: string) {
+  const key = (category ?? "").toString().toUpperCase().trim();
+  return categoryConfig[key] || { bg: "bg-muted", text: "text-muted-foreground", label: category };
+}
+
+function groupChildrenByCategory(children: ExperienceCardChild[]) {
+  const grouped: Record<string, ExperienceCardChild[]> = {};
+  children.forEach((child) => {
+    const category = (child.relation_type ?? "").toString().trim().toUpperCase() || "OTHER";
+    if (!grouped[category]) grouped[category] = [];
+    grouped[category].push(child);
+  });
+  return grouped;
+}
+
 export function CardFamilyDisplay({
   parent,
   children,
   index = 0,
 }: CardFamilyDisplayProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const parentObj = parent as Record<string, unknown>;
   const visibleChildren = children.filter((c) => !isPlaceholderChildCard(c as Record<string, unknown>));
+  const groupedChildren = groupChildrenByCategory(visibleChildren);
+  
   const title =
     (parentObj.title as string) ??
     (parentObj.company_name as string) ??
     "Untitled";
 
+  const startDate = (parentObj.start_date as string) || null;
+  const endDate = (parentObj.end_date as string) || null;
+  const isCurrent = (parentObj.is_current as boolean) || false;
+  const dateRange = startDate
+    ? `${startDate} - ${endDate || (isCurrent ? "Ongoing" : "")}`
+    : null;
+
+  const company = (parentObj.company_name as string) || null;
+  const location = (parentObj.location as string) || null;
+  const summary = (parentObj.summary as string) || null;
+
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 16, rotateX: -12, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={{
         type: "spring",
         stiffness: 280,
         damping: 26,
         delay: index * 0.05,
       }}
-      style={{ transformStyle: "preserve-3d", perspective: 800 }}
       className="relative max-w-full min-w-0"
     >
-      <TiltCard
-        disabled
-        maxTilt={6}
-        scale={1.01}
-        className={cn(
-          "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
-          "border-l-4 border-l-primary depth-shadow"
-        )}
-      >
-        <div className="p-4 sm:p-5 min-w-0">
-          <div className="flex items-start justify-between gap-2 w-full min-w-0">
-            <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
-              <span className="font-semibold text-sm truncate text-foreground">
-                {title}
-              </span>
-              {visibleChildren.length > 0 && (
-                <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
-                  {visibleChildren.length} thread{visibleChildren.length !== 1 ? "s" : ""}
-                </span>
+      {/* Card container */}
+      <div className="border border-border rounded-lg bg-card overflow-hidden hover:border-border/80 transition-colors">
+        {/* Collapsed/header view */}
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="w-full text-left p-4 sm:p-5 hover:bg-secondary/30 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
+        >
+          <div className="flex items-start justify-between gap-3 w-full min-w-0">
+            {/* Left: Title and metadata */}
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-base text-foreground truncate">{title}</h3>
+              
+              {/* Company and location */}
+              {(company || location) && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  {[company, location].filter(Boolean).join(" • ")}
+                </p>
               )}
-            </span>
+
+              {/* Date range */}
+              {dateRange && (
+                <p className="text-xs text-muted-foreground mt-1 font-mono">{dateRange}</p>
+              )}
+            </div>
+
+            {/* Right: Expand indicator and category counts */}
+            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+              <ChevronDown
+                className={cn(
+                  "h-5 w-5 text-muted-foreground transition-transform duration-300",
+                  isExpanded && "rotate-180"
+                )}
+              />
+              {visibleChildren.length > 0 && (
+                <div className="text-xs font-medium text-muted-foreground">
+                  {visibleChildren.length} item{visibleChildren.length !== 1 ? "s" : ""}
+                </div>
+              )}
+            </div>
           </div>
-          <V1CardDetails
-            card={parent as Record<string, unknown>}
-            summaryFullWidth
-            hideInternalFields
-          />
-        </div>
-      </TiltCard>
+        </button>
 
-      {visibleChildren.length > 0 && (
-        <div className="relative pl-7 pt-0 mt-0">
-          <span
-            className="thread-line top-0 bottom-3"
-            aria-hidden
-          />
-          <ul className="relative space-y-0">
-            {visibleChildren.map((child, childIdx) => {
-              const relationType = (child.relation_type ?? "")
-                .toString()
-                .trim();
-              const relationDisplay = relationType
-                ? relationType.replace(/_/g, " ").toUpperCase()
-                : "";
-
-              return (
-                <motion.li
-                  key={child.id}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: childIdx * 0.06, duration: 0.2 }}
-                  className="relative py-2 first:pt-3"
-                >
-                  <span
-                    className={cn(
-                      "thread-node thread-node-sm",
-                      "top-1/2 -translate-y-1/2"
-                    )}
-                    aria-hidden
-                  />
-                  <div className="ml-5 rounded-lg border border-border/40 bg-accent/30 px-3 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      {relationDisplay && (
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
-                          {relationDisplay}
-                        </p>
-                      )}
-                      <p className="font-medium text-sm text-foreground">
-                        {child.title || child.summary || "Detail"}
-                      </p>
-                    </div>
-                    {(child.summary || child.time_range) && (
-                      <div className="mt-1.5 pt-1.5 border-t border-border/30 text-xs text-muted-foreground space-y-0.5">
-                        {child.summary && (
-                          <p className="line-clamp-2">{child.summary}</p>
-                        )}
-                        <div className="flex flex-wrap gap-x-3">
-                          {child.time_range && (
-                            <span>{child.time_range}</span>
-                          )}
-                        </div>
-                      </div>
-                    )}
+        {/* Expanded details */}
+        <AnimatePresence>
+          {isExpanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.3 }}
+              className="border-t border-border bg-secondary/20"
+            >
+              <div className="p-4 sm:p-5 space-y-5">
+                {/* Summary section */}
+                {summary && (
+                  <div>
+                    <p className="text-sm text-foreground leading-relaxed">{summary}</p>
                   </div>
-                </motion.li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
+                )}
+
+                {/* Child items grouped by category */}
+                {Object.entries(groupedChildren).map(([category, items]) => {
+                  const config = getCategoryConfig(category);
+                  return (
+                    <div key={category} className="space-y-2">
+                      <h4 className={cn("text-xs font-semibold uppercase tracking-wide px-2 py-1 rounded", config.bg, config.text)}>
+                        {getCategoryConfig(category).label}
+                      </h4>
+                      <div className="space-y-2">
+                        {items.map((child) => (
+                          <div key={child.id} className="text-sm p-3 rounded bg-background/50 border border-border/40">
+                            {child.title && (
+                              <p className="font-medium text-foreground">{child.title}</p>
+                            )}
+                            {child.summary && (
+                              <p className="text-muted-foreground mt-1 leading-relaxed">{child.summary}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </motion.div>
   );
 }
