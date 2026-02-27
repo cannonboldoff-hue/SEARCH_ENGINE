@@ -126,7 +126,7 @@ export function ParentCardEditForm({
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
               <Label className="text-[11px] text-zinc-400 uppercase tracking-wide">
-                Update the missing fields.
+                Ask me questions to fill details
               </Label>
               <VoiceButton
                 isRecording={voiceInput.isRecording}
@@ -251,42 +251,34 @@ export function ParentCardEditForm({
 
         <div className="space-y-3">
           <p className="text-xs uppercase tracking-wide text-zinc-500">Meta</p>
-          <div className="grid sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <Input
               value={form.seniority_level}
               onChange={(e) => onChange({ seniority_level: e.target.value })}
               placeholder="Seniority"
             />
             <Input
-              type="number"
-              step="0.01"
-              value={form.confidence_score}
-              onChange={(e) => onChange({ confidence_score: e.target.value })}
-              placeholder="Confidence"
+              value={form.intent_primary}
+              onChange={(e) => onChange({ intent_primary: e.target.value })}
+              placeholder="Primary intent"
+            />
+            <Input
+              value={form.intent_secondary_str}
+              onChange={(e) => onChange({ intent_secondary_str: e.target.value })}
+              placeholder="Secondary intent"
             />
           </div>
-          <Input
-            value={form.intent_primary}
-            onChange={(e) => onChange({ intent_primary: e.target.value })}
-            placeholder="Primary intent"
-          />
-          <Input
-            value={form.intent_secondary_str}
-            onChange={(e) => onChange({ intent_secondary_str: e.target.value })}
-            placeholder="Secondary intent"
-          />
+          <label className="flex items-center justify-between text-sm text-zinc-300 py-1">
+            <span>Visible</span>
+            <input
+              type="checkbox"
+              checked={form.experience_card_visibility}
+              onChange={(e) =>
+                onChange({ experience_card_visibility: e.target.checked })
+              }
+            />
+          </label>
         </div>
-
-        <label className="flex items-center justify-between text-sm text-zinc-300">
-          <span>Visible</span>
-          <input
-            type="checkbox"
-            checked={form.experience_card_visibility}
-            onChange={(e) =>
-              onChange({ experience_card_visibility: e.target.checked })
-            }
-          />
-        </label>
       </div>
     </div>
   );

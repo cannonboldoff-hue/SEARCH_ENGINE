@@ -1,8 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { TiltCard } from "@/components/tilt-card";
 import { V1CardDetails, isPlaceholderChildCard } from "./v1-card-details";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ExperienceCard, ExperienceCardChild } from "@/types";
 
@@ -27,38 +27,31 @@ export function CardFamilyDisplay({
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 16, rotateX: -12, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={{
         type: "spring",
-        stiffness: 280,
-        damping: 26,
+        stiffness: 300,
+        damping: 28,
         delay: index * 0.05,
       }}
-      style={{ transformStyle: "preserve-3d", perspective: 800 }}
-      className="relative max-w-full min-w-0"
+      className="relative"
     >
-      <TiltCard
-        disabled
-        maxTilt={6}
-        scale={1.01}
-        className={cn(
-          "rounded-xl border border-border/50 glass overflow-hidden max-w-full min-w-0",
-          "border-l-4 border-l-primary depth-shadow"
-        )}
-      >
-        <div className="p-4 sm:p-5 min-w-0">
-          <div className="flex items-start justify-between gap-2 w-full min-w-0">
-            <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
-              <span className="font-semibold text-sm truncate text-foreground">
-                {title}
+      <div className={cn(
+        "rounded-2xl border border-border/40 bg-card overflow-hidden",
+        "transition-all duration-200",
+        "hover:border-border/70 hover:shadow-md",
+      )}>
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="font-semibold text-[15px] text-foreground leading-snug">
+              {title}
+            </h3>
+            {visibleChildren.length > 0 && (
+              <span className="text-xs text-muted-foreground/60 flex-shrink-0 tabular-nums mt-0.5">
+                {visibleChildren.length} detail{visibleChildren.length !== 1 ? "s" : ""}
               </span>
-              {visibleChildren.length > 0 && (
-                <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
-                  {visibleChildren.length} thread{visibleChildren.length !== 1 ? "s" : ""}
-                </span>
-              )}
-            </span>
+            )}
           </div>
           <V1CardDetails
             card={parent as Record<string, unknown>}
@@ -66,68 +59,64 @@ export function CardFamilyDisplay({
             hideInternalFields
           />
         </div>
-      </TiltCard>
 
-      {visibleChildren.length > 0 && (
-        <div className="relative pl-7 pt-0 mt-0">
-          <span
-            className="thread-line top-0 bottom-3"
-            aria-hidden
-          />
-          <ul className="relative space-y-0">
-            {visibleChildren.map((child, childIdx) => {
-              const relationType = (child.relation_type ?? "")
-                .toString()
-                .trim();
-              const relationDisplay = relationType
-                ? relationType.replace(/_/g, " ").toUpperCase()
-                : "";
+        {visibleChildren.length > 0 && (
+          <div className="border-t border-border/30 bg-muted/20 px-4 sm:px-5 py-3">
+            <div className="space-y-1.5">
+              {visibleChildren.map((child, childIdx) => {
+                const relationType = (child.relation_type ?? "")
+                  .toString()
+                  .trim();
+                const relationDisplay = relationType
+                  ? relationType.replace(/_/g, " ")
+                  : "";
 
-              return (
-                <motion.li
-                  key={child.id}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: childIdx * 0.06, duration: 0.2 }}
-                  className="relative py-2 first:pt-3"
-                >
-                  <span
-                    className={cn(
-                      "thread-node thread-node-sm",
-                      "top-1/2 -translate-y-1/2"
-                    )}
-                    aria-hidden
-                  />
-                  <div className="ml-5 rounded-lg border border-border/40 bg-accent/30 px-3 py-2.5">
+                return (
+                  <motion.div
+                    key={child.id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: childIdx * 0.04, duration: 0.15 }}
+                    className="flex items-start gap-2.5 rounded-lg px-2.5 py-2 -mx-1 transition-colors hover:bg-muted/40"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 mt-0.5 flex-shrink-0" />
                     <div className="min-w-0 flex-1">
                       {relationDisplay && (
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
+                        <span className="inline-block text-[10px] uppercase tracking-wider text-primary/60 font-medium mb-0.5">
                           {relationDisplay}
-                        </p>
+                        </span>
                       )}
-                      <p className="font-medium text-sm text-foreground">
+                      <p className="text-sm font-medium text-foreground leading-snug">
                         {child.title || child.summary || "Detail"}
                       </p>
-                    </div>
-                    {(child.summary || child.time_range) && (
-                      <div className="mt-1.5 pt-1.5 border-t border-border/30 text-xs text-muted-foreground space-y-0.5">
-                        {child.summary && (
-                          <p className="line-clamp-2">{child.summary}</p>
-                        )}
-                        <div className="flex flex-wrap gap-x-3">
-                          {child.time_range && (
-                            <span>{child.time_range}</span>
-                          )}
+                      {child.summary && (
+                        <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-1">
+                          {child.summary}
+                        </p>
+                      )}
+                      {child.time_range && (
+                        <p className="text-[11px] text-muted-foreground/50 mt-0.5">{child.time_range}</p>
+                      )}
+                      {Array.isArray(child.tags) && child.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {child.tags.map((tag, i) => (
+                            <span
+                              key={`${tag}-${i}`}
+                              className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary/80"
+                            >
+                              {tag}
+                            </span>
+                          ))}
                         </div>
-                      </div>
-                    )}
-                  </div>
-                </motion.li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
     </motion.div>
   );
 }

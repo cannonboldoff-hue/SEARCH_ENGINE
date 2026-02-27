@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # CORS (comma-separated origins; * allows all)
     cors_origins: str = "*"
 
+    # Public API URL for constructing profile photo URLs (when behind proxy). If unset, uses request.base_url.
+    api_public_url: str | None = None
+
     # Profile photo uploads (directory path; created if missing)
     profile_photos_upload_dir: str | None = None
 

@@ -73,6 +73,7 @@ export default function OnboardingBioPage() {
   const profilePhotoUrl = watch("profile_photo_url");
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoLoadError, setPhotoLoadError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { fields, append, remove } = useFieldArray({ control, name: "past_companies" });
@@ -103,6 +104,10 @@ export default function OnboardingBioPage() {
       setValue("past_companies", []);
     }
   }, [bio, setValue]);
+
+  useEffect(() => {
+    setPhotoLoadError(false);
+  }, [profilePhotoUrl, photoPreview]);
 
   const putBio = useMutation({
     mutationFn: (body: PutBioBody) =>
@@ -252,12 +257,16 @@ export default function OnboardingBioPage() {
                 className="relative w-24 h-24 rounded-full overflow-hidden bg-muted border-2 border-border hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-colors flex items-center justify-center"
                 aria-label="Select profile photo (optional)"
               >
-                {(photoPreview || profilePhotoUrl) ? (
+                {(photoPreview || (profilePhotoUrl && !photoLoadError)) ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
                   <img
                     src={photoPreview ?? profilePhotoUrl ?? ""}
                     alt="Profile"
                     className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                    onError={() => {
+                      if (!photoPreview) setPhotoLoadError(true);
+                    }}
                   />
                 ) : (
                   <User className="h-10 w-10 text-muted-foreground" />

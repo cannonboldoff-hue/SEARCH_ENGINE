@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import type { ExperienceCardV1 } from "@/types";
+import { Briefcase, MapPin, Calendar, Wrench } from "lucide-react";
 
 function toText(value: unknown): string | null {
   if (typeof value === "string") return value.trim() || null;
@@ -73,8 +74,176 @@ export function V1CardDetails({
   card: ExperienceCardV1 | Record<string, unknown>;
   compact?: boolean;
   summaryFullWidth?: boolean;
-  /** When true, omit metadata/internal rows (created at, visibility, intent, etc.) for read-only display. */
   hideInternalFields?: boolean;
+}) {
+  if (!card) return null;
+
+  const cardAny = card as Record<string, unknown>;
+  const topicLabels = v1CardTopics(cardAny);
+
+  const timeObj =
+    cardAny.time && typeof cardAny.time === "object"
+      ? (cardAny.time as { text?: unknown; start?: unknown; end?: unknown; ongoing?: unknown })
+      : null;
+  const startDateStr = toText(cardAny.start_date);
+  const endDateStr = toText(cardAny.end_date);
+  const timeRangeStr = toText(cardAny.time_range);
+  const isCurrent = typeof cardAny.is_current === "boolean" ? cardAny.is_current : false;
+  const timeObjRange = [toText(timeObj?.start), toText(timeObj?.end)].filter(Boolean).join(" – ");
+  const timeTextFromObj = toText(timeObj?.text) || timeObjRange || (timeObj?.ongoing === true ? "Ongoing" : null);
+  const dateRange = [startDateStr, endDateStr].filter(Boolean).join(" – ");
+  const timeText = timeTextFromObj || timeRangeStr || dateRange || (isCurrent ? "Ongoing" : null);
+
+  const summaryText = toText(cardAny.summary) ?? toText(cardAny.context);
+
+  const roleTitleStr = toText(cardAny.role_title) ?? toText(cardAny.normalized_role);
+  const companyStr = toText(cardAny.company) ?? toText(cardAny.company_name);
+
+  const locationValue = cardAny.location;
+  const locationObj =
+    locationValue && typeof locationValue === "object"
+      ? (locationValue as { text?: unknown; city?: unknown; region?: unknown; country?: unknown })
+      : null;
+  const locationRange = [toText(locationObj?.city), toText(locationObj?.region), toText(locationObj?.country)]
+    .filter(Boolean)
+    .join(", ");
+  const locationStrRaw = toText(locationValue) || toText(locationObj?.text) || locationRange || null;
+  const locationStr =
+    locationStrRaw && locationStrRaw !== "{}" && locationStrRaw.trim()
+      ? locationStrRaw.trim()
+      : null;
+
+  const domainStr = toText(cardAny.domain);
+  const employmentTypeStr = toText(cardAny.employment_type);
+
+  const toolingObj =
+    cardAny.tooling && typeof cardAny.tooling === "object"
+      ? (cardAny.tooling as { tools?: unknown; processes?: unknown; raw?: unknown })
+      : null;
+  const tools = (Array.isArray(toolingObj?.tools) ? toolingObj?.tools : [])
+    .map((t) =>
+      typeof t === "object" && t && "name" in t
+        ? String((t as { name?: unknown }).name ?? "")
+        : String(t)
+    )
+    .filter(Boolean);
+  const processes = (Array.isArray(toolingObj?.processes) ? toolingObj?.processes : [])
+    .map((p) =>
+      typeof p === "object" && p && "name" in p
+        ? String((p as { name?: unknown }).name ?? "")
+        : String(p)
+    )
+    .filter(Boolean);
+  const toolingRaw = toText(toolingObj?.raw);
+  const allTools = [...tools, ...processes].filter(Boolean);
+  if (toolingRaw && allTools.length === 0) allTools.push(toolingRaw);
+
+  const outcomes = (Array.isArray(cardAny.outcomes) ? cardAny.outcomes : [])
+    .map((o) => {
+      if (typeof o !== "object" || !o) return null;
+      const oo = o as { label?: string; value_text?: string | null };
+      const parts = [oo.label, oo.value_text].filter(Boolean);
+      return parts.length ? parts.join(": ") : null;
+    })
+    .filter(Boolean) as string[];
+
+  const metaItems: string[] = [];
+  if (roleTitleStr) metaItems.push(roleTitleStr);
+  if (companyStr) metaItems.push(companyStr);
+
+  const tagItems: string[] = [];
+  if (domainStr) tagItems.push(domainStr);
+  if (employmentTypeStr) tagItems.push(employmentTypeStr.replace(/_/g, " "));
+  topicLabels.forEach((t) => tagItems.push(t));
+
+  if (!hideInternalFields) {
+    return <V1CardDetailsVerbose card={card} compact={compact} summaryFullWidth={summaryFullWidth} />;
+  }
+
+  const hasAnything = summaryText || metaItems.length > 0 || timeText || locationStr || tagItems.length > 0;
+  if (!hasAnything) return null;
+
+  return (
+    <div className={cn("mt-2.5 space-y-2", compact && "mt-1.5 space-y-1.5")}>
+      {summaryText && (
+        <p className={cn(
+          "text-sm text-muted-foreground leading-relaxed",
+          compact ? "line-clamp-2" : "line-clamp-3"
+        )}>
+          {summaryText}
+        </p>
+      )}
+
+      {(metaItems.length > 0 || timeText || locationStr) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {roleTitleStr && (
+            <span className="inline-flex items-center gap-1">
+              <Briefcase className="h-3 w-3 flex-shrink-0 opacity-60" />
+              {roleTitleStr}
+            </span>
+          )}
+          {locationStr && (
+            <span className="inline-flex items-center gap-1">
+              <MapPin className="h-3 w-3 flex-shrink-0 opacity-60" />
+              {locationStr}
+            </span>
+          )}
+          {timeText && (
+            <span className="inline-flex items-center gap-1">
+              <Calendar className="h-3 w-3 flex-shrink-0 opacity-60" />
+              {timeText}
+            </span>
+          )}
+        </div>
+      )}
+
+      {tagItems.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {tagItems.map((tag, i) => (
+            <span
+              key={`${tag}-${i}`}
+              className="inline-flex items-center rounded-full bg-primary/8 px-2 py-0.5 text-[11px] font-medium text-primary/80"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {allTools.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Wrench className="h-3 w-3 text-muted-foreground/50 flex-shrink-0" />
+          {allTools.slice(0, 5).map((tool, i) => (
+            <span
+              key={`${tool}-${i}`}
+              className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+            >
+              {tool}
+            </span>
+          ))}
+          {allTools.length > 5 && (
+            <span className="text-[11px] text-muted-foreground/60">+{allTools.length - 5}</span>
+          )}
+        </div>
+      )}
+
+      {outcomes.length > 0 && (
+        <p className="text-xs text-muted-foreground/80 line-clamp-1">
+          {outcomes.join(" · ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function V1CardDetailsVerbose({
+  card,
+  compact = false,
+  summaryFullWidth = false,
+}: {
+  card: ExperienceCardV1 | Record<string, unknown>;
+  compact?: boolean;
+  summaryFullWidth?: boolean;
 }) {
   if (!card) return null;
 
@@ -122,7 +291,6 @@ export function V1CardDetails({
     cardAny.tooling && typeof cardAny.tooling === "object"
       ? (cardAny.tooling as { tools?: unknown; processes?: unknown; raw?: unknown })
       : null;
-
   const tools = (Array.isArray(toolingObj?.tools) ? toolingObj?.tools : [])
     .map((t) =>
       typeof t === "object" && t && "name" in t
@@ -130,7 +298,6 @@ export function V1CardDetails({
         : String(t)
     )
     .filter(Boolean);
-
   const processes = (Array.isArray(toolingObj?.processes) ? toolingObj?.processes : [])
     .map((p) =>
       typeof p === "object" && p && "name" in p
@@ -267,13 +434,13 @@ export function V1CardDetails({
         ? "Visible"
         : "Hidden"
       : null;
-  const parentId = toText(cardAny.parent_id);
+  const parentIdStr = toText(cardAny.parent_id);
   const depth = typeof cardAny.depth === "number" ? String(cardAny.depth) : null;
   const editedAt = toText(cardAny.edited_at);
   const version = typeof cardAny.version === "number" ? String(cardAny.version) : null;
 
   const rows = [
-    parentId && { label: "Parent ID", value: parentId },
+    parentIdStr && { label: "Parent ID", value: parentIdStr },
     depth && { label: "Depth", value: depth },
     intent && { label: "Intent", value: intent },
     summaryText && { label: "Summary", value: summaryText },
@@ -317,19 +484,15 @@ export function V1CardDetails({
       typeof r === "object" && r !== null && "value" in r && r.value != null && r.value !== ""
   );
 
-  const filteredRows = hideInternalFields
-    ? rows.filter((r) => !INTERNAL_FIELD_LABELS.has(r.label))
-    : rows;
+  if (rows.length === 0) return null;
 
-  if (filteredRows.length === 0) return null;
-
-  const totalChars = filteredRows.reduce((sum, row) => sum + `${row.label}${row.value}`.length, 0);
-  const useTwoColumnCompact = compact && filteredRows.length <= 6 && totalChars <= 220;
-  const useTwoColumnFull = !compact && filteredRows.length <= 8 && totalChars <= 320;
+  const totalChars = rows.reduce((sum, row) => sum + `${row.label}${row.value}`.length, 0);
+  const useTwoColumnCompact = compact && rows.length <= 6 && totalChars <= 220;
+  const useTwoColumnFull = !compact && rows.length <= 8 && totalChars <= 320;
 
   if (summaryFullWidth) {
-    const summaryRow = filteredRows.find((r) => r.label === "Summary");
-    const restRows = filteredRows.filter((r) => r.label !== "Summary");
+    const summaryRow = rows.find((r) => r.label === "Summary");
+    const restRows = rows.filter((r) => r.label !== "Summary");
     return (
       <div className="mt-3 pt-3 border-t border-border/40 space-y-3">
         {summaryRow && (
@@ -360,7 +523,7 @@ export function V1CardDetails({
             : "space-y-2 mt-3 pt-3 border-t border-border/40"
       )}
     >
-      {filteredRows.map((r, i) => (
+      {rows.map((r, i) => (
         <Row key={`${r.label}-${i}`} label={r.label} value={r.value} />
       ))}
     </div>

@@ -49,14 +49,12 @@ export function ExperienceClarifyChat({
   }, [messages]);
 
   const sendRequest = async (conversationHistory: ClarifyMessage[]) => {
-    if (!rawText.trim()) {
-      setError("Please add some experience text first.");
-      return;
-    }
     setError(null);
     setLoading(true);
     try {
-      const textToSend = translateRawText ? await translateRawText(rawText.trim()) : rawText.trim();
+      const textToSend = rawText.trim()
+        ? (translateRawText ? await translateRawText(rawText.trim()) : rawText.trim())
+        : "";
       const res = await api<ClarifyExperienceResponse>("/experience-cards/clarify-experience", {
         method: "POST",
         body: {
@@ -113,15 +111,12 @@ export function ExperienceClarifyChat({
           variant="outline"
           size="sm"
           onClick={handleStart}
-          disabled={!rawText.trim() || loading}
+          disabled={loading}
           className="gap-2"
         >
           <MessageCircle className="h-3.5 w-3.5" />
-          {loading ? "Asking…" : "Ask me questions to fill details"}
+          {loading ? "Asking…" : "Ask me anything about your experience"}
         </Button>
-        {!rawText.trim() && (
-          <p className="mt-1.5 text-xs text-muted-foreground">Add or paste experience text above first.</p>
-        )}
       </div>
     );
   }

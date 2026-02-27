@@ -1,8 +1,11 @@
+import os
+
 from fastapi import APIRouter, Depends, Request, UploadFile, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core import create_photo_token, decode_access_token
+from src.core.config import get_settings
 from src.db.models import Person
 from src.dependencies import get_current_user, get_current_user_optional, get_db
 from src.schemas import (
@@ -93,7 +96,12 @@ async def upload_bio_photo(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload profile photo; returns { profile_photo_url } with a signed token so <img> can load it."""
-    base = str(request.base_url).rstrip("/")
+    settings = get_settings()
+    base = (
+        settings.api_public_url
+        or os.environ.get("RENDER_EXTERNAL_URL")
+        or str(request.base_url)
+    ).rstrip("/")
     token = create_photo_token(str(current_user.id))
     photo_url = f"{base}/me/bio/photo?t={token}"
     await profile_service.upload_profile_photo(db, current_user, file, photo_url)

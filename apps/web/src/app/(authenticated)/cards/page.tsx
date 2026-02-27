@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/back-link";
 import { PageLoading } from "@/components/feedback";
 import { SavedCardFamily } from "@/components/builder";
-import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import {
   useExperienceCardFamilies,
@@ -337,17 +336,16 @@ export default function YourCardsPage() {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35 }}
-      className="max-w-4xl lg:max-w-6xl mx-auto space-y-6"
+      transition={{ duration: 0.3 }}
+      className="max-w-3xl mx-auto space-y-8"
     >
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3 min-w-0">
-          <BackLink href="/profile" className="flex-shrink-0" />
-        </div>
+      {/* Header */}
+      <div className="flex items-center justify-between gap-4">
+        <BackLink href="/profile" className="flex-shrink-0" />
         <Link href="/builder">
-          <Button variant="outline" className="min-h-[2.75rem] touch-manipulation">
-            <Plus className="h-4 w-4 mr-2" />
-            Add new experience
+          <Button variant="outline" size="sm" className="h-9 touch-manipulation rounded-full px-4">
+            <Plus className="h-3.5 w-3.5 mr-1.5" />
+            Add experience
           </Button>
         </Link>
       </div>
@@ -356,70 +354,54 @@ export default function YourCardsPage() {
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.35 }}
-          className="flex flex-col items-center justify-center py-10 px-4 rounded-xl border border-border/60 bg-muted/20 gap-4"
+          transition={{ duration: 0.3 }}
+          className="flex flex-col items-center justify-center py-16 px-4 rounded-2xl border border-dashed border-border/50 gap-4"
         >
           <p className="text-sm text-muted-foreground text-center">
-            Add your first experience to get started.
+            No experience cards yet
           </p>
           <Link href="/builder">
-            <Button size="lg" className="min-h-[2.75rem]">
-              <Plus className="h-4 w-4 mr-2" />
-              Add new experience
+            <Button size="sm" className="rounded-full px-5 h-9">
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
+              Add your first experience
             </Button>
           </Link>
         </motion.div>
       ) : (
-        <section>
-          <h2 className="text-sm font-medium text-muted-foreground mb-3">
+        <section className="space-y-4">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
             Your experience
           </h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="space-y-4">
             {savedFamilies.map((family, i) => (
-              <div
+              <SavedCardFamily
                 key={getParentId(family.parent) || `family-${i}`}
-                className={cn(
-                  "relative min-w-0",
-                  savedFamilies.length === 1 &&
-                    "md:col-span-2 md:flex md:justify-center"
-                )}
-              >
-                <div
-                  className={
-                    savedFamilies.length === 1
-                      ? "w-full min-w-0 max-w-3xl"
-                      : "w-full min-w-0"
-                  }
-                >
-                  <SavedCardFamily
-                  parent={family.parent as ExperienceCard}
-                  children={family.children ?? []}
-                  deletedId={null}
-                  editingSavedCardId={editingSavedCardId}
-                  editingSavedChildId={editingSavedChildId}
-                  editForm={editForm}
-                  childEditForm={childEditForm}
-                  onEditFormChange={(updates) =>
-                    setEditForm((prev) => ({ ...prev, ...updates }))
-                  }
-                  onChildEditFormChange={(updates) =>
-                    setChildEditForm((prev) => ({ ...prev, ...updates }))
-                  }
-                  onStartEditing={onStartEditing}
-                  onStartEditingChild={onStartEditingChild}
-                  onCancelEditing={onCancelEditing}
-                  onCancelEditingChild={onCancelEditingChild}
-                  onSubmitEdit={onSubmitEdit}
-                  onSubmitEditChild={onSubmitEditChild}
-                  onDelete={onDelete}
-                  onDeleteChild={onDeleteChild}
-                  isSubmitting={isSubmitting}
-                  onUpdateParentFromMessyText={onUpdateParentFromMessyText}
-                  onUpdateChildFromMessyText={onUpdateChildFromMessyText}
-                  isUpdatingFromMessyText={isUpdatingFromMessyText}
-                />
-                </div>
-              </div>
+                parent={family.parent as ExperienceCard}
+                children={family.children ?? []}
+                deletedId={null}
+                editingSavedCardId={editingSavedCardId}
+                editingSavedChildId={editingSavedChildId}
+                editForm={editForm}
+                childEditForm={childEditForm}
+                onEditFormChange={(updates) =>
+                  setEditForm((prev) => ({ ...prev, ...updates }))
+                }
+                onChildEditFormChange={(updates) =>
+                  setChildEditForm((prev) => ({ ...prev, ...updates }))
+                }
+                onStartEditing={onStartEditing}
+                onStartEditingChild={onStartEditingChild}
+                onCancelEditing={onCancelEditing}
+                onCancelEditingChild={onCancelEditingChild}
+                onSubmitEdit={onSubmitEdit}
+                onSubmitEditChild={onSubmitEditChild}
+                onDelete={onDelete}
+                onDeleteChild={onDeleteChild}
+                isSubmitting={isSubmitting}
+                onUpdateParentFromMessyText={onUpdateParentFromMessyText}
+                onUpdateChildFromMessyText={onUpdateChildFromMessyText}
+                isUpdatingFromMessyText={isUpdatingFromMessyText}
+              />
             ))}
           </div>
         </section>

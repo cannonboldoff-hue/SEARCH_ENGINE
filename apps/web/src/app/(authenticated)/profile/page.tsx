@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Pencil, User, GraduationCap, Briefcase, Mail } from "lucide-react";
@@ -18,7 +19,12 @@ function BioField({ label, value }: { label: string; value: string }) {
 }
 
 export default function ProfilePage() {
+  const [profileImgError, setProfileImgError] = useState(false);
   const { data: bio, isLoading: loadingBio, isError: bioError } = useBio();
+
+  useEffect(() => {
+    setProfileImgError(false);
+  }, [bio?.profile_photo_url]);
 
   if (loadingBio) {
     return <PageLoading message="Loading profile..." className="py-8 flex flex-col items-center justify-center gap-3" />;
@@ -47,13 +53,15 @@ export default function ProfilePage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4 min-w-0">
-          {bio?.profile_photo_url ? (
+          {bio?.profile_photo_url && !profileImgError ? (
             <div className="relative h-14 w-14 shrink-0 rounded-full overflow-hidden bg-muted">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={bio.profile_photo_url}
                 alt={displayName}
                 className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={() => setProfileImgError(true)}
               />
             </div>
           ) : (

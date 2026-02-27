@@ -80,6 +80,7 @@ export function AppNav() {
   });
 
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [profilePhotoError, setProfilePhotoError] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -91,6 +92,10 @@ export function AppNav() {
     document.addEventListener("click", handleClickOutside, true);
     return () => document.removeEventListener("click", handleClickOutside, true);
   }, [openDropdownId]);
+
+  useEffect(() => {
+    setProfilePhotoError(false);
+  }, [profile?.photo_url]);
 
   const sidebarItems = [
     { href: "/home", label: "Home", icon: Compass },
@@ -310,12 +315,13 @@ export function AppNav() {
               title={accountName}
               aria-label="Account"
             >
-              {profile?.photo_url ? (
+              {profile?.photo_url && !profilePhotoError ? (
                 <img
                   src={profile.photo_url}
                   alt={accountName}
                   className="h-7 w-7 shrink-0 rounded-full object-cover bg-muted"
                   referrerPolicy="no-referrer"
+                  onError={() => setProfilePhotoError(true)}
                 />
               ) : (
                 <span className="h-7 w-7 shrink-0 rounded-full bg-muted text-foreground/80 flex items-center justify-center text-xs font-semibold">
