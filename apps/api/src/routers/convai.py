@@ -80,9 +80,12 @@ async def vapi_call_proxy(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    # Build transient assistant with custom LLM URL including user_id
-    llm_url = f"{settings.vapi_callback_base_url.rstrip('/')}/convai/v1/chat/completions"
-    llm_url_with_user = f"{llm_url}?{urlencode({'user_id': str(user.id)})}"
+    # Build transient assistant with custom LLM URL including user_id.
+    # Use base path without /chat/completions so Vapi appends it before the query string.
+    # (Vapi appends "/chat/completions" to the URL; passing the full path caused it to
+    # end up inside user_id, e.g. "uuid/chat/completions".)
+    llm_base = f"{settings.vapi_callback_base_url.rstrip('/')}/convai/v1"
+    llm_url_with_user = f"{llm_base}?{urlencode({'user_id': str(user.id)})}"
 
     assistant = {
         "firstMessage": "What's one experience you'd like to add? Tell me in your own words.",
@@ -162,6 +165,10 @@ async def chat_completions(request: Request):
     """
     # Session identification: Vapi passes user_id in query; legacy ElevenLabs used conversation_id
     conversation_id = request.query_params.get("user_id")
+    # Workaround: Vapi appends "/chat/completions" to the URL string, which can end up in
+    # the query value. Strip that suffix if present (e.g. "uuid/chat/completions" -> "uuid").
+    if conversation_id and conversation_id.endswith("/chat/completions"):
+        conversation_id = conversation_id[: -len("/chat/completions")].rstrip("/")
     if not conversation_id or not conversation_id.strip():
         conversation_id = (
             request.headers.get("X-Conversation-Id")

@@ -74,4 +74,6 @@ We run the clarify pipeline and stream the assistant reply.
 
 **If you see `Missing conversation context`:** Ensure the custom LLM URL includes `user_id` as a query parameter. Our proxy adds this automatically.
 
+**If you see `Session not found` (404) with `conversation_id=.../chat/completions`:** Vapi appends `/chat/completions` to the custom LLM URL; with some clients this can end up in the `user_id` query value. Our server strips that suffix automatically. If the issue persists, ensure `VAPI_CALLBACK_BASE_URL` is correct and the call was started via our proxy (which creates the session).
+
 **Provider keys:** Add ElevenLabs and Deepgram keys in the Vapi Dashboard under Provider Keys to reduce cost. Without them, Vapi uses its own keys and marks up usage. Override voice/transcriber via `VAPI_VOICE_PROVIDER`, `VAPI_VOICE_ID`, `VAPI_TRANSCRIBER_PROVIDER`, `VAPI_TRANSCRIBER_MODEL` in `.env`.
