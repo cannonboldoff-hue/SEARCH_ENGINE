@@ -140,7 +140,7 @@ export function ExpandableExperienceCard({ family, index }: ExpandableExperience
                               {items.map((it, i) => (
                                 <div key={i} className="text-xs text-muted-foreground">
                                   <span className="font-medium text-foreground">
-                                    {(it as Record<string, unknown>).subtitle ?? (it as Record<string, unknown>).title ?? ""}
+                                    {String((it as Record<string, unknown>).subtitle ?? (it as Record<string, unknown>).title ?? "")}
                                   </span>
                                   {((it as Record<string, unknown>).sub_summary ?? (it as Record<string, unknown>).description) ? (
                                     <span className="ml-1.5">— {String((it as Record<string, unknown>).sub_summary ?? (it as Record<string, unknown>).description ?? "")}</span>
