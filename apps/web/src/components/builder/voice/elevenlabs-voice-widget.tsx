@@ -31,7 +31,7 @@ export function ElevenLabsVoiceWidget() {
       queryClient.invalidateQueries({ queryKey: [EXPERIENCE_CARD_FAMILIES_QUERY_KEY] });
     },
     onError: (err) => {
-      setError(err?.message ?? "Voice connection error");
+      setError(err ?? "Voice connection error");
     },
   });
 
