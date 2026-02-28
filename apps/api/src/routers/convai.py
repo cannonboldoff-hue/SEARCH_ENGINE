@@ -3,19 +3,19 @@ Vapi AI integration for conversational voice.
 
 - POST /convai/call: Proxy for Vapi web calls; creates call with custom LLM including user context
 - POST /convai/v1/chat/completions: OpenAI-compatible; called by Vapi (custom LLM)
+- POST /convai/v1: Compatibility alias (Vapi appends /chat/completions to the URL, which ends up
+  in the query string when user_id is a query param; this route catches that shape)
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import get_settings
 from src.core import decode_access_token
@@ -31,33 +31,6 @@ from src.services.convai import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/convai", tags=["convai"])
-DEBUG_LOG_PATH = r"c:\Users\Lenovo\Desktop\Search_Engine\.cursor\debug.log"
-
-
-def _debug_log(
-    *,
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict | None = None,
-    run_id: str = "pre-fix",
-) -> None:
-    payload = {
-        "id": f"log_{int(time.time() * 1000)}",
-        "timestamp": int(time.time() * 1000),
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data or {},
-    }
-    try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as debug_file:
-            debug_file.write(json.dumps(payload, default=str) + "\n")
-    except Exception:
-        # Never break request flow because of debug logging.
-        pass
-    logger.info("convai_debug %s %s %s", hypothesis_id, message, data or {})
 
 
 async def _get_user_from_token(token: str | None) -> Person | None:
@@ -108,23 +81,32 @@ async def vapi_call_proxy(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
+    # Session is stored in this process. Vapi (cloud) must call back to THIS server.
+    # If request hits localhost but callback points to production, session won't be found (404).
+    request_host = urlparse(str(request.base_url)).hostname or ""
+    callback_host = urlparse(settings.vapi_callback_base_url or "").hostname or ""
+    is_local_request = request_host in ("127.0.0.1", "localhost", "")
+    is_callback_remote = callback_host and callback_host not in ("127.0.0.1", "localhost")
+    if is_local_request and is_callback_remote:
+        logger.warning(
+            "Voice call rejected: local request (host=%s) but callback points to %s",
+            request_host,
+            callback_host,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Voice requires the callback URL to reach this server. You're running locally but VAPI_CALLBACK_BASE_URL points to another host. For local testing, set VAPI_CALLBACK_BASE_URL to a tunnel (e.g. ngrok) that forwards to this API.",
+        )
+
     # Build transient assistant with custom LLM URL including user_id.
-    # Use base path without /chat/completions so Vapi appends it before the query string.
-    # (Vapi appends "/chat/completions" to the URL; passing the full path caused it to
-    # end up inside user_id, e.g. "uuid/chat/completions".)
+    # We pass only the base path (/convai/v1) so Vapi appends /chat/completions
+    # before the query string. If the full path were included, Vapi would produce
+    # /convai/v1/chat/completions?user_id=uuid/chat/completions (suffix in value).
     llm_base = f"{settings.vapi_callback_base_url.rstrip('/')}/convai/v1"
     llm_url_with_user = f"{llm_base}?{urlencode({'user_id': str(user.id)})}"
-    # region agent log
-    _debug_log(
-        hypothesis_id="H1",
-        location="convai.py:vapi_call_proxy",
-        message="Built custom LLM URL for Vapi assistant",
-        data={"llm_url": llm_url_with_user, "user_id": str(user.id)},
-    )
-    # endregion
 
     assistant = {
-        "firstMessage": "What's one experience you'd like to add? Tell me in your own words.",
+        "firstMessage": "What would you like to share today? Please tell me. When you're done, just say thank you.",
         "model": {
             "provider": "custom-llm",
             "url": llm_url_with_user,
@@ -139,6 +121,25 @@ async def vapi_call_proxy(request: Request):
             "provider": settings.vapi_transcriber_provider,
             "model": settings.vapi_transcriber_model,
             "language": "en",
+        },
+        # Allow long storytelling with natural pauses (e.g. 5s before assuming end of turn)
+        "silenceTimeoutSeconds": 300,
+        "startSpeakingPlan": {
+            "waitSeconds": 1.0,
+            "transcriptionEndpointingPlan": {
+                "onPunctuationSeconds": 0.5,
+                # 6s before first "thank you" so long first answer isn't cut off; custom rule ends on "thank you"
+                "onNoPunctuationSeconds": 6.0,
+                "onNumberSeconds": 0.8,
+            },
+            # First turn: listen until user says "thank you"; after that, normal endpointing
+            "customEndpointingRules": [
+                {
+                    "type": "user",
+                    "regex": "(?i)(thank you|thanks|thank u|that's all|thats all)",
+                    "timeoutSeconds": 0.5,
+                },
+            ],
         },
     }
 
@@ -189,6 +190,7 @@ async def _stream_response(text: str):
     yield "data: [DONE]\n\n"
 
 
+@router.post("/v1")
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     """
@@ -198,41 +200,19 @@ async def chat_completions(request: Request):
 
     Session identification: Vapi passes user_id in the URL query when we use
     a per-call custom LLM URL. Also supports legacy X-Conversation-Id headers.
+
+    Route /v1 is a compatibility alias: Vapi appends /chat/completions to the
+    custom LLM URL string, which—when user_id is already a query param—produces
+    POST /convai/v1?user_id=<uuid>/chat/completions (path stays /convai/v1,
+    suffix lands inside the query value). Both routes share this handler;
+    the suffix-stripping logic below cleans the user_id value when needed.
     """
-    # Session identification: Vapi passes user_id in query; legacy ElevenLabs used conversation_id
     conversation_id = request.query_params.get("user_id")
-    # region agent log
-    _debug_log(
-        hypothesis_id="H2",
-        location="convai.py:chat_completions:entry",
-        message="Incoming convai completion request",
-        data={
-            "path": str(request.url.path),
-            "query": str(request.url.query),
-            "raw_user_id_query": conversation_id,
-        },
-    )
-    # endregion
-    # Workaround: Vapi appends "/chat/completions" to the URL string, which can end up in
-    # the query value. Strip that suffix if present (e.g. "uuid/chat/completions" -> "uuid").
+    # Vapi appends "/chat/completions" to the URL string, which can end up in
+    # the query value when user_id is already a query param.
+    # Strip that suffix if present (e.g. "uuid/chat/completions" -> "uuid").
     if conversation_id and conversation_id.endswith("/chat/completions"):
-        # region agent log
-        _debug_log(
-            hypothesis_id="H3",
-            location="convai.py:chat_completions:strip_suffix",
-            message="Detected and stripping '/chat/completions' suffix from user_id query",
-            data={"before": conversation_id},
-        )
-        # endregion
         conversation_id = conversation_id[: -len("/chat/completions")].rstrip("/")
-        # region agent log
-        _debug_log(
-            hypothesis_id="H3",
-            location="convai.py:chat_completions:strip_suffix_after",
-            message="Suffix stripped from user_id query",
-            data={"after": conversation_id},
-        )
-        # endregion
     if not conversation_id or not conversation_id.strip():
         conversation_id = (
             request.headers.get("X-Conversation-Id")
@@ -259,17 +239,6 @@ async def chat_completions(request: Request):
 
     if not conversation_id or not conversation_id.strip():
         x_headers = {k: v for k, v in request.headers.items() if k.lower().startswith("x-")}
-        # region agent log
-        _debug_log(
-            hypothesis_id="H4",
-            location="convai.py:chat_completions:missing_context",
-            message="Missing conversation context before rejection",
-            data={
-                "x_header_keys": list(x_headers.keys()),
-                "body_keys": list(body.keys()) if isinstance(body, dict) else [],
-            },
-        )
-        # endregion
         logger.warning(
             "chat/completions: no conversation_id/user_id (x-* headers=%s, body_keys=%s)",
             x_headers,
@@ -280,24 +249,8 @@ async def chat_completions(request: Request):
             detail="Missing conversation context. Ensure Vapi assistant uses custom LLM URL with user_id.",
         )
 
-    # region agent log
-    _debug_log(
-        hypothesis_id="H5",
-        location="convai.py:chat_completions:get_session",
-        message="Looking up convai session",
-        data={"conversation_id": conversation_id.strip()},
-    )
-    # endregion
     session_data = get_session(conversation_id.strip())
     if not session_data:
-        # region agent log
-        _debug_log(
-            hypothesis_id="H5",
-            location="convai.py:chat_completions:session_not_found",
-            message="Convai session lookup failed",
-            data={"conversation_id": conversation_id},
-        )
-        # endregion
         logger.warning("chat/completions: unknown conversation_id=%s", conversation_id)
         raise HTTPException(
             status_code=404,

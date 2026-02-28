@@ -16,7 +16,7 @@ export default function BuilderPage() {
 
   return (
     <motion.div
-      className="flex flex-col min-h-0 h-[calc(100vh-5rem)] max-h-[calc(100vh-5rem)] overflow-hidden"
+      className="flex flex-col min-h-0 h-[calc(100vh-6rem)] max-h-[calc(100vh-6rem)] overflow-hidden"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.2 }}

@@ -70,6 +70,8 @@ We run the clarify pipeline and stream the assistant reply.
 
 ## Troubleshooting
 
+**If you see `503 Voice requires the callback URL to reach this server`:** You're running the API locally but `VAPI_CALLBACK_BASE_URL` points to production. Vapi's cloud calls that URL for AI responses, so it must reach the same process that created the session. For local development, expose your API via a tunnel (e.g. `ngrok http 8000`) and set `VAPI_CALLBACK_BASE_URL` to the tunnel URL (e.g. `https://abc123.ngrok.io`).
+
 **If you see `503 Voice service unavailable`:** Check that `VAPI_API_KEY` and `VAPI_CALLBACK_BASE_URL` are set and that your API is publicly reachable.
 
 **If you see `Missing conversation context`:** Ensure the custom LLM URL includes `user_id` as a query parameter. Our proxy adds this automatically.
