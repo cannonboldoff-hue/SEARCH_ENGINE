@@ -4,7 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Loader2, Volume2, VolumeX } from "lucide-react";
+import { Send, Loader2, Volume2, VolumeX, Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -113,6 +113,24 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
   const isSpeakingTtsRef = useRef(false);
   const speechSynthRef = useRef<SpeechSynthesis | null>(null);
   const sessionLockedRef = useRef(false);
+  const isRecordingRef = useRef(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isConnectingRecorder, setIsConnectingRecorder] = useState(false);
+
+  const stopRecording = useCallback(() => {
+    isRecordingRef.current = false;
+    setIsRecording(false);
+  }, []);
+
+  const toggleRecording = useCallback(() => {
+    // Voice recording: placeholder for future implementation
+    if (isRecordingRef.current) {
+      stopRecording();
+    } else {
+      isRecordingRef.current = true;
+      setIsRecording(true);
+    }
+  }, [stopRecording]);
 
   // Fetch LLM-generated opening question on mount (no hardcoded first message)
   useEffect(() => {
