@@ -139,7 +139,7 @@ async def convai_chat_turn(
     # Empty input: opening question
     if not user_content:
         return (
-            "What's one experience you'd like to add? Tell me in your own words."
+            "I'd love to hear about an experience you're proud of. What's one you'd like to add? Tell me in your own words."
         )
 
     # Translate if needed
@@ -158,7 +158,7 @@ async def convai_chat_turn(
 
         if count == 0 or not experiences:
             return (
-                "I didn't quite get that—what role or place were you at, and what did you do there?"
+                "I'm curious—what role or place were you at, and what did you do there? I'd love to capture that."
             )
 
         if count == 1:
@@ -169,9 +169,9 @@ async def convai_chat_turn(
                 )
             except Exception as e:
                 logger.exception("run_draft_single failed: %s", e)
-                return "Can you tell me a bit more—like where you worked and roughly when?"
+                return "I'd love to capture that—can you tell me a bit more? Like where you worked and roughly when?"
             if not families:
-                return "Can you tell me a bit more—like where you worked and roughly when?"
+                return "I'd love to capture that—can you tell me a bit more? Like where you worked and roughly when?"
             family = families[0]
             parent = family.get("parent") or {}
             state.card_family = family
@@ -195,13 +195,13 @@ async def convai_chat_turn(
                 state.asked_history.append(first_clarify["asked_history_entry"])
             if first_clarify.get("canonical_family"):
                 state.card_family = first_clarify["canonical_family"]
-            return f"Here's what I understood: {summary}. {q or 'I have a few questions to get more detail.'}"
+            return f"Here's what I understood: {summary}. {q or 'I have a few questions—I\'d love to learn more.'}"
 
         # Multiple experiences: choose_focus
         state.detected_experiences = experiences
         state.stage = "awaiting_choice"
         options = [{"parent_id": str(e["index"]), "label": e.get("label", f"Experience {e['index']}")} for e in experiences]
-        parts = ["I found multiple experiences. Which one do you want to add first?"]
+        parts = ["I found multiple experiences—I'm curious, which one would you like to add first?"]
         for i, o in enumerate(options):
             parts.append(f"{i + 1}. {o['label']}")
         parts.append("Say the number or the name.")
@@ -211,7 +211,7 @@ async def convai_chat_turn(
         options = [{"parent_id": str(e["index"]), "label": e.get("label", "")} for e in state.detected_experiences]
         choice = _parse_choice_input(user_content, options)
         if not choice:
-            return "Which one would you like? Say 1, 2, or the name of the experience."
+            return "I'm curious—which one would you like? Say 1, 2, or the name of the experience."
         idx = int(choice)
         state.focus_parent_id = choice
         state.stage = "clarifying"
@@ -227,7 +227,7 @@ async def convai_chat_turn(
             logger.exception("run_draft_single (choice) failed: %s", e)
             return "I had trouble with that. Could you try again?"
         if not families:
-            return "I couldn't extract that experience. Can you tell me more about it?"
+            return "I'd love to capture that—can you tell me more about it so I can extract it?"
         family = families[0]
         state.card_family = family
         state.draft_set_id = draft_set_id
@@ -249,7 +249,7 @@ async def convai_chat_turn(
             state.asked_history.append(first_clarify["asked_history_entry"])
         if first_clarify.get("canonical_family"):
             state.card_family = first_clarify["canonical_family"]
-        return q or "I have a few questions to get more detail."
+        return q or "I have a few questions—I'd love to learn more about it."
 
     if state.stage == "clarifying":
         family = state.card_family or {"parent": {}, "children": []}
@@ -332,7 +332,7 @@ async def convai_chat_turn(
             state.detected_experiences = [{"index": int(o.get("parent_id", i)), "label": o.get("label", "")} for i, o in enumerate(result.get("options") or [])]
             return result.get("message") or "Which experience would you like to add?"
 
-        return "What else would you like to add about this experience?"
+        return "I'd love to capture more—what else would you like to add about this experience?"
 
     if state.stage == "card_ready":
         return "Your card is ready. Say 'add another experience' to create a new one, or you can view and edit your cards on the page."

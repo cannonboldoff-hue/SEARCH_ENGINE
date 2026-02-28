@@ -1419,20 +1419,20 @@ async def _apply_clarify_answer_patch_llm(
         response = await chat.chat(prompt, max_tokens=512)
     except ChatServiceError as e:
         logger.warning("clarify apply answer LLM failed: %s", e)
-        return None, True, "Could you rephrase that? I want to capture it correctly."
+        return None, True, "I'd love to capture that—could you rephrase it? I want to get it right."
     if not response or not response.strip():
-        return None, True, "Can you say a bit more?"
+        return None, True, "I'm curious—can you say a bit more so I can capture it?"
     try:
         json_str = _extract_json_from_text(response)
         data = json.loads(json_str)
         if not isinstance(data, dict):
-            return None, True, "Can you say a bit more?"
+            return None, True, "I'd love to get that—can you say a bit more?"
         patch = data.get("patch") if isinstance(data.get("patch"), dict) else None
         needs_retry = bool(data.get("needs_retry"))
         retry_q = str(data.get("retry_question") or "").strip() or None
         return patch, needs_retry, retry_q
     except (ValueError, json.JSONDecodeError):
-        return None, True, "Can you say a bit more?"
+        return None, True, "I'm curious—can you share a bit more so I can capture it?"
 
 
 
@@ -1614,26 +1614,26 @@ async def _run_clarify_flow(
 
 
 def _fallback_question_for_plan(plan: ClarifyPlan) -> str:
-    """Deterministic fallback when LLM question writer fails. Field-targeted, not generic."""
+    """Deterministic fallback when LLM question writer fails. Field-targeted, curious tone."""
     _PARENT_QUESTIONS = {
-        "headline": "What would you call this role or experience in one line?",
-        "role": "What was your job title or role?",
-        "summary": "Can you summarize what you did there in a sentence or two?",
-        "company_name": "Which company or organization was this at?",
-        "team": "Which team or group were you in?",
-        "time": "Roughly when did you do this? (e.g. 2020–2022 or Jan 2021)",
-        "location": "Where was this based? (city or country)",
-        "domain": "What domain or industry was this in?",
-        "sub_domain": "Any specific sub-domain or focus?",
-        "intent_primary": "What best describes this experience—work, project, education, or something else?",
+        "headline": "I'm curious—what would you call this role or experience in one line?",
+        "role": "What was your job title or role there? I'd love to capture that.",
+        "summary": "Can you give me a quick summary—what did you do there and why did it matter?",
+        "company_name": "Which company or organization was this at? I'd like to get that down.",
+        "team": "Which team or group were you part of? I'm curious about the setup.",
+        "time": "Roughly when did you do this? Even a year or range helps—e.g. 2020–2022 or Jan 2021.",
+        "location": "Where was this based? City, country—whatever you remember.",
+        "domain": "What domain or industry was this in? I'd love to categorize it right.",
+        "sub_domain": "Any specific sub-domain or focus within that? I want to capture the details.",
+        "intent_primary": "What best describes this—work, project, education, or something else?",
     }
     if plan.target_type == "parent":
         return _PARENT_QUESTIONS.get(
-            plan.target_field or "", "Which of these can you add: company name, time period, or location?"
+            plan.target_field or "", "I'd love to know more—can you add the company name, time period, or location?"
         )
     if plan.target_type == "child":
-        return f"What specific {plan.target_child_type or 'detail'} do you want to add?"
-    return "Which detail can you add—company, time, or location?"
+        return f"I'm curious—what specific {plan.target_child_type or 'details'} would you like to add?"
+    return "I'd love to capture more—which can you add: company name, time period, or location?"
 
 
 def _build_choose_focus_options_from_detected(detected_experiences: list[dict]) -> list[dict]:
@@ -1681,7 +1681,7 @@ async def clarify_experience_interactive(
         }
     if not raw_text or not raw_text.strip():
         return _clarify_result(
-            clarifying_question="What's one experience you'd like to add? Tell me in your own words.",
+            clarifying_question="I'd love to hear about an experience you're proud of. What's one you'd like to add? Tell me in your own words.",
         )
 
     family = card_family if isinstance(card_family, dict) and (card_family.get("parent") is not None or (card_family.get("children") is not None)) else None
