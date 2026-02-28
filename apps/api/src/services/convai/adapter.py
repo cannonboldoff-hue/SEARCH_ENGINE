@@ -11,8 +11,10 @@ import logging
 import re
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.db.models import ExperienceCardChild
 from src.services.experience import (
     detect_experiences,
     run_draft_single,
@@ -294,6 +296,27 @@ async def convai_chat_turn(
                     await embed_experience_cards(db, parents=[card], children=[])
 
         if result.get("should_stop"):
+            # Finalize the card: make it visible and embed so it appears in "Your Cards"
+            filled = result.get("filled") or {}
+            parent = (state.card_family or {}).get("parent") or {}
+            parent_merged = {**parent, **filled}
+            card_id = parent_merged.get("id") or parent.get("id")
+            if card_id:
+                try:
+                    card = await experience_card_service.get_card(db, str(card_id), user_id)
+                    if card:
+                        card.experience_card_visibility = True
+                        await db.flush()
+                        children_result = await db.execute(
+                            select(ExperienceCardChild).where(
+                                ExperienceCardChild.parent_experience_id == card.id,
+                                ExperienceCardChild.person_id == user_id,
+                            )
+                        )
+                        children = list(children_result.scalars().all())
+                        await embed_experience_cards(db, parents=[card], children=children)
+                except Exception as e:
+                    logger.warning("ConvAI finalize failed for card_id=%s: %s", card_id, e)
             state.stage = "card_ready"
             return (
                 result.get("clarifying_question")
