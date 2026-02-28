@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { motion } from "framer-motion";
 import { BackLink } from "@/components/back-link";
-import { BuilderChat, ElevenLabsVoiceWidget } from "@/components/builder";
+import { BuilderChat, VapiVoiceWidget } from "@/components/builder";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -49,7 +49,7 @@ export default function BuilderPage() {
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
         {mode === "voice" ? (
-          <ElevenLabsVoiceWidget />
+          <VapiVoiceWidget />
         ) : (
           <BuilderChat translateRawText={translateToEnglishForBackend} />
         )}

@@ -16,7 +16,7 @@ export type { ChatMessage, ClarifyHistoryEntry, ClarifyOption } from "./chat";
 export { ExperienceClarifyChat } from "./chat";
 export type { ClarifyMessage, ClarifyExperienceResponse } from "./chat";
 
-export { ElevenLabsVoiceWidget } from "./voice/elevenlabs-voice-widget";
+export { VapiVoiceWidget } from "./voice/vapi-voice-widget";
 
 export { DraftCardFamily, SavedCardFamily, FamilyTree } from "./family";
 export type { TreeNode } from "./family";

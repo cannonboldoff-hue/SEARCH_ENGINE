@@ -1,72 +1,94 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Mic, MicOff, Loader2, PhoneOff, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useConversation } from "@elevenlabs/react";
-import { api } from "@/lib/api";
+import Vapi from "@vapi-ai/web";
+import { API_BASE } from "@/lib/constants";
 import { AUTH_TOKEN_KEY } from "@/lib/auth-flow";
 import { EXPERIENCE_CARD_FAMILIES_QUERY_KEY } from "@/hooks";
 import Link from "next/link";
 
-type SignedUrlResponse = { signed_url: string; conversation_id?: string };
-
-export function ElevenLabsVoiceWidget() {
+export function VapiVoiceWidget() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const vapiRef = useRef<Vapi | null>(null);
 
-  const {
-    startSession,
-    endSession,
-    status,
-    isSpeaking,
-  } = useConversation({
-    onConnect: () => {
-      setError(null);
-    },
-    onDisconnect: () => {
-      // Refetch card families when voice session ends so new cards appear
-      queryClient.invalidateQueries({ queryKey: [EXPERIENCE_CARD_FAMILIES_QUERY_KEY] });
-    },
-    onError: (err) => {
-      setError(err ?? "Voice connection error");
-    },
-  });
+  const getToken = () => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  };
 
   const handleStart = useCallback(async () => {
     setError(null);
     setConnecting(true);
+    const token = getToken();
+    if (!token) {
+      setError("Please sign in to use voice");
+      setConnecting(false);
+      return;
+    }
+    if (!API_BASE || !API_BASE.startsWith("http")) {
+      setError("API not configured");
+      setConnecting(false);
+      return;
+    }
+    const proxyBase = `${API_BASE}/convai`;
     try {
-      const res = await api<SignedUrlResponse>("/convai/signed-url", {
-        method: "POST",
+      const vapi = new Vapi(token, proxyBase);
+      vapiRef.current = vapi;
+
+      vapi.on("call-start", () => {
+        setError(null);
+        setIsConnected(true);
       });
-      const signedUrl = res?.signed_url;
-      if (!signedUrl) {
-        throw new Error("No signed URL received");
-      }
-      await startSession({
-        signedUrl,
-        connectionType: "websocket",
+
+      vapi.on("call-end", () => {
+        setIsConnected(false);
+        setIsSpeaking(false);
+        vapiRef.current = null;
+        queryClient.invalidateQueries({ queryKey: [EXPERIENCE_CARD_FAMILIES_QUERY_KEY] });
       });
+
+      vapi.on("speech-start", () => setIsSpeaking(true));
+      vapi.on("speech-end", () => setIsSpeaking(false));
+
+      vapi.on("error", (err) => {
+        setError(err?.message ?? "Voice connection error");
+      });
+
+      await vapi.start({}); // Assistant config comes from our backend proxy
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not start voice session";
       setError(msg);
     } finally {
       setConnecting(false);
     }
-  }, [startSession]);
+  }, [queryClient]);
 
   const handleEnd = useCallback(async () => {
     try {
-      await endSession();
+      if (vapiRef.current) {
+        vapiRef.current.stop();
+        vapiRef.current = null;
+      }
     } catch {
       setError("Could not end session");
     }
-  }, [endSession]);
+  }, []);
 
-  const isConnected = status === "connected";
+  useEffect(() => {
+    return () => {
+      if (vapiRef.current) {
+        vapiRef.current.stop();
+        vapiRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <div className="flex flex-col items-center justify-center gap-4 p-6 rounded-lg border border-border bg-muted/30 min-h-[200px]">
@@ -79,7 +101,7 @@ export function ElevenLabsVoiceWidget() {
           {error}
         </p>
       )}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col items-center gap-3">
         {!isConnected ? (
           <Button
             onClick={handleStart}

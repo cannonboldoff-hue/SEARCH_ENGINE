@@ -1,5 +1,5 @@
 """
-Adapter: bridge ElevenLabs chat messages to our clarify pipeline.
+Adapter: bridge Vapi chat messages to our clarify pipeline.
 
 Receives OpenAI-format messages, maintains session state, runs detect/clarify/draft,
 returns the assistant reply text for TTS.

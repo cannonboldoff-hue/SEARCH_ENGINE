@@ -28,11 +28,17 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
 
-    # ElevenLabs Conversational AI (real-time voice with custom LLM)
-    elevenlabs_api_key: str | None = None
-    elevenlabs_agent_id: str | None = None
-    # Public base URL for our API (e.g. https://api.yourapp.com) - ElevenLabs calls {this}/convai/v1/chat/completions
-    elevenlabs_callback_base_url: str | None = None
+    # Vapi AI (real-time voice with custom LLM)
+    # Get keys from https://dashboard.vapi.ai
+    vapi_api_key: str | None = None
+    # Public base URL for our API (e.g. https://api.yourapp.com) - Vapi calls {this}/convai/v1/chat/completions
+    vapi_callback_base_url: str | None = None
+    # Voice: 11labs, playht, cartesia, etc. Add provider keys in Vapi Dashboard for BYOK (lower cost).
+    vapi_voice_provider: str = "11labs"
+    vapi_voice_id: str = "MbmiTDI5YuxpN7UUP2St"
+    # Transcriber: deepgram, gladia, etc. Add provider keys in Vapi Dashboard for BYOK (lower cost).
+    vapi_transcriber_provider: str = "deepgram"
+    vapi_transcriber_model: str = "nova-2"
 
     # Rate limiting (per-user when key_func uses user id; multi-instance needs Redis later)
     search_rate_limit: str = "10/minute"

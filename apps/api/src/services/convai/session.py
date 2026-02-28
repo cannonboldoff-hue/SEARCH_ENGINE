@@ -1,5 +1,5 @@
 """
-In-memory session store for ElevenLabs ConvAI conversations.
+In-memory session store for Vapi ConvAI conversations.
 
 Maps conversation_id -> (user_id, ConvaiSessionState).
 For production with multiple instances, use Redis.

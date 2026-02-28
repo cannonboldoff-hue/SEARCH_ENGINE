@@ -1,7 +1,7 @@
 """
-ElevenLabs Conversational AI integration.
+Vapi AI integration.
 
-Bridges the clarify flow to OpenAI-compatible chat format for ElevenLabs.
+Bridges the clarify flow to OpenAI-compatible chat format for Vapi custom LLM.
 """
 
 from .adapter import convai_chat_turn

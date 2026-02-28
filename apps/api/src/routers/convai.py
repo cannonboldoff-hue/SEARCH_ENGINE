@@ -1,26 +1,25 @@
 """
-ElevenLabs Conversational AI integration.
+Vapi AI integration for conversational voice.
 
-- POST /convai/signed-url: authenticated; returns signed WebSocket URL
-- POST /convai/v1/chat/completions: OpenAI-compatible; called by ElevenLabs (custom LLM)
+- POST /convai/call: Proxy for Vapi web calls; creates call with custom LLM including user context
+- POST /convai/v1/chat/completions: OpenAI-compatible; called by Vapi (custom LLM)
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import get_settings
 from src.core import decode_access_token
 from src.db.session import async_session
 from src.db.models import Person
-from src.dependencies import get_db
 from sqlalchemy import select
 from src.services.convai import (
     create_session,
@@ -45,18 +44,22 @@ async def _get_user_from_token(token: str | None) -> Person | None:
         return result.scalar_one_or_none()
 
 
-@router.post("/signed-url")
-async def get_signed_url(request: Request):
+@router.api_route("/call/web", methods=["POST", "OPTIONS"])
+@router.api_route("/call", methods=["POST", "OPTIONS"])
+async def vapi_call_proxy(request: Request):
     """
-    Get a signed WebSocket URL for ElevenLabs Conversational AI.
-    Requires Authorization: Bearer <token>.
-    Creates a session and returns the URL. The frontend uses this to connect.
+    Proxy for Vapi web calls. Requires Authorization: Bearer <token>.
+    Creates a call with a transient assistant that uses our custom LLM (with user_id).
+    The frontend uses the Vapi Web SDK with this URL as the proxy base.
     """
+    if request.method == "OPTIONS":
+        return Response(status_code=204)
+
     settings = get_settings()
-    if not settings.elevenlabs_api_key or not settings.elevenlabs_agent_id:
+    if not settings.vapi_api_key or not settings.vapi_callback_base_url:
         raise HTTPException(
             status_code=503,
-            detail="ElevenLabs Conversational AI is not configured.",
+            detail="Vapi voice is not configured.",
         )
     auth = request.headers.get("Authorization") or ""
     if not auth.startswith("Bearer "):
@@ -72,41 +75,62 @@ async def get_signed_url(request: Request):
             detail="Invalid or expired token",
         )
 
-    url = "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url"
-    params = {
-        "agent_id": settings.elevenlabs_agent_id,
-        "include_conversation_id": "true",
-    }
-    headers = {"xi-api-key": settings.elevenlabs_api_key}
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params, headers=headers)
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # Build transient assistant with custom LLM URL including user_id
+    llm_url = f"{settings.vapi_callback_base_url.rstrip('/')}/convai/v1/chat/completions"
+    llm_url_with_user = f"{llm_url}?{urlencode({'user_id': str(user.id)})}"
+
+    assistant = {
+        "firstMessage": "What's one experience you'd like to add? Tell me in your own words.",
+        "model": {
+            "provider": "custom-llm",
+            "url": llm_url_with_user,
+            "model": "gpt-4o",
+            "temperature": 0.7,
+        },
+        "voice": {
+            "provider": settings.vapi_voice_provider,
+            "voiceId": settings.vapi_voice_id,
+        },
+        "transcriber": {
+            "provider": settings.vapi_transcriber_provider,
+            "model": settings.vapi_transcriber_model,
+            "language": "en",
+        },
+    }
+
+    # Merge with any client overrides, but our assistant takes precedence
+    payload = {**body, "assistant": assistant}
+
+    # Forward to Vapi - use same path as request (call or call/web)
+    vapi_path = "/call/web" if "/call/web" in str(request.url.path) else "/call"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"https://api.vapi.ai{vapi_path}",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {settings.vapi_api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as e:
-        logger.warning("ElevenLabs get-signed-url failed %s: %s", e.response.status_code, e.response.text[:500])
-        raise HTTPException(status_code=503, detail="Could not get voice session. Please try again.")
+        logger.warning("Vapi call create failed %s: %s", e.response.status_code, e.response.text[:500])
+        raise HTTPException(status_code=503, detail="Could not start voice session. Please try again.")
     except Exception as e:
-        logger.exception("ElevenLabs get-signed-url error: %s", e)
+        logger.exception("Vapi call create error: %s", e)
         raise HTTPException(status_code=503, detail="Voice service unavailable.")
 
-    signed_url = data.get("signed_url")
-    conversation_id = data.get("conversation_id")
-    if not signed_url:
-        raise HTTPException(status_code=503, detail="Invalid response from voice service.")
-    # conversation_id may be in response or encoded in the signed URL
-    if not conversation_id:
-        parsed = urlparse(signed_url)
-        params = parse_qs(parsed.query)
-        conversation_id = (params.get("conversation_id") or [None])[0]
+    # Session key for lookup when Vapi calls our custom LLM with ?user_id=X
+    create_session(str(user.id), user.id)
 
-    if conversation_id:
-        create_session(str(conversation_id), user.id)
-
-    return {
-        "signed_url": signed_url,
-        "conversation_id": conversation_id,
-    }
+    return data
 
 
 def _sse_chunk(content: str, delta: bool = True) -> str:
@@ -129,19 +153,21 @@ async def _stream_response(text: str):
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     """
-    OpenAI-compatible chat completions endpoint for ElevenLabs custom LLM.
-    ElevenLabs calls this with conversation messages. We run our clarify pipeline
+    OpenAI-compatible chat completions endpoint for Vapi custom LLM.
+    Vapi calls this with conversation messages. We run our clarify pipeline
     and stream the assistant reply.
 
-    Conversation identification: ElevenLabs may pass X-Conversation-Id or
-    X-ElevenLabs-Conversation-Id. If not found in headers, we also check the
-    request body. If still missing, we cannot associate the request with a user.
+    Session identification: Vapi passes user_id in the URL query when we use
+    a per-call custom LLM URL. Also supports legacy X-Conversation-Id headers.
     """
-    conversation_id = (
-        request.headers.get("X-Conversation-Id")
-        or request.headers.get("X-ElevenLabs-Conversation-Id")
-        or request.headers.get("x-conversation-id")
-    )
+    # Session identification: Vapi passes user_id in query; legacy ElevenLabs used conversation_id
+    conversation_id = request.query_params.get("user_id")
+    if not conversation_id or not conversation_id.strip():
+        conversation_id = (
+            request.headers.get("X-Conversation-Id")
+            or request.headers.get("X-ElevenLabs-Conversation-Id")
+            or request.headers.get("x-conversation-id")
+        )
 
     try:
         body = await request.json()
@@ -163,13 +189,13 @@ async def chat_completions(request: Request):
     if not conversation_id or not conversation_id.strip():
         x_headers = {k: v for k, v in request.headers.items() if k.lower().startswith("x-")}
         logger.warning(
-            "chat/completions: no conversation_id (x-* headers=%s, body_keys=%s)",
+            "chat/completions: no conversation_id/user_id (x-* headers=%s, body_keys=%s)",
             x_headers,
             list(body.keys()) if isinstance(body, dict) else [],
         )
         raise HTTPException(
             status_code=400,
-            detail="Missing conversation_id. Ensure ElevenLabs agent is configured to pass conversation context to custom LLM.",
+            detail="Missing conversation context. Ensure Vapi assistant uses custom LLM URL with user_id.",
         )
 
     session_data = get_session(conversation_id.strip())

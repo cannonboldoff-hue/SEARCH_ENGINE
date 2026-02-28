@@ -1,1 +1,1 @@
-// Voice components - ElevenLabsVoiceWidget is exported from builder index
+// Voice components - VapiVoiceWidget is exported from builder index
