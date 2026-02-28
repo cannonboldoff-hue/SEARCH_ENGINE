@@ -128,14 +128,13 @@ async def vapi_call_proxy(request: Request):
             "waitSeconds": 1.0,
             "transcriptionEndpointingPlan": {
                 "onPunctuationSeconds": 0.5,
-                # 6s before first "thank you" so long first answer isn't cut off; custom rule ends on "thank you"
-                "onNoPunctuationSeconds": 6.0,
+                "onNoPunctuationSeconds": 3.0,
                 "onNumberSeconds": 0.8,
             },
             # First turn: listen until user says "thank you"; after that, normal endpointing
             "customEndpointingRules": [
                 {
-                    "type": "user",
+                    "type": "customer",
                     "regex": "(?i)(thank you|thanks|thank u|that's all|thats all)",
                     "timeoutSeconds": 0.5,
                 },
