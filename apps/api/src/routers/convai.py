@@ -134,19 +134,42 @@ async def chat_completions(request: Request):
     and stream the assistant reply.
 
     Conversation identification: ElevenLabs may pass X-Conversation-Id or
-    X-ElevenLabs-Conversation-Id. If not found, we cannot associate the request
-    with a user session.
+    X-ElevenLabs-Conversation-Id. If not found in headers, we also check the
+    request body. If still missing, we cannot associate the request with a user.
     """
     conversation_id = (
         request.headers.get("X-Conversation-Id")
         or request.headers.get("X-ElevenLabs-Conversation-Id")
         or request.headers.get("x-conversation-id")
     )
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
     if not conversation_id or not conversation_id.strip():
-        logger.warning("chat/completions: no conversation_id header")
+        conversation_id = (
+            body.get("conversation_id")
+            or body.get("conversationId")
+            or (body.get("metadata") or {}).get("conversation_id")
+            or (body.get("metadata") or {}).get("conversationId")
+        )
+        if isinstance(conversation_id, str) and conversation_id.strip():
+            pass
+        else:
+            conversation_id = None
+
+    if not conversation_id or not conversation_id.strip():
+        x_headers = {k: v for k, v in request.headers.items() if k.lower().startswith("x-")}
+        logger.warning(
+            "chat/completions: no conversation_id (x-* headers=%s, body_keys=%s)",
+            x_headers,
+            list(body.keys()) if isinstance(body, dict) else [],
+        )
         raise HTTPException(
             status_code=400,
-            detail="Missing X-Conversation-Id header",
+            detail="Missing conversation_id. Ensure ElevenLabs agent is configured to pass conversation context to custom LLM.",
         )
 
     session_data = get_session(conversation_id.strip())
@@ -157,11 +180,6 @@ async def chat_completions(request: Request):
             detail="Session not found. Please start a new voice session.",
         )
     user_id, state = session_data
-
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     messages = body.get("messages")
     if not isinstance(messages, list):

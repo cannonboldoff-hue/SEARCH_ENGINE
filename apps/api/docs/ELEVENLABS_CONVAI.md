@@ -30,10 +30,16 @@ ELEVENLABS_CALLBACK_BASE_URL=https://your-api-domain.com
 
 ### 3. Conversation Identification
 
-ElevenLabs passes the `conversation_id` when calling our custom LLM. We use it to look up the user session (created when the frontend fetches the signed URL). Supported headers:
+ElevenLabs must pass the `conversation_id` when calling our custom LLM so we can look up the user session (created when the frontend fetches the signed URL). We check, in order:
 
-- `X-Conversation-Id`
-- `X-ElevenLabs-Conversation-Id`
+- Headers: `X-Conversation-Id`, `X-ElevenLabs-Conversation-Id`, `x-conversation-id`
+- Body: `conversation_id`, `conversationId`, `metadata.conversation_id`, `metadata.conversationId`
+
+**If you see `400 Bad Request: Missing conversation_id`:** ElevenLabs may not be forwarding the conversation ID. Check:
+
+1. Agent configuration at [ElevenLabs Conversational AI](https://elevenlabs.io/app/conversational-ai) — ensure the custom LLM URL is correct and the agent is set to pass conversation context.
+2. Logs: when the header is missing, we log `x-*` headers and body keys — inspect these to see what ElevenLabs actually sends.
+3. ElevenLabs documentation for your agent version — they may use different header names or require enabling "Custom LLM extra body" or similar.
 
 ## API Endpoints
 
