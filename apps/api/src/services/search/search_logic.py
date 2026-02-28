@@ -57,11 +57,17 @@ from src.providers import (
 )
 from src.prompts.search_why_matched import get_why_matched_prompt
 from src.serializers import experience_card_to_response, experience_card_child_to_response
+from src.services.experience.search_document import (
+    build_parent_search_document,
+    get_child_search_document,
+)
 from src.utils import normalize_embedding, strip_json_from_response
 from .why_matched_helpers import (
+    _child_display_fields,
     build_match_explanation_payload,
     validate_why_matched_output,
     fallback_build_why_matched,
+    boost_query_matching_reasons,
 )
 
 logger = logging.getLogger(__name__)
@@ -249,11 +255,13 @@ def _text_contains_any(haystack: str, terms: list[str]) -> bool:
     return any((t or "").strip().lower() in h for t in terms if (t or "").strip())
 
 
-def _should_bonus(card: ExperienceCard, should: ParsedConstraintsShould) -> int:
-    """Count how many should-constraints this card matches (for rerank boost). Matches in search_phrases and search_document."""
-    phrases = (card.search_phrases or []) if hasattr(card, "search_phrases") else []
-    doc_text = (getattr(card, "search_document", None) or "") or ""
-    hits = _should_bonus_from_phrases(phrases, doc_text, should)
+def _should_bonus(card: ExperienceCard | ExperienceCardChild, should: ParsedConstraintsShould) -> int:
+    """Count how many should-constraints this card matches (for rerank boost). Matches in derived search doc text."""
+    if isinstance(card, ExperienceCardChild):
+        doc_text = get_child_search_document(card)
+    else:
+        doc_text = build_parent_search_document(card)
+    hits = _should_bonus_from_phrases([], doc_text, should)
     if should.intent_secondary and getattr(card, "intent_secondary", None):
         if any(i in (card.intent_secondary or []) for i in should.intent_secondary):
             hits += 1
@@ -317,12 +325,12 @@ def _build_why_matched_bullets(
                 bullets.append((prefix + snippet).strip()[:120])
 
     for card, _ in (parent_cards_with_sim or [])[:2]:
-        phrases = getattr(card, "search_phrases", None) or []
-        doc = getattr(card, "search_document", None) or ""
+        phrases: list[str] = []
+        doc = build_parent_search_document(card)
         add_from_phrases(phrases, doc)
     for child_row, _parent_id, _ in (child_evidence or [])[:2]:
-        phrases = getattr(child_row, "search_phrases", None) or []
-        doc = getattr(child_row, "search_document", None) or ""
+        phrases: list[str] = []
+        doc = get_child_search_document(child_row)
         add_from_phrases(phrases, doc)
     return bullets[:max_bullets]
 
@@ -361,7 +369,6 @@ def _build_person_why_evidence(
             "company_name": _compact_text(getattr(card, "company_name", None), 90),
             "location": _compact_text(getattr(card, "location", None), 80),
             "summary": _compact_text(getattr(card, "summary", None), 200),
-            "search_phrases": _compact_text_list(getattr(card, "search_phrases", None), 80, 5),
             "similarity": round(float(sim), 4),
             "start_date": str(getattr(card, "start_date", None)) if getattr(card, "start_date", None) is not None else None,
             "end_date": str(getattr(card, "end_date", None)) if getattr(card, "end_date", None) is not None else None,
@@ -369,13 +376,12 @@ def _build_person_why_evidence(
 
     child_cards: list[dict[str, Any]] = []
     for child, _parent_id, sim in (child_evidence or [])[:2]:
+        cf = _child_display_fields(child)
         child_cards.append({
-            "title": _compact_text(getattr(child, "title", None), 120),
-            "headline": _compact_text(getattr(child, "headline", None), 160),
-            "summary": _compact_text(getattr(child, "summary", None), 180),
-            "context": _compact_text(getattr(child, "context", None), 180),
-            "tags": _compact_text_list(getattr(child, "tags", None), 50, 6),
-            "search_phrases": _compact_text_list(getattr(child, "search_phrases", None), 80, 5),
+            "child_type": _compact_text(getattr(child, "child_type", None), 40),
+            "titles": cf.get("titles") or [],
+            "descriptions": cf.get("descriptions") or [],
+            "raw_text": _compact_text(cf.get("raw_text"), 500),
             "similarity": round(float(sim), 4),
         })
 
@@ -421,7 +427,9 @@ def _why_matched_fallback_all(
             continue
         reasons = fallback_build_why_matched(p, p.get("query_context") or query_context)
         out[person_id] = reasons if reasons else generic
-    return out
+    return boost_query_matching_reasons(
+        out, cleaned_payloads, query_context.get("query_original") or ""
+    )
 
 
 async def _generate_llm_why_matched(
@@ -496,6 +504,10 @@ async def _generate_llm_why_matched(
                 reasons = generic
             fallback_count += 1
         out[person_id] = reasons
+
+    out = boost_query_matching_reasons(
+        out, cleaned_payloads, query_context.get("query_original") or ""
+    )
 
     # Sample output for logging (first 2 people, first reason each)
     sample_reasons = []
@@ -579,7 +591,7 @@ async def _lexical_candidates(
     limit_per_table: int = 100,
 ) -> dict[str, float]:
     """
-    Full-text search on experience_cards and experience_card_children.search_document.
+    Full-text search on experience_cards and experience_card_children (computed doc from fields).
     Returns person_id -> lexical score in [0, 1]; caller caps to LEXICAL_BONUS_MAX.
     Uses plainto_tsquery for safety; empty query_ts returns {}.
     """
@@ -588,19 +600,37 @@ async def _lexical_candidates(
         return {}
     # Avoid SQL injection: use bound param for tsquery; Postgres plainto_tsquery('english', :q)
     person_scores: dict[str, float] = defaultdict(float)
-    stmt_parents = text("""
-        SELECT ec.person_id, ts_rank_cd(to_tsvector('english', COALESCE(ec.search_document, '')), plainto_tsquery('english', :q)) AS r
+    # Parent doc: concat same fields as build_parent_search_document (ExperienceCard has no search_document)
+    parent_doc_expr = """concat_ws(' ',
+        ec.title, ec.normalized_role, ec.domain, ec.sub_domain, ec.company_name, ec.company_type,
+        ec.location, ec.employment_type, ec.summary, ec.raw_text, ec.intent_primary,
+        array_to_string(COALESCE(ec.intent_secondary, '{}'::text[]), ' '),
+        ec.seniority_level,
+        CASE WHEN ec.start_date IS NOT NULL AND ec.end_date IS NOT NULL THEN ec.start_date::text || ' - ' || ec.end_date::text
+             WHEN ec.start_date IS NOT NULL THEN ec.start_date::text
+             WHEN ec.end_date IS NOT NULL THEN ec.end_date::text ELSE NULL END,
+        CASE WHEN ec.is_current = true THEN 'current' ELSE NULL END
+    )"""
+    stmt_parents = text(f"""
+        SELECT ec.person_id, ts_rank_cd(to_tsvector('english', COALESCE({parent_doc_expr}, '')), plainto_tsquery('english', :q)) AS r
         FROM experience_cards ec
         WHERE ec.experience_card_visibility = true
-          AND to_tsvector('english', COALESCE(ec.search_document, '')) @@ plainto_tsquery('english', :q)
+          AND to_tsvector('english', COALESCE({parent_doc_expr}, '')) @@ plainto_tsquery('english', :q)
         ORDER BY r DESC
         LIMIT :lim
     """)
-    stmt_children = text("""
-        SELECT ecc.person_id, ts_rank_cd(to_tsvector('english', COALESCE(ecc.search_document, '')), plainto_tsquery('english', :q)) AS r
+    # Child doc: first item title (or legacy subtitle), raw_text, items[].title/description
+    child_doc_expr = """concat_ws(' ',
+        COALESCE((ecc.value->'items'->0->>'title'), (ecc.value->'items'->0->>'subtitle'), ecc.value->>'summary', ''),
+        ecc.value->>'summary', ecc.value->>'raw_text',
+        (SELECT string_agg(COALESCE(elem->>'title','') || ' ' || COALESCE(elem->>'subtitle','') || ' ' || COALESCE(elem->>'description','') || ' ' || COALESCE(elem->>'sub_summary',''), ' ')
+         FROM jsonb_array_elements(COALESCE(ecc.value->'items', '[]'::jsonb)) elem)
+    )"""
+    stmt_children = text(f"""
+        SELECT ecc.person_id, ts_rank_cd(to_tsvector('english', COALESCE({child_doc_expr}, '')), plainto_tsquery('english', :q)) AS r
         FROM experience_card_children ecc
         JOIN experience_cards ec ON ec.id = ecc.parent_experience_id AND ec.experience_card_visibility = true
-        WHERE to_tsvector('english', COALESCE(ecc.search_document, '')) @@ plainto_tsquery('english', :q)
+        WHERE to_tsvector('english', COALESCE({child_doc_expr}, '')) @@ plainto_tsquery('english', :q)
         ORDER BY r DESC
         LIMIT :lim
     """)
@@ -708,8 +738,7 @@ def _apply_card_filters(stmt, ctx: _FilterContext):
         stmt = stmt.where(ExperienceCard.is_current == ctx.must.is_current)
     if ctx.exclude_norms:
         stmt = stmt.where(~ExperienceCard.company_norm.in_(ctx.exclude_norms))
-    if ctx.norm_terms_exclude:
-        stmt = stmt.where(~ExperienceCard.search_phrases.overlap(ctx.norm_terms_exclude))
+    # ExperienceCard no longer has search_phrases; exclude filter for parents removed
     if ctx.open_to_work_only or ctx.offer_salary_inr_per_year is not None:
         join_conds = [ExperienceCard.person_id == PersonProfile.person_id]
         if ctx.open_to_work_only:
@@ -1704,6 +1733,18 @@ async def run_search(
         pending_search_rows=pending_to_persist,
         llm_why_by_person=llm_why_by_person,
     )
+    # Post-persist boost: ensure query-matching outcomes surface in why_matched
+    if llm_evidence_to_persist:
+        _boost_qctx = {
+            "query_original": payload.query_original or "",
+            "query_cleaned": payload.query_cleaned or payload.query_original or "",
+            "must": payload.must.model_dump(mode="json"),
+            "should": payload.should.model_dump(mode="json"),
+        }
+        _boost_payloads = build_match_explanation_payload(_boost_qctx, llm_evidence_to_persist)
+        why_matched_by_person = boost_query_matching_reasons(
+            why_matched_by_person, _boost_payloads, payload.query_original or ""
+        )
     # Only run async refresh when sync LLM didn't run or failed, so past searches get updated later.
     if llm_evidence_to_persist and not llm_why_by_person:
         asyncio.create_task(

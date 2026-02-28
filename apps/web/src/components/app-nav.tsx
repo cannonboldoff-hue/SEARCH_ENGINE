@@ -6,7 +6,8 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LockOpen, Settings, Compass, LayoutGrid, Hammer, Globe, PanelLeftClose, PanelLeft, Menu, MoreVertical, Trash2 } from "lucide-react";
 import { useSidebarWidth, MOBILE_DRAWER_WIDTH } from "@/contexts/sidebar-width-context";
-import { useProfileV1 } from "@/hooks/use-profile-v1";
+import { useProfileSchema } from "@/hooks/use-profile-v1";
+import { useProfilePhoto } from "@/hooks/use-profile-photo";
 import { cn } from "@/lib/utils";
 import { CreditsBadge } from "@/components/credits-badge";
 import { Button } from "@/components/ui/button";
@@ -44,7 +45,8 @@ export function AppNav() {
     toggleMobileSidebar,
   } = useSidebarWidth();
 
-  const { data: profile } = useProfileV1();
+  const { data: profile } = useProfileSchema();
+  const { blobUrl: profilePhotoBlob } = useProfilePhoto(profile?.photo_url ?? null);
   const accountName = (profile?.display_name || profile?.username || "Account").trim();
   const accountInitial = accountName ? accountName[0]?.toUpperCase() : "U";
 
@@ -80,7 +82,6 @@ export function AppNav() {
   });
 
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
-  const [profilePhotoError, setProfilePhotoError] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -92,10 +93,6 @@ export function AppNav() {
     document.addEventListener("click", handleClickOutside, true);
     return () => document.removeEventListener("click", handleClickOutside, true);
   }, [openDropdownId]);
-
-  useEffect(() => {
-    setProfilePhotoError(false);
-  }, [profile?.photo_url]);
 
   const sidebarItems = [
     { href: "/home", label: "Home", icon: Compass },
@@ -315,13 +312,11 @@ export function AppNav() {
               title={accountName}
               aria-label="Account"
             >
-              {profile?.photo_url && !profilePhotoError ? (
+              {profilePhotoBlob ? (
                 <img
-                  src={profile.photo_url}
+                  src={profilePhotoBlob}
                   alt={accountName}
                   className="h-7 w-7 shrink-0 rounded-full object-cover bg-muted"
-                  referrerPolicy="no-referrer"
-                  onError={() => setProfilePhotoError(true)}
                 />
               ) : (
                 <span className="h-7 w-7 shrink-0 rounded-full bg-muted text-foreground/80 flex items-center justify-center text-xs font-semibold">

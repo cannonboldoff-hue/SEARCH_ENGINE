@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { V1CardDetails, isPlaceholderChildCard } from "./v1-card-details";
+import { CardDetails, getChildDisplaySummary, getChildDisplayTitle, isPlaceholderChildCard } from "./card-details";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ExperienceCard, ExperienceCardChild } from "@/types";
@@ -20,9 +20,7 @@ export function CardFamilyDisplay({
   const parentObj = parent as Record<string, unknown>;
   const visibleChildren = children.filter((c) => !isPlaceholderChildCard(c as Record<string, unknown>));
   const title =
-    (parentObj.title as string) ??
-    (parentObj.company_name as string) ??
-    "Untitled";
+    String(parentObj.title ?? parentObj.company_name ?? "").trim() || "Untitled";
 
   return (
     <motion.div
@@ -38,13 +36,12 @@ export function CardFamilyDisplay({
       className="relative"
     >
       <div className={cn(
-        "rounded-2xl border border-border/40 bg-card overflow-hidden",
-        "transition-all duration-200",
-        "hover:border-border/70 hover:shadow-md",
+        "group rounded-xl border border-border bg-card overflow-hidden transition-colors",
+        "hover:bg-accent/30",
       )}>
         <div className="p-4 sm:p-5">
           <div className="flex items-start justify-between gap-2">
-            <h3 className="font-semibold text-[15px] text-foreground leading-snug">
+            <h3 className="font-semibold text-[16px] text-foreground leading-snug">
               {title}
             </h3>
             {visibleChildren.length > 0 && (
@@ -53,7 +50,7 @@ export function CardFamilyDisplay({
               </span>
             )}
           </div>
-          <V1CardDetails
+          <CardDetails
             card={parent as Record<string, unknown>}
             summaryFullWidth
             hideInternalFields
@@ -64,16 +61,17 @@ export function CardFamilyDisplay({
           <div className="border-t border-border/30 bg-muted/20 px-4 sm:px-5 py-3">
             <div className="space-y-1.5">
               {visibleChildren.map((child, childIdx) => {
-                const relationType = (child.relation_type ?? "")
-                  .toString()
-                  .trim();
+                const relationType = (child.child_type ?? "").toString().trim();
                 const relationDisplay = relationType
                   ? relationType.replace(/_/g, " ")
                   : "";
+                const title = getChildDisplayTitle(child);
+                const summary = getChildDisplaySummary(child);
+                const tags = (child.items ?? []).map((it) => String((it as Record<string, unknown>).subtitle ?? (it as Record<string, unknown>).title ?? "")).filter(Boolean);
 
                 return (
                   <motion.div
-                    key={child.id}
+                    key={child.id ?? `child-${childIdx}`}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: childIdx * 0.04, duration: 0.15 }}
@@ -87,19 +85,16 @@ export function CardFamilyDisplay({
                         </span>
                       )}
                       <p className="text-sm font-medium text-foreground leading-snug">
-                        {child.title || child.summary || "Detail"}
+                        {title || summary || "Detail"}
                       </p>
-                      {child.summary && (
+                      {summary && (
                         <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-1">
-                          {child.summary}
+                          {summary}
                         </p>
                       )}
-                      {child.time_range && (
-                        <p className="text-[11px] text-muted-foreground/50 mt-0.5">{child.time_range}</p>
-                      )}
-                      {Array.isArray(child.tags) && child.tags.length > 0 && (
+                      {tags.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1.5">
-                          {child.tags.map((tag, i) => (
+                          {tags.map((tag, i) => (
                             <span
                               key={`${tag}-${i}`}
                               className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary/80"

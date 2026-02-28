@@ -247,8 +247,8 @@ export type IndexField = {
   embedding_ref: string | null;
 };
 
-/** Experience Card v1 (universal content unit). Parent: parent_id=null, depth=0, relation_type=null. Child: parent_id set, depth≥1, relation_type enum. */
-export type ExperienceCardV1 = {
+/** Experience Card schema (universal content unit). Parent: parent_id=null, depth=0. Child: parent_id set, depth≥1. */
+export type ExperienceCardSchema = {
   id: string;
   person_id: string;
   created_by: string;

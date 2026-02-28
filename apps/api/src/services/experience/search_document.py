@@ -1,18 +1,17 @@
 """
 Single source of truth for the text used to embed experience cards (parents and children).
 
-This "search document" is stored on ExperienceCard.search_document and
-ExperienceCardChild.search_document, and is used for:
-  - Vector embedding (semantic search)
-  - Full-text search (tsvector)
+For parents: build_parent_search_document() derives text from card fields (no stored column).
+For children: get_child_search_document() derives text from child.value (items, raw_text).
+Used for: vector embedding (semantic search) and full-text search (tsvector).
 
 Callers:
-  - experience_card_embedding: when building inputs for the embedding API
-  - experience_card: when applying patches (to keep search_document in sync)
-  - experience_card_pipeline: when persisting new cards (builds from V1Card; see card_to_*_fields)
+  - embedding: when building inputs for the embedding API
+  - pipeline: when persisting new cards (builds from Card; see card_to_*_fields)
 """
 
 from src.db.models import ExperienceCard, ExperienceCardChild
+from src.services.experience.child_value import get_child_label
 
 
 def _format_date_range(card: ExperienceCard) -> str:
@@ -30,7 +29,7 @@ def build_parent_search_document(card: ExperienceCard) -> str:
     """
     Build the searchable/embedding text for a parent experience card.
 
-    Used when: re-embedding after patch, or when card.search_document is not set.
+    Used for: embedding input and lexical FTS (derived from card fields).
     """
     parts = [
         card.title or "",
@@ -54,40 +53,28 @@ def build_parent_search_document(card: ExperienceCard) -> str:
 
 def build_child_search_document_from_value(label: str | None, value: dict) -> str | None:
     """
-    Build the searchable/embedding text for a child card from its label and value dict.
-
-    Used when: re-embedding after patch (child.value is the dimension container).
-    Returns None if the resulting text would be empty.
+    Build the searchable/embedding text for a child card from label and value.
+    Value: { raw_text, items[] }.
     """
     if not isinstance(value, dict):
         return None
-    time_text = None
-    if isinstance(value.get("time"), dict):
-        time_text = value["time"].get("text")
-    location_text = None
-    if isinstance(value.get("location"), dict):
-        location_text = value["location"].get("text")
-    tags = value.get("tags") if isinstance(value.get("tags"), list) else []
-    tags_str = " ".join(str(t).strip() for t in tags[:10] if str(t).strip())
     parts = [
         label or "",
-        str(value.get("headline") or ""),
-        str(value.get("summary") or ""),
-        str(value.get("company") or ""),
-        str(location_text or ""),
-        str(time_text or ""),
-        tags_str,
+        str(value.get("raw_text") or ""),
     ]
+    items = value.get("items") if isinstance(value.get("items"), list) else []
+    for it in items[:20]:
+        if isinstance(it, dict):
+            parts.append(str(it.get("title") or it.get("subtitle") or ""))
+            parts.append(str(it.get("description") or it.get("sub_summary") or ""))
     doc = " ".join(p.strip() for p in parts if p and str(p).strip()).strip()
     return doc or None
 
 
 def get_child_search_document(child: ExperienceCardChild) -> str:
     """
-    Return the search document for a child card (stored or derived from value).
+    Return the search document for a child card (derived from value).
     """
-    stored = (child.search_document or "").strip()
-    if stored:
-        return stored
     value = child.value if isinstance(child.value, dict) else {}
-    return (build_child_search_document_from_value(child.label, value) or "").strip()
+    label = get_child_label(value, getattr(child, "child_type", "") or "")
+    return (build_child_search_document_from_value(label, value) or "").strip()

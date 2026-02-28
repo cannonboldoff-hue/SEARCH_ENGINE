@@ -52,8 +52,8 @@ async def get_profile(person: Person) -> PersonResponse:
     return _person_response(person)
 
 
-async def _get_profile_v1_response(db: AsyncSession, person: Person) -> PersonSchema:
-    """Return current user as PersonSchema (domain v1)."""
+async def _get_profile_schema_response(db: AsyncSession, person: Person) -> PersonSchema:
+    """Return current user as PersonSchema."""
     result = await db.execute(select(PersonProfile).where(PersonProfile.person_id == person.id))
     profile = result.scalar_one_or_none()
     return person_to_person_schema(person, profile=profile)
@@ -123,9 +123,8 @@ async def upload_profile_photo(
     db: AsyncSession,
     person: Person,
     file: UploadFile,
-    photo_url: str,
-) -> str:
-    """Save uploaded image to DB (profile_photo, profile_photo_media_type) and set profile_photo_url. Returns profile_photo_url."""
+) -> None:
+    """Save uploaded image to DB (profile_photo, profile_photo_media_type)."""
     allowed = ("image/jpeg", "image/png", "image/gif", "image/webp")
     media_type = (file.content_type or "").strip().lower()
     if media_type and media_type not in allowed:
@@ -143,8 +142,7 @@ async def upload_profile_photo(
         await db.flush()
     profile.profile_photo = content
     profile.profile_photo_media_type = media_type
-    profile.profile_photo_url = photo_url
-    return photo_url
+    profile.profile_photo_url = "/me/bio/photo"  # Sentinel: blob exists, frontend fetches with Bearer
 
 
 async def get_profile_photo_from_db(
@@ -173,12 +171,13 @@ async def get_bio_response(db: AsyncSession, person: Person) -> BioResponse:
         and (profile.school or "").strip()
         and (person.email or "").strip()
     )
+    has_photo = profile is not None and profile.profile_photo is not None
     return BioResponse(
         first_name=profile.first_name if profile else None,
         last_name=profile.last_name if profile else None,
         date_of_birth=profile.date_of_birth if profile else None,
         current_city=profile.current_city if profile else None,
-        profile_photo_url=profile.profile_photo_url if profile else None,
+        profile_photo_url="/me/bio/photo" if has_photo else None,
         school=profile.school if profile else None,
         college=profile.college if profile else None,
         current_company=profile.current_company if profile else None,
@@ -209,8 +208,7 @@ async def update_bio(
         profile.date_of_birth = body.date_of_birth
     if body.current_city is not None:
         profile.current_city = body.current_city
-    if body.profile_photo_url is not None:
-        profile.profile_photo_url = body.profile_photo_url
+    # profile_photo_url in body is ignored; upload sets it via /me/bio/photo endpoint
     if body.school is not None:
         profile.school = body.school
     if body.college is not None:
@@ -242,12 +240,13 @@ async def update_bio(
         profile.phone = body.phone
     past = _past_companies_to_items(profile.past_companies)
     complete = bool((profile.school or "").strip() and (person.email or "").strip())
+    has_photo = profile.profile_photo is not None
     return BioResponse(
         first_name=profile.first_name,
         last_name=profile.last_name,
         date_of_birth=profile.date_of_birth,
         current_city=profile.current_city,
-        profile_photo_url=profile.profile_photo_url,
+        profile_photo_url="/me/bio/photo" if has_photo else None,
         school=profile.school,
         college=profile.college,
         current_company=profile.current_company,
@@ -353,8 +352,8 @@ class ProfileService:
         return await get_profile(person)
 
     @staticmethod
-    async def get_profile_v1(db: AsyncSession, person: Person) -> PersonSchema:
-        return await _get_profile_v1_response(db, person)
+    async def get_profile_schema(db: AsyncSession, person: Person) -> PersonSchema:
+        return await _get_profile_schema_response(db, person)
 
     @staticmethod
     async def patch_current_user(db: AsyncSession, person: Person, body: PatchProfileRequest) -> PersonResponse:

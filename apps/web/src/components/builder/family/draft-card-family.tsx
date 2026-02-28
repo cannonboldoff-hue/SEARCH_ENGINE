@@ -3,28 +3,29 @@ import { Button } from "@/components/ui/button";
 import { TiltCard } from "@/components/tilt-card";
 import { CardTypeIcon } from "../card/card-type-icon";
 import {
-  V1CardDetails,
-  v1CardTopics,
+  CardDetails,
+  cardTopics,
   displayCardTitle,
+  getChildDisplayItems,
   isPlaceholderChildCard,
-} from "../card/v1-card-details";
+} from "../card/card-details";
 import { ParentCardEditForm } from "../forms/parent-card-edit-form";
 import { ChildCardEditForm } from "../forms/child-card-edit-form";
 import { PenLine, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { CardFamilyV1Response, ExperienceCardV1 } from "@/types";
+import type { DraftCardFamily, ExperienceCard, ExperienceCardChild } from "@/types";
 import type { ParentCardForm, ChildCardForm } from "@/hooks/use-card-forms";
 
 interface DraftCardFamilyProps {
-  family: CardFamilyV1Response;
+  family: DraftCardFamily;
   editingCardId: string | null;
   editingKind: "parent" | "child" | null;
   editForm: ParentCardForm;
   childEditForm: ChildCardForm;
   onEditFormChange: (updates: Partial<ParentCardForm>) => void;
   onChildEditFormChange: (updates: Partial<ChildCardForm>) => void;
-  onStartEditingCard: (card: ExperienceCardV1) => void;
-  onStartEditingChild: (child: ExperienceCardV1) => void;
+  onStartEditingCard: (card: ExperienceCard | Record<string, unknown>) => void;
+  onStartEditingChild: (child: ExperienceCardChild | Record<string, unknown>) => void;
   onSubmitEditCard: () => void;
   onSubmitEditChild: () => void;
   onDeleteParentCard: (id: string) => void;
@@ -62,13 +63,14 @@ export function DraftCardFamily({
   isChildSubmitting,
   isChildDeleting,
 }: DraftCardFamilyProps) {
-  const parent = family.parent as ExperienceCardV1;
-  const allChildren = (family.children ?? []) as ExperienceCardV1[];
+  const parent = family.parent as ExperienceCard | Record<string, unknown>;
+  const parentAny = parent as Record<string, unknown>;
+  const allChildren = (family.children ?? []) as ExperienceCardChild[];
   const children = allChildren.filter((c) => !isPlaceholderChildCard(c));
-  const parentId = String(parent?.id ?? (parent as Record<string, unknown>)?.card_id ?? "").trim();
-  const tags = parent ? v1CardTopics(parent) : [];
+  const parentId = String(parentAny?.id ?? parentAny?.card_id ?? "").trim();
+  const tags = parent ? cardTopics(parent) : [];
   const isEditingParent = editingKind === "parent" && editingCardId === parentId;
-  const parentRelationType = (parent?.relation_type ?? "").toString().trim();
+  const parentRelationType = (parentAny?.relation_type ?? "").toString().trim();
   const relationDisplay = (rt: string) => (rt ? String(rt).replace(/_/g, " ").toUpperCase() : "");
 
   return (
@@ -98,11 +100,11 @@ export function DraftCardFamily({
           )}
           <div className="flex items-start justify-between gap-2 w-full min-w-0">
             <span className="flex items-center gap-2 min-w-0 flex-1 truncate">
-              <span className="text-muted-foreground flex-shrink-0">
-                <CardTypeIcon tags={tags} title={displayCardTitle((parent as { title?: string })?.title ?? parent?.headline, "Untitled")} />
-              </span>
-              <span className="font-semibold text-sm truncate text-foreground">
-                {displayCardTitle((parent as { title?: string })?.title ?? parent?.headline, "Untitled")}
+                <span className="text-muted-foreground flex-shrink-0">
+                  <CardTypeIcon tags={tags} title={displayCardTitle((parentAny?.title ?? parentAny?.headline) as string, "Untitled")} />
+                </span>
+                <span className="font-semibold text-sm truncate text-foreground">
+                  {displayCardTitle((parentAny?.title ?? parentAny?.headline) as string, "Untitled")}
               </span>
               {children.length > 0 && (
                 <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
@@ -171,7 +173,7 @@ export function DraftCardFamily({
                   ))}
                 </div>
               )}
-              <V1CardDetails card={parent} summaryFullWidth />
+              <CardDetails card={parent} summaryFullWidth />
             </>
           )}
         </div>
@@ -186,13 +188,12 @@ export function DraftCardFamily({
           <ul className="relative space-y-0">
             {children.map((child, childIdx) => {
               const childId = child?.id ?? "";
-              const childRelationType = (child?.relation_type ?? "").toString().trim();
-              const childTitle = displayCardTitle((child as { title?: string })?.title ?? child?.headline, "Untitled");
+              const childRelationType = (child?.child_type ?? "").toString().trim();
               const isEditingThisChild = editingKind === "child" && editingCardId === childId;
 
               return (
                 <motion.li
-                  key={childId || childTitle}
+                  key={childId || childRelationType || childIdx}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: childIdx * 0.06, duration: 0.2 }}
@@ -216,8 +217,25 @@ export function DraftCardFamily({
                               {relationDisplay(childRelationType)}
                             </p>
                           )}
-                          <p className="font-medium text-sm text-foreground">
-                            {childTitle}
+                          <p className="font-medium text-sm text-foreground whitespace-pre-line">
+                            {(() => {
+                              const items = getChildDisplayItems(child as Record<string, unknown>);
+                              const childType = childRelationType || "Untitled";
+                              if (items.length === 0) return childType;
+                              return items.map((it, i) => (
+                                <span key={i}>
+                                  {it.title && it.summary ? (
+                                    <>
+                                      {it.title}:{" "}
+                                      <span style={{ color: "rgba(128, 128, 128, 0.6)" }}>{it.summary}</span>
+                                    </>
+                                  ) : (
+                                    it.title || it.summary
+                                  )}
+                                  {i < items.length - 1 && "\n"}
+                                </span>
+                              ));
+                            })()}
                           </p>
                         </div>
                         <div className="flex gap-0.5 flex-shrink-0">
@@ -225,7 +243,7 @@ export function DraftCardFamily({
                             size="sm"
                             variant="ghost"
                             className="text-muted-foreground hover:text-foreground h-7 w-7 p-0"
-                            onClick={() => onStartEditingChild(child as ExperienceCardV1)}
+                            onClick={() => onStartEditingChild(child)}
                           >
                             <PenLine className="h-3.5 w-3.5" />
                           </Button>
@@ -253,7 +271,7 @@ export function DraftCardFamily({
                         isUpdatingFromMessyText={isUpdatingFromMessyText}
                       />
                     ) : (
-                      <V1CardDetails card={child} compact />
+                      <CardDetails card={child} compact />
                     )}
                   </div>
                 </motion.li>

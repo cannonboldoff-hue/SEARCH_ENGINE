@@ -7,7 +7,7 @@ Flow:
   3. embed_experience_cards(db, parents, children) runs 1+2, assigns vectors, flushes DB
 
 Used by:
-  - run_draft_v1_single (after persist_families)
+  - run_draft_single (after persist_families)
   - PATCH experience card / child (after apply_card_patch / apply_child_patch)
   - clarify-experience and fill-missing-from-text (after persisting filled data)
 """
@@ -20,12 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import ExperienceCard, ExperienceCardChild
 from src.providers import get_embedding_provider, EmbeddingServiceError
-from .experience_card_search_document import (
-    build_parent_search_document,
-    get_child_search_document,
-)
-from .pipeline_errors import PipelineError, PipelineStage
 from src.utils import normalize_embedding
+
+from .errors import PipelineError, PipelineStage
+from .search_document import build_parent_search_document, get_child_search_document
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +52,7 @@ def build_embedding_inputs(
     """
     Build the ordered list of (text, target) for embedding.
 
-    Parent: uses search_document if set, else build_parent_search_document(parent).
+    Parent: uses build_parent_search_document(parent) (derived from card fields).
     Child: uses search_document (trimmed); skipped if empty.
 
     Order: all parents first, then all children. Used to assign vectors back in the same order.
@@ -62,7 +60,7 @@ def build_embedding_inputs(
     inputs: list[EmbeddingInput] = []
 
     for parent in parents:
-        text = (parent.search_document or build_parent_search_document(parent)).strip()
+        text = build_parent_search_document(parent).strip()
         if text:
             inputs.append(EmbeddingInput(text=text, target=parent))
 

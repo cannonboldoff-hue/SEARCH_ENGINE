@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageLoading, PageError, ErrorMessage } from "@/components/feedback";
-import { CardFamilyDisplay } from "@/components/builder";
+import { SavedCardFamily } from "@/components/builder";
 import { api, apiWithIdempotency } from "@/lib/api";
 import type {
   PersonProfile,
@@ -202,12 +202,12 @@ function PersonProfilePageContent() {
           <h2 className="text-sm font-medium text-muted-foreground mb-3">Experience</h2>
           {profile.card_families && profile.card_families.length > 0 ? (
             <div className="space-y-6">
-              {profile.card_families.map((family, idx) => (
-                <CardFamilyDisplay
+              {profile.card_families.map((family) => (
+                <SavedCardFamily
                   key={family.parent.id}
+                  readOnly
                   parent={family.parent}
                   children={family.children}
-                  index={idx}
                 />
               ))}
             </div>
@@ -218,12 +218,12 @@ function PersonProfilePageContent() {
             </div>
           ) : (
             <div className="space-y-6">
-              {profile.experience_cards.map((card, idx) => (
-                <CardFamilyDisplay
+              {profile.experience_cards.map((card) => (
+                <SavedCardFamily
                   key={card.id}
+                  readOnly
                   parent={card}
                   children={[]}
-                  index={idx}
                 />
               ))}
             </div>

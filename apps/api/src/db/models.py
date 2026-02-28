@@ -219,8 +219,6 @@ class ExperienceCard(Base):
 
     confidence_score = Column(Float, nullable=True)
     experience_card_visibility = Column(Boolean, default=True, nullable=False)
-    search_phrases = Column(ARRAY(String), default=list)
-    search_document = Column(Text, nullable=True)
     embedding = Column(Vector(324), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -242,15 +240,12 @@ class ExperienceCardChild(Base):
     raw_experience_id = Column(UUID(as_uuid=False), ForeignKey("raw_experiences.id", ondelete="SET NULL"), nullable=True)
     draft_set_id = Column(UUID(as_uuid=False), ForeignKey("draft_sets.id", ondelete="SET NULL"), nullable=True)
 
-    child_type = Column(String(50), nullable=False)  
-    label = Column(String(255), nullable=True)
+    child_type = Column(String(50), nullable=False)
 
-    value = Column(JSONB, nullable=False)  # DIMENSION CONTAINER
+    value = Column(JSONB, nullable=False)  # DIMENSION CONTAINER: { raw_text, items: [{ title, description }] }
 
     confidence_score = Column(Float, nullable=True)
 
-    search_phrases = Column(ARRAY(String), default=list)
-    search_document = Column(Text, nullable=True)
     embedding = Column(Vector(324), nullable=True)
 
     extra = Column(JSONB, nullable=True)

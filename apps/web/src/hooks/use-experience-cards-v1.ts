@@ -1,15 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { ExperienceCardV1 } from "@/types";
+import type { ExperienceCardSchema } from "@/types";
 
-export const EXPERIENCE_CARDS_V1_QUERY_KEY = ["me", "experience-cards-v1"] as const;
+export const EXPERIENCE_CARDS_SCHEMA_QUERY_KEY = ["me", "experience-cards-schema"] as const;
 
-export function useExperienceCardsV1(statusFilter?: string | null) {
+export function useExperienceCardsSchema(statusFilter?: string | null) {
   return useQuery({
-    queryKey: [...EXPERIENCE_CARDS_V1_QUERY_KEY, statusFilter ?? "all"],
+    queryKey: [...EXPERIENCE_CARDS_SCHEMA_QUERY_KEY, statusFilter ?? "all"],
     queryFn: () => {
       const params = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
-      return api<ExperienceCardV1[]>(`/me/experience-cards-v1${params}`);
+      return api<ExperienceCardSchema[]>(`/me/experience-cards-schema${params}`);
     },
   });
 }

@@ -1,4 +1,4 @@
-"""Experience card and raw experience business logic."""
+"""Experience card CRUD, raw experience, and patch application."""
 
 import asyncio
 from collections import defaultdict
@@ -7,15 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import ExperienceCard, ExperienceCardChild, RawExperience
+from src.services.experience.child_value import normalize_child_items
 from src.schemas import (
     ExperienceCardChildPatch,
     ExperienceCardCreate,
     ExperienceCardPatch,
     RawExperienceCreate,
-)
-from .experience_card_search_document import (
-    build_child_search_document_from_value,
-    build_parent_search_document,
 )
 
 # -----------------------------------------------------------------------------
@@ -109,29 +106,16 @@ async def get_card_for_user(
 
 
 # -----------------------------------------------------------------------------
-# Patch application (in-place; keeps search_document in sync)
+# Patch application (in-place)
 # -----------------------------------------------------------------------------
 
 
-def _apply_nested_text(value: dict, key: str, text: str) -> None:
-    """Ensure value[key] is a dict and set value[key]['text'] = text."""
-    obj = value.get(key)
-    if not isinstance(obj, dict):
-        obj = {}
-    obj["text"] = text
-    value[key] = obj
-
-
 def apply_card_patch(card: ExperienceCard, body: ExperienceCardPatch) -> None:
-    """Apply patch fields to card in place. Rebuilds search_document only when something changed."""
-    changed = False
+    """Apply patch fields to card in place."""
     for field in _CARD_PATCH_FIELDS:
         new_val = getattr(body, field, None)
         if new_val is not None:
             setattr(card, field, new_val)
-            changed = True
-    if changed:
-        card.search_document = build_parent_search_document(card)
 
 
 def apply_child_patch(
@@ -141,38 +125,22 @@ def apply_child_patch(
     """
     Apply patch fields to ExperienceCardChild in place.
 
-    Updates both child.label (title/headline) and child.value (dimension container
-    used by the draft-v1 child DTO). Rebuilds search_document only when something changed.
+    Updates child.value (dimension container).
+    SQLAlchemy may not detect in-place JSONB mutations; assign a new dict and flag_modified.
     """
-    value = child.value if isinstance(child.value, dict) else {}
+    from sqlalchemy.orm.attributes import flag_modified
+
+    value = dict(child.value) if isinstance(child.value, dict) else {}
     changed = False
 
-    if body.title is not None:
-        child.label = body.title
-        value["headline"] = body.title
+    if body.items is not None:
+        items = normalize_child_items(body.items)[:MAX_CHILD_TAGS]
+        value["items"] = items
         changed = True
 
-    if body.summary is not None:
-        value["summary"] = body.summary
-        changed = True
-
-    if body.tags is not None:
-        tags = [str(t).strip() for t in body.tags if str(t).strip()][:MAX_CHILD_TAGS]
-        value["tags"] = tags
-        value["topics"] = [{"label": t} for t in tags]
-        changed = True
-
-    if body.time_range is not None:
-        _apply_nested_text(value, "time", body.time_range)
-        changed = True
-
-    if body.location is not None:
-        _apply_nested_text(value, "location", body.location)
-        changed = True
-
-    child.value = value
     if changed:
-        child.search_document = build_child_search_document_from_value(child.label, value)
+        child.value = value
+        flag_modified(child, "value")
 
 
 # -----------------------------------------------------------------------------

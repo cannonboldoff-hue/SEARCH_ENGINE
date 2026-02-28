@@ -1,9 +1,9 @@
 export {
-  V1CardDetails,
-  v1CardTopics,
+  CardDetails,
+  cardTopics,
   displayCardTitle,
   isPlaceholderChildCard,
-} from "./v1-card-details";
+} from "./card-details";
 export { CardTypeIcon } from "./card-type-icon";
 export type { CardFamilyDisplayProps } from "./card-family-display";
 export { CardFamilyDisplay } from "./card-family-display";

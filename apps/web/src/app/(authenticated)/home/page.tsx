@@ -1,12 +1,11 @@
 "use client";
 
 import { useRef, useEffect, useCallback } from "react";
-import { Send, Mic, Square } from "lucide-react";
+import { Send } from "lucide-react";
 import { useSearch } from "@/contexts/search-context";
 import { SearchResults } from "@/components/search";
 import { ErrorMessage } from "@/components/feedback";
 import { Button } from "@/components/ui/button";
-import { useVoiceInput } from "@/components/builder";
 
 const SUGGESTIONS = [
   "Software engineers in San Francisco",
@@ -28,23 +27,6 @@ export default function HomePage() {
     isSearching,
   } = useSearch();
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const searchTranscriptRef = useRef("");
-  const wasRecordingRef = useRef(false);
-
-  const handleVoiceTranscript = useCallback(
-    (text: string) => {
-      setQuery(text);
-      searchTranscriptRef.current = text;
-    },
-    [setQuery]
-  );
-
-  const {
-    isRecording,
-    isConnectingRecorder,
-    toggleRecording,
-    recordingError,
-  } = useVoiceInput(handleVoiceTranscript);
 
   const autoResize = useCallback(() => {
     const el = inputRef.current;
@@ -73,16 +55,6 @@ export default function HomePage() {
   const handleSuggestionClick = (text: string) => {
     performSearchWithQuery(text);
   };
-
-  // Run search when voice recording stops and we have transcript (Sarvam AI via API)
-  useEffect(() => {
-    const wasRecording = wasRecordingRef.current;
-    wasRecordingRef.current = isRecording || isConnectingRecorder;
-    if (wasRecording && !isRecording && !isConnectingRecorder) {
-      const text = searchTranscriptRef.current?.trim();
-      if (text) performSearchWithQuery(text);
-    }
-  }, [isRecording, isConnectingRecorder, performSearchWithQuery]);
 
   const hasSearched = !!searchId;
   const showEmptyState = !hasSearched;
@@ -145,23 +117,6 @@ export default function HomePage() {
               />
               <div className="absolute right-2 bottom-2 top-2 sm:top-auto flex items-center gap-1">
                 <Button
-                  type="button"
-                  size="icon"
-                  variant={isRecording ? "destructive" : "ghost"}
-                  disabled={isSearching || isConnectingRecorder}
-                  onClick={toggleRecording}
-                  title={isRecording ? "Stop listening" : "Voice search (Sarvam AI)"}
-                  className="h-9 w-9 min-h-[44px] min-w-[44px] rounded-xl shrink-0"
-                >
-                  {isConnectingRecorder ? (
-                    <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                  ) : isRecording ? (
-                    <Square className="h-4 w-4" aria-hidden />
-                  ) : (
-                    <Mic className="h-4 w-4" aria-hidden />
-                  )}
-                </Button>
-                <Button
                   type="submit"
                   size="icon"
                   disabled={isSearching || !query.trim()}
@@ -176,8 +131,8 @@ export default function HomePage() {
               </div>
             </div>
           </form>
-          <p className={`text-[11px] text-center mt-2 ${recordingError ? "text-destructive" : "text-muted-foreground"}`}>
-            {recordingError || "Press Enter to search"}
+          <p className="text-[11px] text-center mt-2 text-muted-foreground">
+            Press Enter to search
           </p>
         </div>
       </div>

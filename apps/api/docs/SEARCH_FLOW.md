@@ -2,7 +2,7 @@
 
 This document reflects the current implementation in `apps/api` and is intended for both humans and AI agents. Every section is precise and traceable to source code.
 
-**Last updated:** February 2026.
+**Last updated:** February 2025.
 
 ---
 
@@ -28,12 +28,13 @@ This document reflects the current implementation in `apps/api` and is intended 
 | Profile view | `apps/api/src/services/search/search_profile_view.py` | `get_person_profile`, `list_people_for_discover`, `get_public_profile_impl`, `list_unlocked_cards_for_searcher` |
 | Unlock flow | `apps/api/src/services/search/search_contact_unlock.py` | `unlock_contact`, `unlock_endpoint(person_id)` for idempotency key |
 | Chat parsing | `apps/api/src/providers/chat.py` | `parse_search_filters` (cleanup → single extract), `_chat_json`, `_chat` |
-| Why-matched helpers | `apps/api/src/services/search/why_matched_helpers.py` | `build_match_explanation_payload`, `validate_why_matched_output`, `fallback_build_why_matched`, `clean_why_reason` |
+| Why-matched helpers | `apps/api/src/services/search/why_matched_helpers.py` | `build_match_explanation_payload`, `validate_why_matched_output`, `fallback_build_why_matched`, `clean_why_reason`, `boost_query_matching_reasons` |
 | Prompts | `apps/api/src/prompts/search_filters.py` | `PROMPT_SEARCH_CLEANUP`, `PROMPT_SEARCH_SINGLE_EXTRACT`, `get_cleanup_prompt`, `get_single_extract_prompt` |
 | Prompts | `apps/api/src/prompts/search_why_matched.py` | `get_why_matched_prompt` |
 | Prompts | `apps/api/src/prompts/experience_card_enums.py` | `INTENT_ENUM` (from `src.domain.Intent`) |
 | Schemas | `apps/api/src/schemas/search.py` | `SearchRequest`, `SearchResponse`, `PersonSearchResult`, `ParsedConstraintsPayload`, `ParsedConstraintsMust`, `ParsedConstraintsShould`, `ParsedConstraintsExclude`, `SavedSearchItem`, `SavedSearchesResponse`, `UnlockContactRequest`, `UnlockContactResponse`, `PersonProfileResponse` |
 | Credits & idempotency | `apps/api/src/services/credits.py` | `get_balance`, `deduct_credits`, `add_credits`, `get_idempotent_response`, `save_idempotent_response` |
+| Search document (derived text) | `apps/api/src/services/experience/search_document.py` | `build_parent_search_document`, `get_child_search_document` (used for lexical FTS and embedding) |
 | Core config | `apps/api/src/core/constants.py` | `SEARCH_RESULT_EXPIRY_HOURS`, `EMBEDDING_DIM` |
 | DB models | `apps/api/src/db/models.py` | `Search`, `SearchResult`, `IdempotencyKey`, `UnlockContact`, `PersonProfile`, `Person`, `ExperienceCard`, `ExperienceCardChild` |
 | Frontend result card | `apps/web/src/components/search/person-result-card.tsx` | Consumes `similarity_percent`, `why_matched` (up to 3 items), `matched_cards`; fallback text: "Matched your search intent and profile signals." |
@@ -129,7 +130,7 @@ File: `apps/api/src/services/search/search_logic.py`. Function: `run_search(db, 
 
 - **Embedding text priority:** payload.query_embedding_text → payload.query_original → body.query. Empty after strip → empty vector path.
 - **Embedding failure:** Raises HTTP 503 (from `_embed_query_vector`).
-- **Lexical:** `_lexical_candidates(db, query_ts)` runs FTS on `experience_cards.search_document` and `experience_card_children.search_document` (joined to visible parents). Query from search_phrases + first 5 should keywords, else cleaned/raw trimmed to 200 chars. Per-person score normalized and capped to `LEXICAL_BONUS_MAX`. On exception, returns {} and search continues without lexical bonus.
+- **Lexical:** `_lexical_candidates(db, query_ts)` runs FTS on derived text from `experience_cards` (concat_ws of title, normalized_role, domain, company_name, location, summary, etc.) and `experience_card_children` (value JSONB: items title/description, raw_text). No stored `search_document` column on ExperienceCard; text is computed inline. Query from search_phrases + first 5 should keywords, else cleaned/raw trimmed to 200 chars. Per-person score normalized and capped to `LEXICAL_BONUS_MAX`. On exception, returns {} and search continues without lexical bonus.
 
 ---
 
@@ -154,7 +155,7 @@ File: `apps/api/src/services/search/search_logic.py`. Function: `run_search(db, 
 - **Company/team:** Applied only when `ctx.apply_company_team`; `ExperienceCard.company_norm.in_(company_norms)` and/or `team_norm.in_(team_norms)`.
 - **Location:** Applied only when `ctx.apply_location`; OR of ILIKE on location for city, country, location_text.
 - **Time:** Applied only when `ctx.apply_time` and both time_start and time_end present; card must have at least one of start_date/end_date; overlap condition: (start_date ≤ query_end or null) and (end_date ≥ query_start or null).
-- **Exclude:** Always applied when present: `~company_norm.in_(exclude_norms)`, `~search_phrases.overlap(norm_terms_exclude)`.
+- **Exclude:** Always applied when present: `~company_norm.in_(exclude_norms)`. ExperienceCard no longer has `search_phrases`; exclude keyword filter (`norm_terms_exclude`) is not applied to parents.
 - **PersonProfile join:** When open_to_work_only or offer_salary_inr_per_year: join PersonProfile, open_to_work=True if open_to_work_only; optional work_preferred_locations overlap with body.preferred_locations; salary: work_preferred_salary_min IS NULL or work_preferred_salary_min ≤ offer_salary_inr_per_year.
 
 ---
@@ -214,8 +215,8 @@ FALLBACK_TIER_COMPANY_TEAM_SOFT = 3
 
 ## 13) why_matched Pipeline (Inline + Async)
 
-- **Evidence:** Per person, `_build_person_why_evidence` builds parent_cards (title, company_name, location, summary, search_phrases, similarity, start_date, end_date) and child_cards (title, headline, summary, context, tags, search_phrases, similarity). Then `build_match_explanation_payload(query_context, people_evidence_raw)` in why_matched_helpers produces cleaned, deduped payloads for the LLM.
-- **Inline:** `_generate_llm_why_matched(chat, payload, people_evidence)` builds prompt via `get_why_matched_prompt(...)`, calls `chat.chat(prompt, max_tokens=1200, temperature=0.1)`, parses JSON, runs `validate_why_matched_output(parsed)` (clean_why_reason, max 3 lines, dedupe). For any person with no valid reasons, `fallback_build_why_matched(person_evidence, query_context)` is used; if still empty, generic `["Matched your search intent and profile signals."]`.
+- **Evidence:** Per person, `_build_person_why_evidence` builds parent_cards (title, company_name, location, summary, similarity, start_date, end_date) and child_cards (child_type, titles, descriptions, raw_text from `value.items[]` via `_child_display_fields`). Then `build_match_explanation_payload(query_context, people_evidence_raw)` in why_matched_helpers produces cleaned, deduped payloads for the LLM (outcomes = child item titles + descriptions).
+- **Inline:** `_generate_llm_why_matched(chat, payload, people_evidence)` builds prompt via `get_why_matched_prompt(...)`, calls `chat.chat(prompt, max_tokens=1200, temperature=0.1)`, parses JSON, runs `validate_why_matched_output(parsed)` (clean_why_reason, max 3 lines, max 150 chars, 15 words, dedupe). For any person with no valid reasons, `fallback_build_why_matched(person_evidence, query_context)` is used; when LLM is not run at all, `boost_query_matching_reasons()` is applied to fallback output. If still empty, generic `["Matched your search intent and profile signals."]`.
 - **Persist:** SearchResult rows get `extra.why_matched` from inline LLM result or fallback. Async task only when inline LLM was not used or failed; it sleeps 1s, gets new session, calls `_generate_llm_why_matched`, then updates SearchResult.extra.why_matched in DB (best-effort).
 
 ---
@@ -252,8 +253,8 @@ FALLBACK_TIER_COMPANY_TEAM_SOFT = 3
 
 ### 16.3 Why-matched (`get_why_matched_prompt`)
 
-- **Input:** query_context (query_original, query_cleaned, must, should), people array of { person_id, evidence } (evidence from build_match_explanation_payload: headline, summary, skills, company, location, time, child_evidence, etc.).
-- **Output:** JSON `{ "people": [ { "person_id": "uuid", "why_matched": ["string", "string", "string"] } ] }`. Max 3 reasons per person, ≤120 chars, no field labels or markdown. Sanitization in validate_why_matched_output and clean_why_reason (strip generic prefixes, max length/words, reject junk).
+- **Input:** query_context (query_original, query_cleaned, must, should), people array of { person_id, evidence } (evidence from build_match_explanation_payload: headline, summary, company, location, time, outcomes, child_evidence with child_type/titles/descriptions).
+- **Output:** JSON `{ "people": [ { "person_id": "uuid", "why_matched": ["string", "string", "string"] } ] }`. Max 3 reasons per person, ≤150 chars, max 15 words, no field labels or markdown. Sanitization in validate_why_matched_output and clean_why_reason (strip generic prefixes, max length/words, reject junk).
 
 ### 16.4 Full prompt text (runtime strings)
 
@@ -394,7 +395,7 @@ Return ONLY valid JSON with this exact schema:
 
 GLOBAL RULES (STRICT)
 1) Return 1-3 reasons per person.
-2) Each reason must be <= 120 characters.
+2) Each reason must be <= 150 characters.
 3) Each reason must be a clean human-readable phrase/sentence fragment.
 4) Do NOT invent facts not present in the input.
 5) Do NOT include markdown, bullet symbols, comments, or prose outside JSON.
@@ -539,7 +540,7 @@ Stored as `Search.parsed_constraints_json` / `Search.filters`. Built via `Parsed
 | open_to_contact | boolean | From PersonProfile. |
 | work_preferred_locations | list[string] | Shown when open_to_work. |
 | work_preferred_salary_min | number \| null | INR/year; serialized as float in JSON. |
-| matched_cards | list[ExperienceCardResponse] | 1–3 best matching cards. |
+| matched_cards | list[ExperienceCardResponse] | 1–3 best-matching parent experience cards (serialized via experience_card_to_response). When matched via child embedding, parent card(s) containing that child are shown. |
 
 **Example (one person in response):**
 

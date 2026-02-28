@@ -4,7 +4,7 @@ Experience-card clarify logic (stateless).
 This module holds the rules and validation for the clarify conversation:
 canonical card shape, plan validation, fallbacks, and merging patches.
 It does NOT call the LLM or DB; the actual flow (planner/question/apply LLM
-and conversation orchestration) lives in experience_card_pipeline.
+and conversation orchestration) lives in pipeline.
 
 Concepts:
 - Canonical normalizer: one card shape for all clarify logic.
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 logger = logging.getLogger(__name__)
@@ -35,9 +35,13 @@ PARENT_TARGET_FIELDS: tuple[str, ...] = (
     "team",
     "time",
     "location",
+    "location.is_remote",
     "domain",
     "sub_domain",
     "intent_primary",
+    "seniority_level",
+    "employment_type",
+    "company_type",
 )
 
 PARENT_PRIORITY: tuple[str, ...] = (
@@ -52,10 +56,11 @@ PARENT_PRIORITY: tuple[str, ...] = (
 )
 
 CHILD_TARGET_FIELDS: tuple[str, ...] = (
-    "metrics",
+    "skills",
     "tools",
-    "achievements",
     "responsibilities",
+    "achievements",
+    "metrics",
     "collaborations",
     "domain_knowledge",
     "exposure",
@@ -63,7 +68,6 @@ CHILD_TARGET_FIELDS: tuple[str, ...] = (
     "certifications",
 )
 
-# child_type in our schema maps to target_field for child
 CHILD_PRIORITY: tuple[str, ...] = (
     "metrics",
     "tools",
@@ -130,7 +134,7 @@ def _get_dict(d: dict, key: str) -> dict:
 def normalize_card_family_for_clarify(card_family: dict) -> dict:
     """
     Normalize any card family (API response or pipeline shape) into one canonical
-    nested v1-style shape for clarify. Legacy flat keys (start_date, end_date,
+    nested shape for clarify. Legacy flat keys (start_date, end_date,
     location string) are merged into time/location objects.
     """
     parent_raw = card_family.get("parent") or {}
@@ -186,7 +190,6 @@ def normalize_card_family_for_clarify(card_family: dict) -> dict:
     # arrays
     p["roles"] = _get_list(p, "roles")
     p["actions"] = _get_list(p, "actions")
-    p["topics"] = _get_list(p, "topics")
     p["outcomes"] = _get_list(p, "outcomes")
     if not p.get("tooling") and (p.get("tooling") is None):
         p["tooling"] = {"tools": _get_list(_get_dict(p, "tooling"), "tools")}
@@ -197,6 +200,8 @@ def normalize_card_family_for_clarify(card_family: dict) -> dict:
         p["tooling"] = tooling
 
     # --- Children canonical ---
+    from src.services.experience.child_value import get_child_label
+
     children: list[dict] = []
     for c in children_raw:
         if not isinstance(c, dict):
@@ -204,23 +209,26 @@ def normalize_card_family_for_clarify(card_family: dict) -> dict:
         child = dict(c)
         child_type = _get_str(child, "child_type", "relation_type") or "skills"
         child["child_type"] = child_type
-        child["label"] = _get_str(child, "label", "headline", "title") or child_type
         value = _get_dict(child, "value")
-        if not value and (child.get("summary") or child.get("headline")):
-            value = {
-                "headline": child.get("headline") or child.get("label"),
-                "summary": child.get("summary") or child.get("context", ""),
-            }
+        child["label"] = _get_str(child, "label", "title") or get_child_label(value or {}, child_type)
+        if not value:
+            value = {"raw_text": None, "items": []}
+        if "items" not in value or not isinstance(value.get("items"), list):
+            value["items"] = []
         child["value"] = value
-        child["search_phrases"] = _get_list(child, "search_phrases")
-        child["search_document"] = _get_str(child, "search_document") or ""
         children.append(child)
 
     return {"parent": p, "children": children}
 
 
 def is_parent_good_enough(canonical_parent: dict) -> bool:
-    """Parent is good enough when: headline or role, summary, company, and time."""
+    """
+    Parent is good enough when every applicable field has a value, has been asked,
+    or has been set to null as inapplicable. Does NOT stop early based on minimum fields.
+    Returns True only when no high-value fields remain unresolved.
+    """
+    # A field is considered resolved if it has a non-empty value OR is explicitly null
+    # (null means inapplicable). We check the fields that are always applicable.
     has_headline_or_role = bool(
         _get_str(canonical_parent, "headline", "title") or _get_str(canonical_parent, "role", "normalized_role")
     )
@@ -229,10 +237,20 @@ def is_parent_good_enough(canonical_parent: dict) -> bool:
     has_time = bool(
         time_obj.get("start") or time_obj.get("end") or time_obj.get("text") or time_obj.get("ongoing") is True
     )
-    has_company = bool(_get_str(canonical_parent, "company_name", "company"))
-    # Changed: require company AND time (or at least time if company is missing)
-    has_context = has_company and has_time
-    return bool(has_headline_or_role and has_summary and has_context)
+    has_domain = bool(_get_str(canonical_parent, "domain"))
+    has_intent = bool(_get_str(canonical_parent, "intent_primary", "intent"))
+    # company_name may be null (inapplicable for freelance/self-employed) — treat explicit null as resolved
+    company_name_key_present = "company_name" in canonical_parent or "company" in canonical_parent
+    has_company_resolved = company_name_key_present  # null or value both count as resolved
+    # All core fields must be resolved
+    return bool(
+        has_headline_or_role
+        and has_summary
+        and has_time
+        and has_domain
+        and has_intent
+        and has_company_resolved
+    )
 
 
 def compute_missing_fields(canonical_family: dict) -> dict[str, list[str]]:
@@ -262,10 +280,13 @@ def compute_missing_fields(canonical_family: dict) -> dict[str, list[str]]:
             continue
         ct = _get_str(c, "child_type") or "skills"
         value = _get_dict(c, "value")
-        summary = _get_str(value, "summary") or _get_str(c, "summary")
-        if not summary and ct in CHILD_TARGET_FIELDS:
+        items = value.get("items") if isinstance(value.get("items"), list) else []
+        has_items = bool(items and any(
+            (isinstance(it, dict) and (it.get("title") or it.get("subtitle") or "").strip())
+            for it in items
+        ))
+        if not has_items and ct in CHILD_TARGET_FIELDS:
             missing_child.append(ct)
-    # Dedupe by first occurrence (priority order)
     seen = set()
     missing_child_dedup = [x for x in CHILD_PRIORITY if x in missing_child and not (seen.add(x) or False)]
     seen.clear()
@@ -292,10 +313,9 @@ class ClarifyPlan:
     reason: str = ""
     confidence: Literal["high", "medium", "low"] = "medium"
     autofill_patch: Optional[dict] = None
-    # choose_focus only
     focus_parent_id: Optional[str] = None
     message: Optional[str] = None
-    options: Optional[list[dict]] = None  # [{"parent_id": str, "label": str}, ...]
+    options: Optional[list[dict]] = None
 
 
 def build_choose_focus_options(card_families: list[dict]) -> list[dict]:
@@ -379,32 +399,22 @@ def validate_clarify_plan(
     max_parent: int = DEFAULT_MAX_PARENT_CLARIFY,
     max_child: int = DEFAULT_MAX_CHILD_CLARIFY,
 ) -> tuple[ClarifyPlan, bool]:
-    """
-    Validate planner output. Returns (validated_plan, used_fallback).
-    If plan is invalid, returns a safe fallback plan.
-    """
+    """Validate planner output. Returns (validated_plan, used_fallback)."""
     used_fallback = False
-    # choose_focus is only valid when multiple families; in single-family flow reject it and fallback
     if not plan or plan.action not in ("ask", "autofill", "stop"):
         used_fallback = True
         plan = fallback_clarify_plan(
-            canonical_family,
-            asked_history,
-            parent_asked_count=parent_asked_count,
-            child_asked_count=child_asked_count,
-            max_parent=max_parent,
-            max_child=max_child,
+            canonical_family, asked_history,
+            parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+            max_parent=max_parent, max_child=max_child,
         )
         return plan, used_fallback
     if plan.action == "choose_focus":
         used_fallback = True
         plan = fallback_clarify_plan(
-            canonical_family,
-            asked_history,
-            parent_asked_count=parent_asked_count,
-            child_asked_count=child_asked_count,
-            max_parent=max_parent,
-            max_child=max_child,
+            canonical_family, asked_history,
+            parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+            max_parent=max_parent, max_child=max_child,
         )
         return plan, used_fallback
 
@@ -413,52 +423,37 @@ def validate_clarify_plan(
     parent_ok = is_parent_good_enough(parent)
 
     if plan.action == "stop":
-        # Allow stop if parent is good enough or we've hit limits
         if parent_ok or parent_asked_count >= max_parent:
             return plan, used_fallback
-        # Reject stop if parent not good enough and we haven't asked enough
         used_fallback = True
         plan = fallback_clarify_plan(
-            canonical_family,
-            asked_history,
-            parent_asked_count=parent_asked_count,
-            child_asked_count=child_asked_count,
-            max_parent=max_parent,
-            max_child=max_child,
+            canonical_family, asked_history,
+            parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+            max_parent=max_parent, max_child=max_child,
         )
         return plan, used_fallback
 
     if plan.action == "autofill":
-        # Validate target and that autofill_patch only touches allowed fields
         if plan.target_type == "parent" and plan.target_field and plan.target_field in PARENT_TARGET_FIELDS:
             if plan.autofill_patch and _patch_only_touches_target(plan.autofill_patch, plan.target_field, "parent"):
-                # Additional validation: ensure the patch actually fills the field (not just invalid keys)
                 if plan.target_field == "time":
                     time_patch = plan.autofill_patch.get("time") if isinstance(plan.autofill_patch.get("time"), dict) else {}
                     if not (time_patch.get("start") or time_patch.get("end") or time_patch.get("text") or time_patch.get("ongoing") is True):
-                        # Invalid time patch (e.g., only "duration" or empty) — reject autofill, use fallback
                         logger.warning("validate_clarify_plan: rejected invalid time autofill patch: %s", time_patch)
                         used_fallback = True
                         plan = fallback_clarify_plan(
-                            canonical_family,
-                            asked_history,
-                            parent_asked_count=parent_asked_count,
-                            child_asked_count=child_asked_count,
-                            max_parent=max_parent,
-                            max_child=max_child,
+                            canonical_family, asked_history,
+                            parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+                            max_parent=max_parent, max_child=max_child,
                         )
                         return plan, used_fallback
-                # Check if field is already filled — if so, reject autofill and use fallback
                 if _field_already_filled(parent, plan.target_field):
                     logger.warning("validate_clarify_plan: field %s already filled, rejecting autofill", plan.target_field)
                     used_fallback = True
                     plan = fallback_clarify_plan(
-                        canonical_family,
-                        asked_history,
-                        parent_asked_count=parent_asked_count,
-                        child_asked_count=child_asked_count,
-                        max_parent=max_parent,
-                        max_child=max_child,
+                        canonical_family, asked_history,
+                        parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+                        max_parent=max_parent, max_child=max_child,
                     )
                     return plan, used_fallback
                 return plan, used_fallback
@@ -467,52 +462,38 @@ def validate_clarify_plan(
                 return plan, used_fallback
         used_fallback = True
         plan = fallback_clarify_plan(
-            canonical_family,
-            asked_history,
-            parent_asked_count=parent_asked_count,
-            child_asked_count=child_asked_count,
-            max_parent=max_parent,
-            max_child=max_child,
+            canonical_family, asked_history,
+            parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+            max_parent=max_parent, max_child=max_child,
         )
         return plan, used_fallback
 
-    # action == "ask"
     if plan.target_type == "parent":
-        if plan.target_field not in PARENT_TARGET_FIELDS:
+        if plan.target_field not in PARENT_TARGET_FIELDS and plan.target_field != "location.is_remote":
             used_fallback = True
             plan = fallback_clarify_plan(
-                canonical_family,
-                asked_history,
-                parent_asked_count=parent_asked_count,
-                child_asked_count=child_asked_count,
-                max_parent=max_parent,
-                max_child=max_child,
+                canonical_family, asked_history,
+                parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+                max_parent=max_parent, max_child=max_child,
             )
             return plan, used_fallback
         if _field_already_asked(asked_history, "parent", plan.target_field, None):
             used_fallback = True
             plan = fallback_clarify_plan(
-                canonical_family,
-                asked_history,
-                parent_asked_count=parent_asked_count,
-                child_asked_count=child_asked_count,
-                max_parent=max_parent,
-                max_child=max_child,
+                canonical_family, asked_history,
+                parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+                max_parent=max_parent, max_child=max_child,
             )
             return plan, used_fallback
         if _field_already_filled(parent, plan.target_field):
             used_fallback = True
             plan = fallback_clarify_plan(
-                canonical_family,
-                asked_history,
-                parent_asked_count=parent_asked_count,
-                child_asked_count=child_asked_count,
-                max_parent=max_parent,
-                max_child=max_child,
+                canonical_family, asked_history,
+                parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+                max_parent=max_parent, max_child=max_child,
             )
             return plan, used_fallback
         if parent_asked_count >= max_parent:
-            # Force stop or move to child
             used_fallback = True
             plan = ClarifyPlan(action="stop", reason="Max parent questions reached", confidence="high")
             return plan, used_fallback
@@ -520,37 +501,27 @@ def validate_clarify_plan(
 
     if plan.target_type == "child":
         if not parent_ok and parent_asked_count < max_parent:
-            # Parent-first: prefer parent question
             used_fallback = True
             plan = fallback_clarify_plan(
-                canonical_family,
-                asked_history,
-                parent_asked_count=parent_asked_count,
-                child_asked_count=child_asked_count,
-                max_parent=max_parent,
-                max_child=max_child,
+                canonical_family, asked_history,
+                parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+                max_parent=max_parent, max_child=max_child,
             )
             return plan, used_fallback
         if plan.target_child_type not in CHILD_TARGET_FIELDS:
             used_fallback = True
             plan = fallback_clarify_plan(
-                canonical_family,
-                asked_history,
-                parent_asked_count=parent_asked_count,
-                child_asked_count=child_asked_count,
-                max_parent=max_parent,
-                max_child=max_child,
+                canonical_family, asked_history,
+                parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+                max_parent=max_parent, max_child=max_child,
             )
             return plan, used_fallback
         if _field_already_asked(asked_history, "child", plan.target_field or plan.target_child_type, plan.target_child_type):
             used_fallback = True
             plan = fallback_clarify_plan(
-                canonical_family,
-                asked_history,
-                parent_asked_count=parent_asked_count,
-                child_asked_count=child_asked_count,
-                max_parent=max_parent,
-                max_child=max_child,
+                canonical_family, asked_history,
+                parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+                max_parent=max_parent, max_child=max_child,
             )
             return plan, used_fallback
         if child_asked_count >= max_child:
@@ -561,12 +532,9 @@ def validate_clarify_plan(
 
     used_fallback = True
     plan = fallback_clarify_plan(
-        canonical_family,
-        asked_history,
-        parent_asked_count=parent_asked_count,
-        child_asked_count=child_asked_count,
-        max_parent=max_parent,
-        max_child=max_child,
+        canonical_family, asked_history,
+        parent_asked_count=parent_asked_count, child_asked_count=child_asked_count,
+        max_parent=max_parent, max_child=max_child,
     )
     return plan, used_fallback
 
@@ -608,13 +576,15 @@ def _field_already_filled(parent: dict, target_field: Optional[str]) -> bool:
     if target_field == "location":
         loc = _get_dict(parent, "location")
         return bool(loc.get("city") or loc.get("country") or loc.get("text"))
-    if target_field in ("domain", "sub_domain", "intent_primary"):
+    if target_field == "location.is_remote":
+        loc = _get_dict(parent, "location")
+        return loc.get("is_remote") is not None
+    if target_field in ("domain", "sub_domain", "intent_primary", "seniority_level", "employment_type", "company_type"):
         return bool(_get_str(parent, target_field))
     return False
 
 
 def _patch_only_touches_target(patch: dict, target_field: str, target_type: str) -> bool:
-    """Check patch only modifies target field (and nested time/location)."""
     allowed_top_level = {target_field}
     if target_field == "time":
         allowed_top_level = {"time", "start_date", "end_date", "is_current", "time_text", "time_range"}
@@ -627,12 +597,11 @@ def _patch_only_touches_target(patch: dict, target_field: str, target_type: str)
 
 
 def _patch_only_touches_child_target(patch: dict, target_child_type: str) -> bool:
-    """Child patch may only touch value for that child type."""
     if "value" in patch:
         return True
     if "children" in patch and isinstance(patch["children"], list):
         return True
-    return len(patch) <= 1  # e.g. only tooling.tools
+    return len(patch) <= 1
 
 
 def fallback_clarify_plan(
@@ -651,8 +620,7 @@ def fallback_clarify_plan(
 
     if parent_asked_count >= max_parent and (parent_ok or child_asked_count >= max_child):
         return ClarifyPlan(action="stop", reason="Limits reached", confidence="high")
-    
-    # Ask parent questions while under limit (even if parent is "good enough")
+
     if parent_asked_count < max_parent:
         for field_name in PARENT_PRIORITY:
             if field_name not in (missing.get("parent") or []):
@@ -662,11 +630,8 @@ def fallback_clarify_plan(
             if _field_already_filled(parent, field_name):
                 continue
             return ClarifyPlan(
-                action="ask",
-                target_type="parent",
-                target_field=field_name,
-                reason=f"Fallback: next missing parent field {field_name}",
-                confidence="high",
+                action="ask", target_type="parent", target_field=field_name,
+                reason=f"Fallback: next missing parent field {field_name}", confidence="high",
             )
 
     if child_asked_count >= max_child:
@@ -677,12 +642,8 @@ def fallback_clarify_plan(
         if _field_already_asked(asked_history, "child", ct, ct):
             continue
         return ClarifyPlan(
-            action="ask",
-            target_type="child",
-            target_field=ct,
-            target_child_type=ct,
-            reason=f"Fallback: next missing child {ct}",
-            confidence="high",
+            action="ask", target_type="child", target_field=ct, target_child_type=ct,
+            reason=f"Fallback: next missing child {ct}", confidence="high",
         )
     return ClarifyPlan(action="stop", reason="No more missing fields", confidence="high")
 
@@ -708,13 +669,12 @@ def should_stop_clarify(
 
 
 def merge_patch_into_card_family(canonical_family: dict, patch: dict, plan: ClarifyPlan) -> dict:
-    """Merge a patch into canonical family. Patch must be for plan.target_type/target_field/target_child_type."""
+    """Merge a patch into canonical family."""
     out = json.loads(json.dumps(canonical_family))
     parent = out.get("parent") or {}
     children = list(out.get("children") or [])
 
     if plan.target_type == "parent":
-        # Merge into parent
         for k, v in patch.items():
             if k == "time" and isinstance(v, dict):
                 parent["time"] = {**(parent.get("time") or {}), **v}
@@ -726,22 +686,29 @@ def merge_patch_into_card_family(canonical_family: dict, patch: dict, plan: Clar
         return out
 
     if plan.target_type == "child" and plan.target_child_type:
-        # Patch may be for a specific child (value update) or add a child
-        if "value" in patch:
+        patch_val = patch.get("value") or patch
+        if "value" in patch or "items" in patch_val:
+            found = False
             for c in children:
                 if (c.get("child_type") or c.get("relation_type")) == plan.target_child_type:
                     v = c.get("value") or {}
-                    v.update(patch.get("value") or patch)
+                    new_items = patch_val.get("items") if isinstance(patch_val.get("items"), list) else []
+                    if new_items:
+                        from .child_value import merge_child_items, normalize_child_items
+                        existing = v.get("items") if isinstance(v.get("items"), list) else []
+                        v["items"] = merge_child_items(
+                            normalize_child_items(existing) if existing else [],
+                            normalize_child_items(new_items),
+                        )
+                    if patch_val.get("raw_text") is not None:
+                        v["raw_text"] = patch_val.get("raw_text")
                     c["value"] = v
+                    found = True
                     break
-            else:
-                # No matching child: append one
+            if not found:
                 children.append({
                     "child_type": plan.target_child_type,
-                    "label": plan.target_child_type,
-                    "value": patch.get("value") or patch,
-                    "search_phrases": [],
-                    "search_document": "",
+                    "value": patch_val if isinstance(patch_val, dict) else {"raw_text": None, "items": []},
                 })
         elif "children" in patch and isinstance(patch["children"], list):
             for new_c in patch["children"]:
@@ -759,7 +726,7 @@ def normalize_after_patch(canonical_family: dict) -> dict:
     parent = out.get("parent") or {}
     time_obj = parent.get("time") or {}
     if isinstance(time_obj.get("start"), str) and len(time_obj["start"]) > 10:
-        time_obj["start"] = time_obj["start"][:10]  # YYYY-MM-DD
+        time_obj["start"] = time_obj["start"][:10]
     if isinstance(time_obj.get("end"), str) and len(time_obj["end"]) > 10:
         time_obj["end"] = time_obj["end"][:10]
     parent["time"] = time_obj
@@ -771,7 +738,7 @@ def normalize_after_patch(canonical_family: dict) -> dict:
 
 
 def canonical_parent_to_flat_response(canonical_parent: dict) -> dict:
-    """Convert canonical parent to flat shape for API response (start_date, end_date, location string)."""
+    """Convert canonical parent to flat shape for API response."""
     flat = dict(canonical_parent)
     time_obj = _get_dict(canonical_parent, "time")
     flat["start_date"] = time_obj.get("start")

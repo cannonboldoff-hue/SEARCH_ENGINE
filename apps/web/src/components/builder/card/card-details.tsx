@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { ExperienceCardV1 } from "@/types";
+import type { ExperienceCard, ExperienceCardChild } from "@/types";
 import { Briefcase, MapPin, Calendar, Wrench } from "lucide-react";
 
 function toText(value: unknown): string | null {
@@ -27,26 +27,114 @@ export function displayCardTitle(
   return (title ?? "").trim();
 }
 
-/** True if child card has no meaningful title or summary; such cards should not be shown. */
-export function isPlaceholderChildCard(
-  child: ExperienceCardV1 | Record<string, unknown>
-): boolean {
-  const c = child as Record<string, unknown>;
-  const title = (c.title ?? c.headline ?? (c.value as Record<string, unknown> | undefined)?.headline ?? "")
-    .toString()
-    .trim()
-    .toLowerCase();
-  const summary = (
-    (c.summary ?? (c.value as Record<string, unknown> | undefined)?.summary) ?? ""
-  )
-    .toString()
-    .trim();
-  const hasTitle = !!title;
-  return !hasTitle && !summary;
+/** API returns items as { title, description }; frontend form uses { subtitle, sub_summary }. Accept both. */
+function getFirstItemTitle(first: Record<string, unknown> | undefined): string {
+  if (!first || typeof first !== "object") return "";
+  const v = (first.subtitle ?? first.title ?? "").toString().trim();
+  return v;
 }
 
-export function v1CardTopics(card: ExperienceCardV1 | Record<string, unknown>): string[] {
-  const topics = (card as Record<string, unknown>).topics;
+function getFirstItemSummary(first: Record<string, unknown> | undefined): string {
+  if (!first || typeof first !== "object") return "";
+  const v = (first.sub_summary ?? first.description ?? "").toString().trim();
+  return v;
+}
+
+/** Derive display title from child (first item subtitle/title or child_type). */
+export function getChildDisplayTitle(child: ExperienceCardChild | Record<string, unknown>): string {
+  const c = child as Record<string, unknown>;
+  const items = c.items as Record<string, unknown>[] | undefined;
+  const first = items?.[0];
+  const title = getFirstItemTitle(first);
+  if (title) return title;
+  return (c.child_type as string) || "";
+}
+
+/** All item titles from child, one per line. */
+export function getChildDisplayTitlesAll(child: ExperienceCardChild | Record<string, unknown>): string {
+  const c = child as Record<string, unknown>;
+  const items = (c.items as Record<string, unknown>[] | undefined) ?? [];
+  const titles = items
+    .map((it) => getFirstItemTitle(it))
+    .filter(Boolean);
+  return titles.join("\n") || (c.child_type as string) || "";
+}
+
+/** All items from child formatted as "subtitle: description", one per line. Falls back to title-only or summary-only when the other is missing. */
+export function getChildDisplayTitlesWithDescriptions(
+  child: ExperienceCardChild | Record<string, unknown>
+): string {
+  const c = child as Record<string, unknown>;
+  const items = (c.items as Record<string, unknown>[] | undefined) ?? [];
+  const lines = items
+    .map((it) => {
+      const title = getFirstItemTitle(it);
+      const summary = getFirstItemSummary(it);
+      if (title && summary) return `${title}: ${summary}`;
+      if (title) return title;
+      if (summary) return summary;
+      return "";
+    })
+    .filter(Boolean);
+  return lines.join("\n") || (c.child_type as string) || "";
+}
+
+/** Child items as { title, summary } for styled rendering (e.g. description in muted color). */
+export function getChildDisplayItems(
+  child: ExperienceCardChild | Record<string, unknown>
+): { title: string; summary: string }[] {
+  const c = child as Record<string, unknown>;
+  const items = (c.items as Record<string, unknown>[] | undefined) ?? [];
+  return items
+    .map((it) => ({
+      title: getFirstItemTitle(it),
+      summary: getFirstItemSummary(it),
+    }))
+    .filter((pair) => pair.title || pair.summary);
+}
+
+/** Derive display summary from child (first item sub_summary/description). */
+export function getChildDisplaySummary(child: ExperienceCardChild | Record<string, unknown>): string {
+  const c = child as Record<string, unknown>;
+  const items = c.items as Record<string, unknown>[] | undefined;
+  const first = items?.[0];
+  return getFirstItemSummary(first);
+}
+
+/** True if child card has no meaningful content; such cards should not be shown. */
+export function isPlaceholderChildCard(
+  child: ExperienceCardChild | Record<string, unknown>
+): boolean {
+  const title = getChildDisplayTitle(child);
+  const summary = getChildDisplaySummary(child);
+  const items = (child as Record<string, unknown>).items as Record<string, unknown>[] | undefined;
+  const hasItems = Array.isArray(items) && items.some((it) => getFirstItemTitle(it) || getFirstItemSummary(it));
+  return !title && !summary && !hasItems;
+}
+
+/** Extract location string from card for display (e.g. in header row). */
+export function getLocationFromCard(card: ExperienceCard | ExperienceCardChild | Record<string, unknown>): string | null {
+  const cardAny = card as Record<string, unknown>;
+  const locationValue = cardAny.location;
+  const locationObj =
+    locationValue && typeof locationValue === "object"
+      ? (locationValue as { text?: unknown; city?: unknown; region?: unknown; country?: unknown })
+      : null;
+  const locationRange = [toText(locationObj?.city), toText(locationObj?.region), toText(locationObj?.country)]
+    .filter(Boolean)
+    .join(", ");
+  const locationStrRaw = toText(locationValue) || toText(locationObj?.text) || locationRange || null;
+  return locationStrRaw && locationStrRaw !== "{}" && locationStrRaw.trim() ? locationStrRaw.trim() : null;
+}
+
+export function cardTopics(card: ExperienceCard | ExperienceCardChild | Record<string, unknown>): string[] {
+  const cardAny = card as Record<string, unknown>;
+  const tags = cardAny.tags;
+  if (Array.isArray(tags)) return tags.map(String).filter(Boolean);
+  // Child cards: derive from items[].subtitle or items[].title (API returns title)
+  const items = cardAny.items as Record<string, unknown>[] | undefined;
+  if (Array.isArray(items)) return items.map((it) => String(it?.subtitle ?? it?.title ?? "")).filter(Boolean);
+  const topics = cardAny.topics;
   if (!Array.isArray(topics)) return [];
   return topics
     .map((t) =>
@@ -64,22 +152,34 @@ const INTERNAL_FIELD_LABELS = new Set([
   "Privacy", "Quality", "Intent", "Intent (primary)", "Intent (secondary)",
 ]);
 
-/** Renders card fields that have values; empty fields are not shown. */
-export function V1CardDetails({
+/** Renders card fields that have values; empty fields are not shown. Uses backend field names (ExperienceCardResponse / ExperienceCardChildResponse). */
+export function CardDetails({
   card,
   compact = false,
   summaryFullWidth = false,
   hideInternalFields = false,
+  expandSummary = false,
+  hideSummary = false,
+  hideTime = false,
+  hideLocation = false,
 }: {
-  card: ExperienceCardV1 | Record<string, unknown>;
+  card: ExperienceCard | ExperienceCardChild | Record<string, unknown>;
   compact?: boolean;
   summaryFullWidth?: boolean;
   hideInternalFields?: boolean;
+  /** When true, show full summary text without line clamp */
+  expandSummary?: boolean;
+  /** When true, do not render the summary paragraph */
+  hideSummary?: boolean;
+  /** When true, do not render the date/time in the meta row (e.g. when parent already shows it) */
+  hideTime?: boolean;
+  /** When true, do not render location in the meta row (e.g. when shown in header) */
+  hideLocation?: boolean;
 }) {
   if (!card) return null;
 
   const cardAny = card as Record<string, unknown>;
-  const topicLabels = v1CardTopics(cardAny);
+  const topicLabels = cardTopics(cardAny);
 
   const timeObj =
     cardAny.time && typeof cardAny.time === "object"
@@ -94,10 +194,12 @@ export function V1CardDetails({
   const dateRange = [startDateStr, endDateStr].filter(Boolean).join(" – ");
   const timeText = timeTextFromObj || timeRangeStr || dateRange || (isCurrent ? "Ongoing" : null);
 
-  const summaryText = toText(cardAny.summary) ?? toText(cardAny.context);
+  const summaryText =
+    toText(cardAny.summary) ||
+    (Array.isArray(cardAny.items) ? toText((cardAny.items as Record<string, unknown>[])[0]?.sub_summary ?? (cardAny.items as Record<string, unknown>[])[0]?.description) : null);
 
-  const roleTitleStr = toText(cardAny.role_title) ?? toText(cardAny.normalized_role);
-  const companyStr = toText(cardAny.company) ?? toText(cardAny.company_name);
+  const roleTitleStr = toText(cardAny.normalized_role);
+  const companyStr = toText(cardAny.company_name) ?? toText(cardAny.company);
 
   const locationValue = cardAny.location;
   const locationObj =
@@ -156,25 +258,38 @@ export function V1CardDetails({
   if (employmentTypeStr) tagItems.push(employmentTypeStr.replace(/_/g, " "));
   topicLabels.forEach((t) => tagItems.push(t));
 
+  const valueItems = Array.isArray((cardAny.value as { items?: unknown[] })?.items)
+    ? ((cardAny.value as { items: Record<string, unknown>[] }).items)
+    : Array.isArray(cardAny.items)
+      ? (cardAny.items as Record<string, unknown>[])
+      : null;
+  const hasValueItems = valueItems && valueItems.length > 0;
+
   if (!hideInternalFields) {
-    return <V1CardDetailsVerbose card={card} compact={compact} summaryFullWidth={summaryFullWidth} />;
+    return <CardDetailsVerbose card={card} compact={compact} summaryFullWidth={summaryFullWidth} />;
   }
 
-  const hasAnything = summaryText || metaItems.length > 0 || timeText || locationStr || tagItems.length > 0;
+  const hasAnything =
+    (summaryText && !hideSummary) ||
+    metaItems.length > 0 ||
+    timeText ||
+    locationStr ||
+    tagItems.length > 0 ||
+    (hasValueItems ?? false);
   if (!hasAnything) return null;
 
   return (
     <div className={cn("mt-2.5 space-y-2", compact && "mt-1.5 space-y-1.5")}>
-      {summaryText && (
+      {summaryText && !hideSummary && (
         <p className={cn(
           "text-sm text-muted-foreground leading-relaxed",
-          compact ? "line-clamp-2" : "line-clamp-3"
+          !expandSummary && (compact ? "line-clamp-2" : "line-clamp-3")
         )}>
           {summaryText}
         </p>
       )}
 
-      {(metaItems.length > 0 || timeText || locationStr) && (
+      {(metaItems.length > 0 || (timeText && !hideTime) || (locationStr && !hideLocation)) && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {roleTitleStr && (
             <span className="inline-flex items-center gap-1">
@@ -182,13 +297,13 @@ export function V1CardDetails({
               {roleTitleStr}
             </span>
           )}
-          {locationStr && (
+          {locationStr && !hideLocation && (
             <span className="inline-flex items-center gap-1">
               <MapPin className="h-3 w-3 flex-shrink-0 opacity-60" />
               {locationStr}
             </span>
           )}
-          {timeText && (
+          {timeText && !hideTime && (
             <span className="inline-flex items-center gap-1">
               <Calendar className="h-3 w-3 flex-shrink-0 opacity-60" />
               {timeText}
@@ -197,18 +312,30 @@ export function V1CardDetails({
         </div>
       )}
 
-      {tagItems.length > 0 && (
+      {hasValueItems ? (
+        <div className="space-y-1">
+          {valueItems!.map((it, i) => (
+            <div key={i} className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">{String(it.subtitle ?? it.title ?? "")}</span>
+              {(it.sub_summary ?? it.description) ? (
+                <span className="ml-1.5">— {String(it.sub_summary ?? it.description ?? "")}</span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : tagItems.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {tagItems.map((tag, i) => (
             <span
               key={`${tag}-${i}`}
-              className="inline-flex items-center rounded-full bg-primary/8 px-2 py-0.5 text-[11px] font-medium text-primary/80"
+              className="inline-flex items-center rounded-full bg-primary/8 px-2 py-0.5 text-[12px] font-medium text-primary/80"
             >
               {tag}
             </span>
           ))}
         </div>
-      )}
+      ) : null}
+
 
       {allTools.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -236,19 +363,19 @@ export function V1CardDetails({
   );
 }
 
-function V1CardDetailsVerbose({
+function CardDetailsVerbose({
   card,
   compact = false,
   summaryFullWidth = false,
 }: {
-  card: ExperienceCardV1 | Record<string, unknown>;
+  card: ExperienceCard | ExperienceCardChild | Record<string, unknown>;
   compact?: boolean;
   summaryFullWidth?: boolean;
 }) {
   if (!card) return null;
 
   const cardAny = card as Record<string, unknown>;
-  const topicLabels = v1CardTopics(cardAny);
+  const topicLabels = cardTopics(cardAny);
 
   const timeObj =
     cardAny.time && typeof cardAny.time === "object"
@@ -411,8 +538,8 @@ function V1CardDetailsVerbose({
   const decisionsStr = toText(cardAny.decisions);
   const outcomeStr = toText(cardAny.outcome);
   const teamStr = toText(cardAny.team);
-  const roleTitleStr = toText(cardAny.role_title) ?? toText(cardAny.normalized_role);
-  const companyStr = toText(cardAny.company) ?? toText(cardAny.company_name);
+  const roleTitleStr = toText(cardAny.normalized_role) ?? toText(cardAny.role_title);
+  const companyStr = toText(cardAny.company_name) ?? toText(cardAny.company);
   const domainStr = toText(cardAny.domain);
   const subDomainStr = toText(cardAny.sub_domain);
   const companyTypeStr = toText(cardAny.company_type);

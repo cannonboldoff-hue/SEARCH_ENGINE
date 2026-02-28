@@ -79,21 +79,31 @@ function parentFormToPatch(form: {
 function childFormToPatch(form: {
   title: string;
   summary: string;
-  tagsStr: string;
-  time_range: string;
-  location: string;
+  items: { subtitle: string; sub_summary?: string | null }[];
 }): ExperienceCardChildPatch {
-  const tags = form.tagsStr
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return {
-    title: form.title.trim() || null,
-    summary: form.summary.trim() || null,
-    tags: tags.length ? tags : null,
-    time_range: form.time_range.trim() || null,
-    location: form.location.trim() || null,
-  };
+  // Encode title/summary into first item; backend derives headline from items[0].subtitle
+  const rawItems = form.items
+    .map((it) => ({
+      subtitle: (it.subtitle ?? "").trim(),
+      sub_summary: (it.sub_summary ?? "").trim() || null,
+    }))
+    .filter((it) => it.subtitle);
+  const title = form.title.trim();
+  const summary = form.summary.trim();
+  const items =
+    rawItems.length > 0
+      ? rawItems.map((it, i) =>
+          i === 0
+            ? {
+                subtitle: title || it.subtitle,
+                sub_summary: summary || it.sub_summary,
+              }
+            : it
+        )
+      : title || summary
+        ? [{ subtitle: title || "Untitled", sub_summary: summary || null }]
+        : [];
+  return { items };
 }
 
 type FillFromTextResponse = {
@@ -160,14 +170,45 @@ function mergeFilledIntoChildForm(
   for (const key of Object.keys(filled)) {
     const cur = form[key];
     const val = filled[key];
+    if (key === "items" && Array.isArray(val) && val.length > 0) {
+      // Append new items from filled; items uses { subtitle, sub_summary } (or title/description from API)
+      const curItems = (Array.isArray(cur) ? cur : []) as Array<Record<string, unknown>>;
+      const existingSubtitles = new Set(
+        curItems.map((it) => String(it?.subtitle ?? it?.title ?? "").trim()).filter(Boolean)
+      );
+      const toAppend: Array<{ subtitle: string; sub_summary: string | null }> = [];
+      for (const it of val as Array<Record<string, unknown>>) {
+        if (!it || typeof it !== "object") continue;
+        const sub = String(it.subtitle ?? it.title ?? "").trim();
+        const sum = (it.sub_summary ?? it.description ?? "") as string;
+        const sumVal = typeof sum === "string" && sum.trim() ? sum.trim() : null;
+        if (sub && !existingSubtitles.has(sub)) {
+          toAppend.push({ subtitle: sub, sub_summary: sumVal });
+          existingSubtitles.add(sub);
+        }
+      }
+      if (toAppend.length > 0) {
+        const merged = [
+          ...curItems.map((it) => ({
+            subtitle: String(it?.subtitle ?? it?.title ?? "").trim(),
+            sub_summary: (it?.sub_summary ?? it?.description ?? null) as string | null,
+          })),
+          ...toAppend,
+        ];
+        updates.items = merged;
+      }
+      continue;
+    }
     const isEmpty =
       cur === undefined ||
       cur === null ||
-      (typeof cur === "string" && String(cur).trim() === "");
+      (typeof cur === "string" && String(cur).trim() === "") ||
+      (Array.isArray(cur) && cur.length === 0);
     const hasValue =
       val !== undefined &&
       val !== null &&
-      (typeof val !== "string" || String(val).trim() !== "");
+      (typeof val !== "string" || String(val).trim() !== "") &&
+      (!Array.isArray(val) || val.length > 0);
     if (isEmpty && hasValue) updates[key] = val;
   }
   return updates;

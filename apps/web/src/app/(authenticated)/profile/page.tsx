@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Pencil, User, GraduationCap, Briefcase, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageLoading, PageError } from "@/components/feedback";
-import { useBio } from "@/hooks";
+import { useBio, useProfilePhoto } from "@/hooks";
 
 function BioField({ label, value }: { label: string; value: string }) {
   return (
@@ -19,12 +18,8 @@ function BioField({ label, value }: { label: string; value: string }) {
 }
 
 export default function ProfilePage() {
-  const [profileImgError, setProfileImgError] = useState(false);
   const { data: bio, isLoading: loadingBio, isError: bioError } = useBio();
-
-  useEffect(() => {
-    setProfileImgError(false);
-  }, [bio?.profile_photo_url]);
+  const { blobUrl: photoBlobUrl } = useProfilePhoto(bio?.profile_photo_url);
 
   if (loadingBio) {
     return <PageLoading message="Loading profile..." className="py-8 flex flex-col items-center justify-center gap-3" />;
@@ -53,15 +48,13 @@ export default function ProfilePage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4 min-w-0">
-          {bio?.profile_photo_url && !profileImgError ? (
+          {photoBlobUrl ? (
             <div className="relative h-14 w-14 shrink-0 rounded-full overflow-hidden bg-muted">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={bio.profile_photo_url}
+                src={photoBlobUrl}
                 alt={displayName}
                 className="h-full w-full object-cover"
-                referrerPolicy="no-referrer"
-                onError={() => setProfileImgError(true)}
               />
             </div>
           ) : (
@@ -97,19 +90,6 @@ export default function ProfilePage() {
             {(bio?.first_name || bio?.last_name) && <BioField label="Name" value={displayName} />}
             {bio?.date_of_birth && <BioField label="Date of birth" value={bio.date_of_birth} />}
             {bio?.current_city && <BioField label="Current city" value={bio.current_city} />}
-            {bio?.profile_photo_url && (
-              <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground">Profile photo</span>
-                <a
-                  href={bio.profile_photo_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-foreground font-medium hover:underline truncate"
-                >
-                  View photo
-                </a>
-              </div>
-            )}
           </div>
           {!bio?.complete && (
             <p className="text-xs text-muted-foreground mt-4 pt-3 border-t border-border">

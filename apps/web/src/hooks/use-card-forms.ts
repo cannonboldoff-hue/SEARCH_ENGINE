@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { ExperienceCard, ExperienceCardChild, ExperienceCardV1 } from "@/types";
+import type { ExperienceCard, ExperienceCardChild, ChildValueItem } from "@/types";
 
 const MONTH_LOOKUP: Record<string, number> = {
   jan: 1,
@@ -85,9 +85,7 @@ export interface ParentCardForm {
 export interface ChildCardForm {
   title: string;
   summary: string;
-  tagsStr: string;
-  time_range: string;
-  location: string;
+  items: ChildValueItem[];
 }
 
 const initialParentForm: ParentCardForm = {
@@ -113,16 +111,14 @@ const initialParentForm: ParentCardForm = {
 const initialChildForm: ChildCardForm = {
   title: "",
   summary: "",
-  tagsStr: "",
-  time_range: "",
-  location: "",
+  items: [],
 };
 
 export function useCardForms() {
   const [editForm, setEditForm] = useState<ParentCardForm>(initialParentForm);
   const [childEditForm, setChildEditForm] = useState<ChildCardForm>(initialChildForm);
 
-  const populateParentForm = useCallback((card: ExperienceCardV1 | ExperienceCard | (Record<string, unknown> & { id?: string })) => {
+  const populateParentForm = useCallback((card: ExperienceCard | (Record<string, unknown> & { id?: string })) => {
     const c = card as Record<string, unknown>;
     const time = (c.time && typeof c.time === "object") ? (c.time as Record<string, unknown>) : null;
     const timeStart = typeof time?.start === "string" ? time.start : "";
@@ -142,9 +138,9 @@ export function useCardForms() {
         ? loc
         : (loc && typeof loc === "object" && "text" in (loc as Record<string, unknown>) ? String((loc as Record<string, unknown>).text ?? "") : "");
     setEditForm({
-      title: (c.title as string) ?? (c.headline as string) ?? "",
-      summary: (c.context as string) ?? (c.summary as string) ?? "",
-      normalized_role: (c.normalized_role as string) ?? (c.role_title as string) ?? "",
+      title: (c.title as string) ?? "",
+      summary: (c.summary as string) ?? "",
+      normalized_role: (c.normalized_role as string) ?? "",
       domain: (c.domain as string) ?? "",
       sub_domain: (c.sub_domain as string) ?? "",
       company_name: (c.company_name as string) ?? (c.company as string) ?? "",
@@ -164,13 +160,21 @@ export function useCardForms() {
 
   const populateChildForm = useCallback((child: ExperienceCardChild | (Record<string, unknown> & { id?: string })) => {
     const c = child as Record<string, unknown>;
-    const tags = (c.tags as string[] | undefined) ?? [];
+    const items = (c.items as Record<string, unknown>[] | undefined) ?? [];
+    const first = items[0];
+    // API returns { title, description }; form uses { subtitle, sub_summary }
+    const firstTitle = first ? String(first.subtitle ?? first.title ?? "").trim() : "";
+    const firstSummary = first ? String(first.sub_summary ?? first.description ?? "").trim() : "";
+    const formItems = items.length > 0
+      ? items.map((it) => ({
+          subtitle: String(it.subtitle ?? it.title ?? "").trim(),
+          sub_summary: (it.sub_summary ?? it.description ?? null) as string | null,
+        }))
+      : [{ subtitle: "", sub_summary: null }];
     setChildEditForm({
-      title: (c.title as string) ?? (c.headline as string) ?? "",
-      summary: (c.summary as string) ?? (c.context as string) ?? "",
-      tagsStr: tags.join(", "),
-      time_range: (c.time_range as string) ?? "",
-      location: (c.location as string) ?? "",
+      title: firstTitle || (c.child_type as string) || "",
+      summary: firstSummary,
+      items: formItems,
     });
   }, []);
 

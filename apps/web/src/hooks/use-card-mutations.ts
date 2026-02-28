@@ -6,12 +6,12 @@ import type {
   ExperienceCardPatch,
   ExperienceCardChild,
   ExperienceCardChildPatch,
-  CardFamilyV1Response,
+  DraftCardFamily,
   SavedCardFamily,
 } from "@/types";
 
 export function useCardMutations(
-  setCardFamilies: React.Dispatch<React.SetStateAction<CardFamilyV1Response[] | null>>,
+  setCardFamilies: React.Dispatch<React.SetStateAction<DraftCardFamily[] | null>>,
   setEditingCardId: (id: string | null) => void,
   setEditingKind: (kind: "parent" | "child" | null) => void,
   setEditingSavedCardId: (id: string | null) => void,
@@ -35,7 +35,7 @@ export function useCardMutations(
       );
       setCardFamilies((prev) => {
         if (!prev) return prev;
-        return prev.filter((fam) => fam.parent?.id !== cardId) as CardFamilyV1Response[];
+        return prev.filter((fam) => fam.parent?.id !== cardId) as DraftCardFamily[];
       });
       setEditingCardId(null);
       setEditingKind(null);
@@ -68,17 +68,15 @@ export function useCardMutations(
       setCardFamilies((prev) => {
         const next =
           prev?.map((fam) => {
-            if (fam.parent?.id === updated.id) {
+            const parentAny = fam.parent as Record<string, unknown>;
+            if (parentAny?.id === updated.id) {
               return {
                 ...fam,
                 parent: {
                   ...fam.parent,
                   title: updated.title ?? undefined,
-                  headline: updated.title ?? fam.parent.headline,
-                  context: updated.summary ?? undefined,
                   summary: updated.summary ?? fam.parent.summary,
                   normalized_role: updated.normalized_role ?? undefined,
-                  role_title: updated.normalized_role ?? undefined,
                   company_name: updated.company_name ?? undefined,
                   company: updated.company_name ?? undefined,
                   location: updated.location ?? undefined,
@@ -103,7 +101,7 @@ export function useCardMutations(
               children: fam.children,
             };
           }) ?? prev;
-        return next as CardFamilyV1Response[] | null;
+        return next as DraftCardFamily[] | null;
       });
       setEditingCardId(null);
       setEditingKind(null);
@@ -124,7 +122,7 @@ export function useCardMutations(
               fam.children?.map((c) => (c.id === updated.id ? ({ ...(c as any), ...(updated as any) } as any) : c)) ??
               [],
           })) ?? prev;
-        return next as CardFamilyV1Response[] | null;
+        return next as DraftCardFamily[] | null;
       });
       setEditingCardId(null);
       setEditingKind(null);

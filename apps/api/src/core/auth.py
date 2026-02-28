@@ -29,11 +29,15 @@ def create_access_token(subject: str) -> str:
     return jwt.encode(to_encode, s.jwt_secret, algorithm=s.jwt_algorithm)
 
 
-def create_photo_token(subject: str, expire_minutes: int = 60 * 24) -> str:
-    """Short-lived token for profile photo URL (e.g. 24h) so <img> can load without Bearer."""
+def create_photo_token(subject: str, expire_minutes: int | None = None) -> str:
+    """Token for profile photo URL so <img> can load without Bearer. Does not expire by default."""
     s = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
-    to_encode = {"sub": subject, "exp": expire}
+    if expire_minutes is not None:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
+        to_encode = {"sub": subject, "exp": expire}
+    else:
+        # No expiry: profile photos are stored in DB and URLs should work indefinitely
+        to_encode = {"sub": subject}
     return jwt.encode(to_encode, s.jwt_secret, algorithm=s.jwt_algorithm)
 
 

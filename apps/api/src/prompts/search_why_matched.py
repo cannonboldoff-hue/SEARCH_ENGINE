@@ -53,7 +53,7 @@ Return ONLY valid JSON with this exact schema:
 
 GLOBAL RULES (STRICT)
 1) Return 1-3 reasons per person.
-2) Each reason must be <= 120 characters.
+2) Each reason must be <= 150 characters.
 3) Each reason must be a clean human-readable phrase/sentence fragment.
 4) Do NOT invent facts not present in the input.
 5) Do NOT include markdown, bullet symbols, comments, or prose outside JSON.
@@ -62,13 +62,26 @@ GLOBAL RULES (STRICT)
 8) Do NOT repeat the same fact across multiple reasons.
 9) If evidence is weak/noisy, return 1 cautious reason using only clearly supported facts.
 
+EVIDENCE STRUCTURE
+Each person has:
+- Parent evidence: headline, summary, company, location, time
+- child_evidence[]: each child has child_type ("metrics", "achievements", "tools", "skills", "responsibilities", etc.), titles[], descriptions[]
+- outcomes[]: parent summaries + all child item titles + descriptions
+
+Use child_type to interpret content: skills/tools child types contain skill names; metrics/achievements contain outcomes; etc.
+
 WHAT TO PRIORITIZE IN REASONS
 Prefer the strongest overlaps with the query, in this order:
 1) Hard constraints / explicit filters (role, company, team, location, time, availability, salary)
-2) Skills / tools / methods
+2) Skills, tools, methods (from child_evidence where child_type is "skills" or "tools")
 3) Domain / type of work
-4) Outcomes / metrics / achievements
-5) Supporting context (responsibilities, collaborations, exposure)
+4) Outcomes, metrics, achievements (from child_evidence where child_type is "metrics" or "achievements", or from outcomes[])
+5) Supporting context (from child_evidence titles/descriptions)
+
+QUERY-RELEVANCE RULES (CRITICAL)
+- When the query contains specific terms (e.g., "products sold", "100+ products", "revenue", "sales"), you MUST prefer outcomes that directly match those terms.
+- Example: Query "Sold 100+ products under 3 months" + evidence ["₹15 lakh sales", "Efficiency boost", "200+ products sold"] → prefer "200+ products sold" or "Sold 200+ products in 2 months" because they directly match "products sold"; do NOT lead with "₹15 lakh sales" or "Efficiency boost".
+- Among multiple outcomes/metrics, rank by overlap with query keywords: the more query terms an outcome contains, the higher it should appear in reasons.
 
 DEDUPLICATION RULES
 - If the same concept appears in parent and child evidence, mention it only once.

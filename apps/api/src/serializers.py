@@ -3,7 +3,8 @@
 from typing import TYPE_CHECKING, get_args
 
 from src.db.models import ExperienceCard, ExperienceCardChild, Person
-from src.schemas import ExperienceCardResponse, ExperienceCardChildResponse
+from src.schemas import ExperienceCardResponse, ExperienceCardChildResponse, ChildValueItem
+from src.services.experience.child_value import normalize_child_value
 
 if TYPE_CHECKING:
     from src.db.models import PersonProfile
@@ -12,7 +13,7 @@ from src.domain import (
     LocationBasic,
     PersonVerification,
     PersonPrivacyDefaults,
-    ExperienceCardV1Schema,
+    ExperienceCardSchema,
     Intent,
     TimeField,
     LocationWithConfidence,
@@ -53,28 +54,22 @@ def experience_card_to_response(card: ExperienceCard) -> ExperienceCardResponse:
 
 
 def experience_card_child_to_response(child: ExperienceCardChild) -> ExperienceCardChildResponse:
-    """Map ExperienceCardChild model to ExperienceCardChildResponse (draft-v1 compatible DTO)."""
-    value = child.value if isinstance(child.value, dict) else {}
-    time_obj = value.get("time") if isinstance(value.get("time"), dict) else {}
-    location_obj = value.get("location") if isinstance(value.get("location"), dict) else {}
-    tags = value.get("tags") if isinstance(value.get("tags"), list) else []
-    topics = value.get("topics") if isinstance(value.get("topics"), list) else [{"label": t} for t in tags]
-
-    title = child.label or (value.get("headline") if isinstance(value.get("headline"), str) else "") or ""
-    summary = (value.get("summary") if isinstance(value.get("summary"), str) else "") or ""
+    """Map ExperienceCardChild model to ExperienceCardChildResponse."""
+    raw_value = child.value if isinstance(child.value, dict) else {}
+    value_norm = normalize_child_value(raw_value)
+    items_raw = (value_norm or {}).get("items") or []
+    items = [
+        ChildValueItem(title=it.get("title", ""), description=it.get("description"))
+        for it in items_raw
+        if isinstance(it, dict) and it.get("title")
+    ]
+    child_type = getattr(child, "child_type", None) or ""
 
     return ExperienceCardChildResponse(
         id=child.id,
-        relation_type=getattr(child, "child_type", None),
-        title=title,
-        context=summary,
-        tags=[str(t) for t in tags if str(t).strip()],
-        headline=title,
-        summary=summary,
-        topics=topics if isinstance(topics, list) else [],
-        time_range=time_obj.get("text"),
-        role_title=None,
-        location=location_obj.get("text"),
+        parent_experience_id=child.parent_experience_id,
+        child_type=child_type,
+        items=items,
     )
 
 
@@ -102,7 +97,7 @@ def person_to_person_schema(
         person_id=person.id,
         username=person.email or "",
         display_name=person.display_name or "",
-        photo_url=profile.profile_photo_url if profile else None,
+        photo_url="/me/bio/photo" if (profile and profile.profile_photo is not None) else None,
         bio=None,
         location=location,
         verification=verification,
@@ -112,8 +107,8 @@ def person_to_person_schema(
     )
 
 
-def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema:
-    """Map ExperienceCard (parent) to ExperienceCardV1Schema (domain v1). Uses stored intent if valid Intent else 'other'."""
+def experience_card_to_schema(card: ExperienceCard) -> ExperienceCardSchema:
+    """Map ExperienceCard (parent) to ExperienceCardSchema."""
     time = TimeField(
         start=card.start_date.isoformat() if card.start_date else None,
         end=card.end_date.isoformat() if card.end_date else None,
@@ -131,7 +126,6 @@ def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema
     roles = []
     if card.normalized_role:
         roles.append(RoleItem(label=card.normalized_role, seniority=card.seniority_level, confidence="medium"))
-    topics = []
     privacy = PrivacyField(visibility="profile_only", sensitive=False)
     quality = QualityField(
         overall_confidence="medium",
@@ -142,7 +136,7 @@ def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema
     updated = getattr(card, "updated_at", None) or card.created_at
     valid_intents = get_args(Intent)
     intent: Intent = card.intent_primary if (card.intent_primary and card.intent_primary in valid_intents) else "other"
-    return ExperienceCardV1Schema(
+    return ExperienceCardSchema(
         id=card.id,
         person_id=card.user_id,
         created_by=card.user_id,
@@ -158,7 +152,6 @@ def experience_card_to_v1_schema(card: ExperienceCard) -> ExperienceCardV1Schema
         time=time,
         location=location,
         roles=roles,
-        topics=topics,
         entities=[],
         tooling=ToolingField(),
         outcomes=[],

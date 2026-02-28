@@ -124,12 +124,6 @@ class RoleItem(BaseModel):
     confidence: Confidence
 
 
-class TopicItem(BaseModel):
-    label: str
-    raw: Optional[str] = None
-    confidence: Confidence
-
-
 class EntityItem(BaseModel):
     type: EntityType
     name: str
@@ -182,7 +176,6 @@ class QualityField(BaseModel):
 
 
 class IndexField(BaseModel):
-    search_phrases: list[str] = Field(default_factory=list)
     embedding_ref: Optional[str] = None
 
 
@@ -207,7 +200,7 @@ class PersonPrivacyDefaults(BaseModel):
 
 
 class PersonSchema(BaseModel):
-    """Person profile as domain v1 (for /profile-v1, serializers)."""
+    """Person profile schema (for /profile, serializers)."""
     person_id: str
     username: str
     display_name: str
@@ -240,7 +233,7 @@ class ExperienceRelation(BaseModel):
 # 4. Experience Card schemas
 # -----------------------------------------------------------------------------
 
-class _ExperienceCardV1Base(BaseModel):
+class _ExperienceCardBase(BaseModel):
     """Shared fields for parent and child cards."""
     id: str
     person_id: str
@@ -253,7 +246,6 @@ class _ExperienceCardV1Base(BaseModel):
     time: TimeField
     location: LocationField
     roles: list[RoleItem] = Field(default_factory=list)
-    topics: list[TopicItem] = Field(default_factory=list)
     entities: list[EntityItem] = Field(default_factory=list)
     tooling: ToolingField = Field(default_factory=ToolingField)
     outcomes: list[OutcomeItem] = Field(default_factory=list)
@@ -265,7 +257,7 @@ class _ExperienceCardV1Base(BaseModel):
     updated_at: datetime
 
 
-class ExperienceCardParentV1Schema(_ExperienceCardV1Base):
+class ExperienceCardParentSchema(_ExperienceCardBase):
     """Parent card — root of a card family."""
     parent_id: Optional[str] = None
     depth: Literal[0] = 0
@@ -278,7 +270,7 @@ class ExperienceCardParentV1Schema(_ExperienceCardV1Base):
     relations: list[ExperienceRelation] = Field(default_factory=list)  # NEW — parallel/overlapping experiences
 
 
-class ExperienceCardChildV1Schema(_ExperienceCardV1Base):
+class ExperienceCardChildSchema(_ExperienceCardBase):
     """Child card — belongs to a parent."""
     parent_id: str
     depth: Literal[1] = 1
@@ -287,5 +279,4 @@ class ExperienceCardChildV1Schema(_ExperienceCardV1Base):
     child_type: str  # validated against ALLOWED_CHILD_TYPES at service layer
 
 
-# Alias for API (parent card as v1 response).
-ExperienceCardV1Schema = ExperienceCardParentV1Schema
+ExperienceCardSchema = ExperienceCardParentSchema

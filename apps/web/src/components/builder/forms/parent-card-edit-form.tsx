@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Check } from "lucide-react";
-import { MessyTextVoiceInput, VoiceButton, useVoiceInput } from "../voice/messy-text-voice-input";
 import { ExperienceClarifyChat } from "../chat/experience-clarify-chat";
 
 interface ParentCardEditFormProps {
@@ -61,9 +60,6 @@ export function ParentCardEditForm({
   translateRawText,
 }: ParentCardEditFormProps) {
   const [messyText, setMessyText] = useState("");
-  const voiceInput = useVoiceInput((text) => {
-    setMessyText(text);
-  });
 
   const handleClarifyFilled = useCallback(
     (filled: Record<string, unknown>) => {
@@ -124,22 +120,15 @@ export function ParentCardEditForm({
       <div className="p-4 space-y-6">
         {onUpdateFromMessyText && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <Label className="text-[11px] text-zinc-400 uppercase tracking-wide">
-                Ask me questions to fill details
-              </Label>
-              <VoiceButton
-                isRecording={voiceInput.isRecording}
-                isConnectingRecorder={voiceInput.isConnectingRecorder}
-                onToggle={voiceInput.toggleRecording}
-              />
-            </div>
-            <MessyTextVoiceInput
+            <Label className="text-[11px] text-zinc-400 uppercase tracking-wide">
+              Update the missing fields.
+            </Label>
+            <Textarea
               value={messyText}
-              onChange={setMessyText}
+              onChange={(e) => setMessyText(e.target.value)}
               placeholder="Paste work history…"
               rows={2}
-              showButton={false}
+              className="text-sm resize-y bg-background"
             />
             <ExperienceClarifyChat
               rawText={messyText}

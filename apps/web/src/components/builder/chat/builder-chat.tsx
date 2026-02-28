@@ -4,29 +4,18 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Send, Square, Loader2, Volume2, VolumeX } from "lucide-react";
+import { Send, Loader2, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { V1CardDetails, isPlaceholderChildCard } from "../card/v1-card-details";
-import {
-  STREAM_PROCESSOR_BUFFER,
-  STREAM_SAMPLE_RATE,
-  type StreamServerMessage,
-  appendTranscriptText,
-  arrayBufferToBase64,
-  buildTranscribeWsUrl,
-  downsampleTo16k,
-  float32ToPcm16Buffer,
-} from "@/lib/voice-transcribe";
-import { AUTH_TOKEN_KEY } from "@/lib/auth-flow";
+import { CardDetails, getChildDisplaySummary, getChildDisplayTitle, isPlaceholderChildCard } from "../card/card-details";
 import {
   EXPERIENCE_CARDS_QUERY_KEY,
   EXPERIENCE_CARD_FAMILIES_QUERY_KEY,
 } from "@/hooks";
 import type {
-  CardFamilyV1Response,
-  DraftSetV1Response,
+  DraftCardFamily,
+  DraftSetResponse,
   DetectExperiencesResponse,
 } from "@/types";
 
@@ -40,7 +29,7 @@ export type ChatMessage = {
   id: string;
   role: "assistant" | "user";
   content: string;
-  card?: CardFamilyV1Response;
+  card?: DraftCardFamily;
 };
 
 type Stage =
@@ -111,13 +100,9 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
   const [stage, setStage] = useState<Stage>("awaiting_experience");
   const [detectedExperiences, setDetectedExperiences] = useState<DetectExperiencesResponse | null>(null);
   const [currentExperienceText, setCurrentExperienceText] = useState("");
-  const [currentCardFamily, setCurrentCardFamily] = useState<CardFamilyV1Response | null>(null);
+  const [currentCardFamily, setCurrentCardFamily] = useState<DraftCardFamily | null>(null);
   /** Structured clarify history for target-aware API (role, kind, target_type, target_field, target_child_type, text). */
   const [clarifyHistory, setClarifyHistory] = useState<ClarifyHistoryEntry[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isConnectingRecorder, setIsConnectingRecorder] = useState(false);
-  const [liveTranscript, setLiveTranscript] = useState("");
-  const [recordingError, setRecordingError] = useState<string | null>(null);
   /** When true, speak each new assistant message (text-to-speech for conversation). Default on for voice-first flow. */
   const [speakReplies, setSpeakReplies] = useState(true);
   const [sessionLocked, setSessionLocked] = useState(false);
@@ -127,26 +112,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
   const lastEnqueuedMessageIdRef = useRef<string | null>(null);
   const isSpeakingTtsRef = useRef(false);
   const speechSynthRef = useRef<SpeechSynthesis | null>(null);
-  const startRecordingRef = useRef<() => void>(() => {});
-  const isRecordingRef = useRef(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
-  const lastTranscriptRef = useRef("");
-  /** Pre-warmed mic stream for near-instant start on next click. */
-  const warmStreamRef = useRef<MediaStream | null>(null);
-  /** Pre-opened transcribe WebSocket when stream is warmed (optional). */
   const sessionLockedRef = useRef(false);
-  const warmWsRef = useRef<WebSocket | null>(null);
-  const warmRequestedRef = useRef(false);
-  /** After this much silence (ms) with non-empty transcript, auto-stop and send. */
-  const SILENCE_AUTO_SEND_MS = 10000;
-  const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sendMessageRef = useRef<((overrideText?: string) => Promise<void>) | null>(null);
-  const stopRecordingRef = useRef<((onStopped?: (transcript: string) => void) => void) | null>(null);
-  const scheduleSilenceAutoSendRef = useRef<() => void>(() => {});
 
   // Fetch LLM-generated opening question on mount (no hardcoded first message)
   useEffect(() => {
@@ -218,32 +184,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
       const done = () => {
         onPlaybackEnd?.();
       };
-      try {
-        const res = await api<{ audio_base64: string }>("/experiences/tts", {
-          method: "POST",
-          body: { text: plain.slice(0, 2500) },
-        });
-        if (res?.audio_base64) {
-          const binary = atob(res.audio_base64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          const blob = new Blob([bytes], { type: "audio/wav" });
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          audio.onended = () => {
-            URL.revokeObjectURL(url);
-            done();
-          };
-          audio.onerror = () => {
-            URL.revokeObjectURL(url);
-            done();
-          };
-          await audio.play();
-          return;
-        }
-      } catch {
-        // Fall back to browser TTS
-      }
       if (!("speechSynthesis" in window)) {
         done();
         return;
@@ -271,9 +211,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
     lastSpokenMessageIdRef.current = next.id;
     speakText(next.content, () => {
       isSpeakingTtsRef.current = false;
-      if (speakReplies && !sessionLockedRef.current && !isRecordingRef.current) {
-        startRecordingRef.current?.();
-      }
       processTtsQueue();
     });
   }, [speakReplies, speakText]);
@@ -297,211 +234,16 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
     setMessages((prev) => [...prev, { ...msg, id: String(prev.length + Date.now()) }]);
   }, []);
 
-  /** Pre-warm mic (and optionally transcribe WS) so the next mic click starts with minimal latency. */
-  const prewarmVoice = useCallback(() => {
-    if (typeof window === "undefined") return;
-    const token = localStorage.getItem(AUTH_TOKEN_KEY);
-    if (!token || warmRequestedRef.current) return;
-    if (warmStreamRef.current && warmWsRef.current?.readyState === WebSocket.OPEN) return;
-    warmRequestedRef.current = true;
-    (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        warmStreamRef.current = stream;
-        const wsUrl = buildTranscribeWsUrl(token);
-        const ws = new WebSocket(wsUrl);
-        warmWsRef.current = ws;
-        ws.onerror = () => {
-          warmWsRef.current = null;
-        };
-        ws.onclose = () => {
-          warmWsRef.current = null;
-        };
-      } catch {
-        warmStreamRef.current = null;
-        warmRequestedRef.current = false;
-      }
-    })();
-  }, []);
-
-  // Pre-warm voice (mic + transcribe WS) when chat is ready so mic click has minimal latency
-  useEffect(() => {
-    if (!loadingFirstMessage && typeof window !== "undefined" && localStorage.getItem(AUTH_TOKEN_KEY)) {
-      prewarmVoice();
-    }
-  }, [loadingFirstMessage, prewarmVoice]);
-
-  const cleanupAudio = useCallback(() => {
-    processorNodeRef.current?.disconnect();
-    processorNodeRef.current = null;
-    sourceNodeRef.current?.disconnect();
-    sourceNodeRef.current = null;
-    audioContextRef.current?.close();
-    audioContextRef.current = null;
-    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-    mediaStreamRef.current = null;
-  }, []);
-
-  const stopRecording = useCallback((onStopped?: (transcript: string) => void) => {
-    if (silenceTimeoutRef.current) {
-      clearTimeout(silenceTimeoutRef.current);
-      silenceTimeoutRef.current = null;
-    }
-    const transcript = lastTranscriptRef.current;
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      try {
-        wsRef.current.send(JSON.stringify({ type: "stop" }));
-      } catch {}
-      wsRef.current.close();
-    }
-    wsRef.current = null;
-    cleanupAudio();
-    setIsRecording(false);
-    setIsConnectingRecorder(false);
-    setLiveTranscript("");
-    lastTranscriptRef.current = "";
-    if (onStopped) {
-      onStopped(transcript);
-    } else if (transcript.trim()) {
-      setInput((prev) => appendTranscriptText(prev, transcript));
-    }
-    warmRequestedRef.current = false;
-    setTimeout(() => prewarmVoice(), 100);
-  }, [cleanupAudio, prewarmVoice]);
-
-  const startRecording = useCallback(async () => {
-    if (silenceTimeoutRef.current) {
-      clearTimeout(silenceTimeoutRef.current);
-      silenceTimeoutRef.current = null;
-    }
-    const token = typeof window !== "undefined" ? localStorage.getItem(AUTH_TOKEN_KEY) : null;
-    if (!token) {
-      setRecordingError("Please sign in to use voice.");
-      return;
-    }
-    setRecordingError(null);
-    const sampleRate = 48000;
-    const useWarmStream = warmStreamRef.current != null;
-    const useWarmWs = warmWsRef.current?.readyState === WebSocket.OPEN;
-    if (useWarmWs) warmRequestedRef.current = false;
-
-    if (useWarmStream && useWarmWs) {
-      const stream = warmStreamRef.current;
-      const ws = warmWsRef.current;
-      warmStreamRef.current = null;
-      warmWsRef.current = null;
-      if (!stream || !ws) return;
-      mediaStreamRef.current = stream;
-      wsRef.current = ws;
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data as string) as StreamServerMessage;
-          if (data.type === "transcript" && data.transcript) {
-            lastTranscriptRef.current = appendTranscriptText(lastTranscriptRef.current, data.transcript);
-            setLiveTranscript(lastTranscriptRef.current);
-            scheduleSilenceAutoSendRef.current?.();
-          }
-        } catch {}
-      };
-      ws.onerror = () => {
-        setRecordingError("Connection failed");
-        setIsConnectingRecorder(false);
-      };
-      try {
-        const ctx = new AudioContext({ sampleRate });
-        audioContextRef.current = ctx;
-        const source = ctx.createMediaStreamSource(stream);
-        sourceNodeRef.current = source;
-        const bufferSize = STREAM_PROCESSOR_BUFFER;
-        const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
-        processorNodeRef.current = processor;
-        processor.onaudioprocess = (e) => {
-          if (ws.readyState !== WebSocket.OPEN) return;
-          const float32 = e.inputBuffer.getChannelData(0);
-          const downsampled = downsampleTo16k(float32, sampleRate);
-          const pcm = float32ToPcm16Buffer(downsampled);
-          ws.send(JSON.stringify({ type: "audio_chunk", data: arrayBufferToBase64(pcm), sample_rate: 16000 }));
-        };
-        source.connect(processor);
-        processor.connect(ctx.destination);
-        setIsRecording(true);
-      } catch (e) {
-        setRecordingError(e instanceof Error ? e.message : "Microphone access failed");
-        warmStreamRef.current = null;
-        warmWsRef.current = null;
-      }
-      return;
-    }
-
-    setIsConnectingRecorder(true);
-    try {
-      const stream = useWarmStream ? warmStreamRef.current! : await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (useWarmStream) warmStreamRef.current = null;
-      mediaStreamRef.current = stream;
-      const ctx = new AudioContext({ sampleRate });
-      audioContextRef.current = ctx;
-      const source = ctx.createMediaStreamSource(stream);
-      sourceNodeRef.current = source;
-      const bufferSize = STREAM_PROCESSOR_BUFFER;
-      const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
-      processorNodeRef.current = processor;
-      const ws = useWarmWs ? warmWsRef.current! : new WebSocket(buildTranscribeWsUrl(token));
-      if (useWarmWs) warmWsRef.current = null;
-      wsRef.current = ws;
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data as string) as StreamServerMessage;
-          if (data.type === "transcript" && data.transcript) {
-            lastTranscriptRef.current = appendTranscriptText(lastTranscriptRef.current, data.transcript);
-            setLiveTranscript(lastTranscriptRef.current);
-            scheduleSilenceAutoSendRef.current?.();
-          }
-        } catch {}
-      };
-      ws.onopen = () => {
-        setIsConnectingRecorder(false);
-        setIsRecording(true);
-      };
-      ws.onerror = () => {
-        setRecordingError("Connection failed");
-        setIsConnectingRecorder(false);
-      };
-      processor.onaudioprocess = (e) => {
-        if (ws.readyState !== WebSocket.OPEN) return;
-        const float32 = e.inputBuffer.getChannelData(0);
-        const downsampled = downsampleTo16k(float32, sampleRate);
-        const pcm = float32ToPcm16Buffer(downsampled);
-        ws.send(JSON.stringify({ type: "audio_chunk", data: arrayBufferToBase64(pcm), sample_rate: 16000 }));
-      };
-      source.connect(processor);
-      processor.connect(ctx.destination);
-      if (useWarmWs && ws.readyState === WebSocket.OPEN) {
-        setIsConnectingRecorder(false);
-        setIsRecording(true);
-      }
-    } catch (e) {
-      setRecordingError(e instanceof Error ? e.message : "Microphone access failed");
-      setIsConnectingRecorder(false);
-    }
-  }, []);
-
-  isRecordingRef.current = isRecording;
-  startRecordingRef.current = startRecording;
   sessionLockedRef.current = sessionLocked;
-
-  const toggleRecording = useCallback(() => {
-    if (isRecording) stopRecording();
-    else startRecording();
-  }, [isRecording, startRecording, stopRecording]);
 
   const extractSingle = useCallback(
     async (
       experienceIndex: number,
       experienceCount: number,
       text: string
-    ): Promise<{ summary: string; family: CardFamilyV1Response } | null> => {
+    ): Promise<{ summary: string; family: DraftCardFamily } | null> => {
       const english = await translateRawText(text);
-      const res = await api<DraftSetV1Response>("/experience-cards/draft-v1-single", {
+      const res = await api<DraftSetResponse>("/experience-cards/draft-single", {
         method: "POST",
         body: {
           raw_text: english || text,
@@ -523,7 +265,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
 
   const askClarify = useCallback(
     async (
-      cardFamily: CardFamilyV1Response | null,
+      cardFamily: DraftCardFamily | null,
       history: ClarifyHistoryEntry[],
       opts?: { detectedExperiences?: { index: number; label: string }[]; rawTextOverride?: string }
     ): Promise<ClarifyResponse> => {
@@ -575,22 +317,17 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
       setCurrentCardFamily((prev) => {
         if (!prev) return prev;
         const parent = { ...(prev.parent as Record<string, unknown>), ...filled };
-        return { ...prev, parent } as CardFamilyV1Response;
+        return { ...prev, parent } as DraftCardFamily;
       });
     },
     []
   );
 
   const sendMessage = useCallback(async (overrideText?: string) => {
-    const text = (overrideText !== undefined ? overrideText : (input || liveTranscript || "")).trim();
+    const text = (overrideText !== undefined ? overrideText : input).trim();
     if (!text || loading) return;
     setInput("");
-    if (liveTranscript) {
-      lastTranscriptRef.current = "";
-      setLiveTranscript("");
-    }
-    if (overrideText === undefined && isRecording) stopRecording();
-    if ((overrideText ?? liveTranscript).toString().trim()) setSpeakReplies(true);
+    if ((overrideText ?? input).toString().trim()) setSpeakReplies(true);
     addMessage({ role: "user", content: text });
 
     if (stage === "awaiting_experience") {
@@ -642,7 +379,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
             if (firstClarify.canonical_family?.parent) {
               setCurrentCardFamily((prev) =>
                 prev
-                  ? { ...prev, parent: firstClarify.canonical_family!.parent as CardFamilyV1Response["parent"], children: (firstClarify.canonical_family!.children as CardFamilyV1Response["children"]) ?? prev.children }
+                  ? { ...prev, parent: firstClarify.canonical_family!.parent as DraftCardFamily["parent"], children: (firstClarify.canonical_family!.children as DraftCardFamily["children"]) ?? prev.children }
                   : prev
               );
             }
@@ -651,7 +388,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
             setStage("clarifying");
           } else if (firstClarify.should_stop || (firstClarify.filled && Object.keys(firstClarify.filled).length > 0)) {
             if (firstClarify.filled && Object.keys(firstClarify.filled).length > 0) mergeFilledIntoCard(firstClarify.filled);
-            const mergedParent = { ...parent, ...(firstClarify.filled || {}) } as CardFamilyV1Response["parent"];
+            const mergedParent = { ...parent, ...(firstClarify.filled || {}) } as DraftCardFamily["parent"];
             const cardId = (mergedParent as { id?: string }).id;
             if (cardId) {
               try {
@@ -675,9 +412,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
             onCardsSaved?.();
             sessionLockedRef.current = true;
             setSessionLocked(true);
-            if (isRecordingRef.current) {
-              stopRecording();
-            }
           } else {
             const cardId = (parent as { id?: string }).id;
             if (cardId) {
@@ -702,9 +436,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
             onCardsSaved?.();
             sessionLockedRef.current = true;
             setSessionLocked(true);
-            if (isRecordingRef.current) {
-              stopRecording();
-            }
           }
           setLoading(false);
           return;
@@ -785,7 +516,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           if (firstClarify.canonical_family?.parent) {
             setCurrentCardFamily((prev) =>
               prev
-                ? { ...prev, parent: firstClarify.canonical_family!.parent as CardFamilyV1Response["parent"], children: (firstClarify.canonical_family!.children as CardFamilyV1Response["children"]) ?? prev.children }
+                ? { ...prev, parent: firstClarify.canonical_family!.parent as DraftCardFamily["parent"], children: (firstClarify.canonical_family!.children as DraftCardFamily["children"]) ?? prev.children }
                 : prev
             );
           }
@@ -794,7 +525,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           setStage("clarifying");
         } else if (firstClarify.should_stop || (firstClarify.filled && Object.keys(firstClarify.filled).length > 0)) {
           if (firstClarify.filled && Object.keys(firstClarify.filled).length > 0) mergeFilledIntoCard(firstClarify.filled);
-          const mergedParent = { ...parent, ...(firstClarify.filled || {}) } as CardFamilyV1Response["parent"];
+          const mergedParent = { ...parent, ...(firstClarify.filled || {}) } as DraftCardFamily["parent"];
           const cardId = (mergedParent as { id?: string }).id;
           if (cardId) {
             try {
@@ -818,9 +549,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           onCardsSaved?.();
           sessionLockedRef.current = true;
           setSessionLocked(true);
-          if (isRecordingRef.current) {
-            stopRecording();
-          }
         } else {
           const cardId = (parent as { id?: string }).id;
           if (cardId) {
@@ -845,9 +573,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           onCardsSaved?.();
           sessionLockedRef.current = true;
           setSessionLocked(true);
-          if (isRecordingRef.current) {
-            stopRecording();
-          }
         }
       } catch (e) {
         addMessage({
@@ -881,7 +606,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           if (res.canonical_family?.parent) {
             setCurrentCardFamily((prev) =>
               prev
-                ? { ...prev, parent: res.canonical_family!.parent as CardFamilyV1Response["parent"], children: (res.canonical_family!.children as CardFamilyV1Response["children"]) ?? prev.children }
+                ? { ...prev, parent: res.canonical_family!.parent as DraftCardFamily["parent"], children: (res.canonical_family!.children as DraftCardFamily["children"]) ?? prev.children }
                 : prev
             );
           }
@@ -891,7 +616,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           if (res.filled && Object.keys(res.filled).length > 0) mergeFilledIntoCard(res.filled);
           setClarifyHistory([]);
           const parent = (currentCardFamily?.parent ?? {}) as Record<string, unknown>;
-          const mergedParent = { ...parent, ...(res.filled || {}) } as CardFamilyV1Response["parent"];
+          const mergedParent = { ...parent, ...(res.filled || {}) } as DraftCardFamily["parent"];
           const cardId = (mergedParent as { id?: string }).id;
           if (cardId) {
             try {
@@ -905,7 +630,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           }
           queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARDS_QUERY_KEY });
           queryClient.invalidateQueries({ queryKey: EXPERIENCE_CARD_FAMILIES_QUERY_KEY });
-          const finalFamily: CardFamilyV1Response = currentCardFamily
+          const finalFamily: DraftCardFamily = currentCardFamily
             ? { ...currentCardFamily, parent: mergedParent }
             : { parent: mergedParent, children: [] };
           addMessage({
@@ -946,9 +671,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           onCardsSaved?.();
           sessionLockedRef.current = true;
           setSessionLocked(true);
-          if (isRecordingRef.current) {
-            stopRecording();
-          }
         }
       } catch (e) {
         addMessage({
@@ -962,7 +684,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
     }
   }, [
     input,
-    liveTranscript,
     loading,
     stage,
     currentExperienceText,
@@ -978,20 +699,6 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
     onCardsSaved,
     stopRecording,
   ]);
-
-  useEffect(() => {
-    stopRecordingRef.current = stopRecording;
-    sendMessageRef.current = sendMessage;
-    scheduleSilenceAutoSendRef.current = () => {
-      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
-      silenceTimeoutRef.current = setTimeout(() => {
-        silenceTimeoutRef.current = null;
-        const t = lastTranscriptRef.current.trim();
-        if (t) stopRecordingRef.current?.((transcript) => sendMessageRef.current?.(transcript));
-        else stopRecordingRef.current?.();
-      }, SILENCE_AUTO_SEND_MS);
-    };
-  }, [stopRecording, sendMessage]);
 
   return (
     <div className="flex flex-col h-full min-h-0 rounded-xl border border-border bg-card overflow-hidden">
@@ -1029,7 +736,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
                 {msg.card && (
                   <>
                     <div className="mt-3 pt-3 border-t border-border/50">
-                      <V1CardDetails
+                      <CardDetails
                         card={msg.card.parent as Record<string, unknown>}
                         compact
                         hideInternalFields
@@ -1047,15 +754,8 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
                           </p>
                           <ul className="space-y-1">
                             {visibleChildren.map((child: Record<string, unknown>, i: number) => {
-                              const value = child.value as Record<string, unknown> | undefined;
-                              const headline =
-                                (child.title as string) ??
-                                (child.headline as string) ??
-                                (value?.headline as string) ??
-                                (value?.summary as string) ??
-                                "Detail";
-                              const summary =
-                                (child.summary as string) ?? (value?.summary as string);
+                              const headline = getChildDisplayTitle(child) || "Detail";
+                              const summary = getChildDisplaySummary(child);
                               return (
                                 <li
                                   key={i}
@@ -1096,46 +796,11 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
         )}
         <div ref={scrollRef} />
       </div>
-      {(isConnectingRecorder || isRecording || liveTranscript || recordingError) && (
-        <div className="px-4 pb-2">
-          <div
-            className={cn(
-              "rounded-xl border px-3 py-2.5 text-sm transition-colors",
-              isRecording && !isConnectingRecorder
-                ? "border-primary/50 bg-primary/5"
-                : "border-border/70 bg-muted/35"
-            )}
-          >
-            {isConnectingRecorder && (
-              <p className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-                Connecting voice…
-              </p>
-            )}
-            {isRecording && !isConnectingRecorder && (
-              <p className="flex items-center gap-2 font-medium text-foreground">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-                </span>
-                Listening — speak now; stops and sends automatically after a short pause
-              </p>
-            )}
-            {liveTranscript && (
-              <p className="mt-1 truncate text-muted-foreground" title={liveTranscript}>
-                {liveTranscript}
-              </p>
-            )}
-            {recordingError && <p className="mt-1 text-destructive">{recordingError}</p>}
-          </div>
-        </div>
-      )}
       <div className="flex gap-2 p-3 border-t border-border flex-shrink-0">
         <textarea
-          placeholder="Type here or tap the mic to speak…"
+          placeholder="Type here…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onFocus={prewarmVoice}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -1165,7 +830,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           disabled={loading || sessionLocked}
           className="shrink-0 h-11 w-11"
           aria-label={speakReplies ? "Voice on — click to turn off" : "Voice off — click to hear AI replies"}
-          title={speakReplies ? "Voice on — AI replies are spoken; mic auto-starts after each reply" : "Turn on to hear AI replies and auto-listen after each reply"}
+          title={speakReplies ? "Voice on — AI replies are spoken" : "Turn on to hear AI replies"}
         >
           {speakReplies ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
         </Button>
@@ -1173,7 +838,7 @@ export function BuilderChat({ translateRawText, onCardsSaved }: BuilderChatProps
           type="button"
           size="icon"
           onClick={() => sendMessage()}
-          disabled={(!input.trim() && !liveTranscript.trim()) || loading || sessionLocked}
+          disabled={!input.trim() || loading || sessionLocked}
           className="shrink-0 h-11 w-11"
           aria-label="Send"
         >

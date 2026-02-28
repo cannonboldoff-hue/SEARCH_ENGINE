@@ -1,7 +1,1 @@
-export {
-  useVoiceInput,
-  VoiceButton,
-  MessyTextVoiceInput,
-  useVoiceRecording,
-  MessyTextVoiceInputLegacy,
-} from "./messy-text-voice-input";
+// Voice components - ElevenLabsVoiceWidget is exported from builder index

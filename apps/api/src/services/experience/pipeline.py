@@ -5,7 +5,7 @@ Orchestrates: rewrite → extract → validate → persist → embed.
 
 SECTIONS (in order):
   1. Rewrite cache    - In-process cache for rewritten raw text (avoids duplicate LLM calls).
-  2. Models           - Pydantic models for LLM response validation (V1Card, V1Family, etc.).
+  2. Models           - Pydantic models for LLM response validation (Card, Family, etc.).
   3. Parsing          - JSON extraction, parse_llm_response_to_families, parent/child normalization.
   4. Metadata         - inject_metadata_into_family.
   5. Field extraction - Date parsing, extract_time_fields, extract_location_fields, normalize_card_title.
@@ -13,16 +13,16 @@ SECTIONS (in order):
   7. Serialization    - serialize_card_for_response.
   8. Fill missing     - fill_missing_fields_from_text (edit-form LLM fill).
   9. Clarify flow     - _run_clarify_flow, clarify_experience_interactive.
-  10. Public API      - rewrite_raw_text, detect_experiences, next_draft_run_version, run_draft_v1_single.
+  10. Public API      - rewrite_raw_text, detect_experiences, next_draft_run_version, run_draft_single.
 
 Embedding: After persist_families(), embed_experience_cards() builds search-document text per card,
 fetches vectors from the embedding provider, and flushes. Search-document text is defined in
-experience_card_search_document; embedding logic lives in experience_card_embedding.
+search_document; embedding logic lives in embedding.
 
 Public API (for routers):
-  - rewrite_raw_text, detect_experiences, run_draft_v1_single
+  - rewrite_raw_text, detect_experiences, run_draft_single
   - fill_missing_fields_from_text, clarify_experience_interactive
-  - DEFAULT_MAX_PARENT_CLARIFY, DEFAULT_MAX_CHILD_CLARIFY (re-exported from experience_clarify)
+  - DEFAULT_MAX_PARENT_CLARIFY, DEFAULT_MAX_CHILD_CLARIFY (re-exported from clarify)
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from __future__ import annotations
 __all__ = [
     "rewrite_raw_text",
     "detect_experiences",
-    "run_draft_v1_single",
+    "run_draft_single",
     "fill_missing_fields_from_text",
     "clarify_experience_interactive",
     "DEFAULT_MAX_PARENT_CLARIFY",
@@ -60,12 +60,19 @@ from src.prompts.experience_card import (
     PROMPT_DETECT_EXPERIENCES,
     PROMPT_EXTRACT_SINGLE_CARDS,
     PROMPT_FILL_MISSING_FIELDS,
+    FILL_MISSING_ITEMS_APPEND_INSTRUCTION,
     PROMPT_CLARIFY_PLANNER,
     PROMPT_CLARIFY_QUESTION_WRITER,
     PROMPT_CLARIFY_APPLY_ANSWER,
     fill_prompt,
 )
-from .experience_clarify import (
+from .child_value import (
+    normalize_child_items,
+    dedupe_child_items,
+    normalize_child_value,
+    merge_child_items,
+)
+from .clarify import (
     ClarifyPlan,
     normalize_card_family_for_clarify,
     is_parent_good_enough,
@@ -82,8 +89,8 @@ from .experience_clarify import (
     DEFAULT_MAX_CHILD_CLARIFY,
     _parse_planner_json,
 )
-from .experience_card_embedding import embed_experience_cards
-from .pipeline_errors import PipelineError, PipelineStage
+from .embedding import embed_experience_cards
+from .errors import PipelineError, PipelineStage
 
 logger = logging.getLogger(__name__)
 
@@ -145,20 +152,10 @@ class RoleInfo(BaseModel):
     seniority: Optional[str] = None
 
 
-class TopicInfo(BaseModel):
-    """Topic/tag information."""
-    label: str
-
-
 class EntityInfo(BaseModel):
     """Named entity (company, team, etc)."""
     type: str  # "company", "team", "organization"
     name: str
-
-
-class IndexInfo(BaseModel):
-    """Search indexing metadata."""
-    search_phrases: list[str] = Field(default_factory=list)
 
 
 def _normalize_roles(raw: Any) -> list[dict]:
@@ -174,21 +171,6 @@ def _normalize_roles(raw: Any) -> list[dict]:
                 out.append({"label": label or None, "seniority": seniority})
         elif isinstance(item, str) and item.strip():
             out.append({"label": item.strip(), "seniority": None})
-    return out
-
-
-def _normalize_topics(raw: Any) -> list[dict]:
-    """Accept topic items as dicts or strings; return TopicInfo-compatible dicts."""
-    if not isinstance(raw, list):
-        return []
-    out: list[dict] = []
-    for item in raw:
-        if isinstance(item, dict):
-            label = str(item.get("label") or item.get("name") or item.get("text") or "").strip()
-            if label:
-                out.append({"label": label})
-        elif isinstance(item, str) and item.strip():
-            out.append({"label": item.strip()})
     return out
 
 
@@ -221,7 +203,7 @@ def _normalize_event_like_list(raw: Any) -> list[dict]:
     return out
 
 
-class V1Card(BaseModel):
+class Card(BaseModel):
     """Base card structure returned by LLM."""
     id: Optional[str] = None
     headline: Optional[str] = None
@@ -238,7 +220,6 @@ class V1Card(BaseModel):
     city: Optional[str] = None
     country: Optional[str] = None
     roles: list[RoleInfo] = Field(default_factory=list)
-    topics: list[TopicInfo] = Field(default_factory=list)
     entities: list[EntityInfo] = Field(default_factory=list)
     actions: list[dict] = Field(default_factory=list)
     outcomes: list[dict] = Field(default_factory=list)
@@ -254,9 +235,6 @@ class V1Card(BaseModel):
     sub_domain: Optional[str] = None
     company_type: Optional[str] = None
     employment_type: Optional[str] = None
-    index: Optional[IndexInfo] = None
-    search_phrases: list[str] = Field(default_factory=list)
-    search_document: Optional[str] = None
     intent: Optional[str] = None
     intent_primary: Optional[str] = None
     intent_secondary: list[str] = Field(default_factory=list)
@@ -271,11 +249,13 @@ class V1Card(BaseModel):
     depth: Optional[int] = None
     relation_type: Optional[str] = None
     child_type: Optional[str] = None
+    # Child card items: [{ subtitle, sub_summary }]
+    items: list[dict] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
     def normalize_prompt_style_fields(cls, data: Any) -> Any:
-        """Accept both prompt-style parent keys and legacy V1 keys."""
+        """Accept both prompt-style parent keys and legacy keys."""
         if not isinstance(data, dict):
             return data
 
@@ -309,26 +289,14 @@ class V1Card(BaseModel):
                     "ongoing": ongoing if isinstance(ongoing, bool) else None,
                 }
 
-        # Parent search_phrases may be provided at top-level.
-        if not data.get("index") and isinstance(data.get("search_phrases"), list):
-            data["index"] = {"search_phrases": data.get("search_phrases", [])}
-
         if data.get("intent_secondary") is None:
             data["intent_secondary"] = []
         elif isinstance(data.get("intent_secondary"), str):
             data["intent_secondary"] = [s.strip() for s in data["intent_secondary"].split(",") if s.strip()]
 
-        if data.get("search_phrases") is None:
-            data["search_phrases"] = []
-        elif isinstance(data.get("search_phrases"), str):
-            data["search_phrases"] = [s.strip() for s in data["search_phrases"].split(",") if s.strip()]
-
         # Coerce frequently malformed LLM list fields into schema-compatible objects.
         if data.get("roles") is not None:
             data["roles"] = _normalize_roles(data.get("roles"))
-
-        if data.get("topics") is not None:
-            data["topics"] = _normalize_topics(data.get("topics"))
 
         if data.get("entities") is not None:
             data["entities"] = _normalize_entities(data.get("entities"))
@@ -336,6 +304,11 @@ class V1Card(BaseModel):
         for key in ("actions", "outcomes", "evidence"):
             if data.get(key) is not None:
                 data[key] = _normalize_event_like_list(data.get(key))
+
+        # Child value.items from LLM extraction
+        value = data.get("value")
+        if isinstance(value, dict) and isinstance(value.get("items"), list):
+            data["items"] = value.get("items", [])
 
         return data
 
@@ -356,15 +329,15 @@ class V1Card(BaseModel):
         return v
 
 
-class V1Family(BaseModel):
+class Family(BaseModel):
     """A parent card with optional children."""
-    parent: V1Card
-    children: list[V1Card] = Field(default_factory=list)
+    parent: Card
+    children: list[Card] = Field(default_factory=list)
 
 
-class V1ExtractorResponse(BaseModel):
+class ExtractorResponse(BaseModel):
     """Standardized response format from extractor LLM."""
-    families: list[V1Family]
+    families: list[Family]
     
     class Config:
         # Allow parsing from {"parents": [...]} wrapper
@@ -532,67 +505,85 @@ def _inherit_parent_context_into_children(
     return result
 
 
-def _normalize_child_dict_for_v1_card(child_dict: dict) -> dict:
+def _merge_duplicate_children(children: list[dict]) -> list[dict]:
+    """Merge children with same child_type into one, combining their items."""
+    by_type: dict[str, dict] = {}
+    for c in children:
+        if not isinstance(c, dict):
+            continue
+        ct = (c.get("child_type") or c.get("relation_type") or "").strip() or "skills"
+        if ct not in ALLOWED_CHILD_TYPES:
+            ct = ALLOWED_CHILD_TYPES[0]
+        c = dict(c)
+        c["child_type"] = ct
+        value = c.get("value") or {}
+        if not isinstance(value, dict):
+            value = {}
+        existing = by_type.get(ct)
+        if existing:
+            existing_val = existing.get("value") or {}
+            items_a = existing_val.get("items") if isinstance(existing_val.get("items"), list) else []
+            items_b = value.get("items") if isinstance(value.get("items"), list) else []
+            merged_items = merge_child_items(
+                normalize_child_items(items_a) if items_a else [],
+                normalize_child_items(items_b) if items_b else [],
+            )
+            merged_value = {
+                "raw_text": existing_val.get("raw_text") or value.get("raw_text"),
+                "items": merged_items,
+            }
+            c["value"] = merged_value
+        else:
+            r = (value.get("raw_text") or "").strip() or None
+            c["value"] = {
+                "raw_text": r,
+                "items": dedupe_child_items(normalize_child_items(value.get("items") or [])),
+            }
+        by_type[ct] = c
+    return list(by_type.values())
+
+
+def _normalize_child_dict(child_dict: dict) -> dict:
     """
-    Map prompt-style child (child_type, label, value: { headline, summary, ... })
-    to V1Card-compatible top-level headline/title/summary so display and persist work.
+    Map prompt-style child (child_type, value: { raw_text, items[] })
+    to Card-compatible structure. Remaps old LLM keys: subtitle→title, sub_summary→description.
     """
     if not isinstance(child_dict, dict):
         return child_dict
     out = dict(child_dict)
     value = out.get("value") if isinstance(out.get("value"), dict) else None
-    label = out.get("label")
     if value is not None:
-        if not out.get("headline") and value.get("headline"):
-            out["headline"] = value.get("headline")
-        if not out.get("title") and (value.get("headline") or label):
-            out["title"] = value.get("headline") or label
-        if not out.get("summary") and value.get("summary"):
-            out["summary"] = value.get("summary")
         if not out.get("raw_text") and value.get("raw_text"):
             out["raw_text"] = value.get("raw_text")
-        if not out.get("time") and isinstance(value.get("time"), dict):
-            out["time"] = value.get("time")
-        if not out.get("location") and isinstance(value.get("location"), dict):
-            out["location"] = value.get("location")
-        if not out.get("roles") and isinstance(value.get("roles"), list):
-            out["roles"] = value.get("roles")
-        if not out.get("actions") and isinstance(value.get("actions"), list):
-            out["actions"] = value.get("actions")
-        if not out.get("topics") and isinstance(value.get("topics"), list):
-            out["topics"] = value.get("topics")
-        if not out.get("entities") and isinstance(value.get("entities"), list):
-            out["entities"] = value.get("entities")
-        if not out.get("tooling") and value.get("tooling") is not None:
-            out["tooling"] = value.get("tooling")
-        if not out.get("outcomes") and isinstance(value.get("outcomes"), list):
-            out["outcomes"] = value.get("outcomes")
-        if not out.get("evidence") and isinstance(value.get("evidence"), list):
-            out["evidence"] = value.get("evidence")
-        if not out.get("company") and value.get("company"):
-            out["company"] = value.get("company")
-        if not out.get("team") and value.get("team"):
-            out["team"] = value.get("team")
-        if not out.get("intent") and value.get("intent"):
-            out["intent"] = value.get("intent")
-        if not out.get("relation_type") and value.get("relation_type"):
-            out["relation_type"] = value.get("relation_type")
-        if out.get("depth") is None and value.get("depth") is not None:
-            out["depth"] = value.get("depth")
-        if not out.get("index") and isinstance(value.get("index"), dict):
-            out["index"] = value.get("index")
-    if label and not out.get("headline") and not out.get("title"):
-        out["headline"] = label
-        out["title"] = label
+        # Remap items: subtitle→title, sub_summary→description
+        raw_items = value.get("items")
+        if isinstance(raw_items, list):
+            remapped = []
+            for it in raw_items:
+                if not isinstance(it, dict):
+                    continue
+                title = it.get("title") or it.get("subtitle") or it.get("label") or it.get("text")
+                description = it.get("description") or it.get("sub_summary") or it.get("summary")
+                if title:
+                    remapped.append({"title": str(title).strip(), "description": str(description).strip() if description else None})
+            value = dict(value)
+            value["items"] = remapped
+            out["value"] = value
+            out["items"] = remapped
+    items = out.get("items") or []
+    first_title = (items[0].get("title") if items and isinstance(items[0], dict) else "") or ""
+    label = out.get("label") or ""
+    out["headline"] = first_title or label or ""
+    out["title"] = out["headline"]
     return out
 
 
 def parse_llm_response_to_families(
     response_text: str,
     stage: PipelineStage,
-) -> list[V1Family]:
+) -> list[Family]:
     """
-    Parse LLM response into validated V1Family list.
+    Parse LLM response into validated Family list.
     
     Handles multiple response formats:
     - {"families": [{parent, children}, ...]}
@@ -651,7 +642,7 @@ def parse_llm_response_to_families(
         )
     
     # Validate each family using Pydantic
-    validated_families: list[V1Family] = []
+    validated_families: list[Family] = []
 
     for i, family_dict in enumerate(family_dicts):
         if not isinstance(family_dict, dict):
@@ -663,11 +654,12 @@ def parse_llm_response_to_families(
             logger.warning(f"Skipping family at index {i}: missing 'parent' key")
             continue
 
-        # Normalize children: LLM returns { label, value: { headline, summary } }; V1Card expects headline/title/summary at top level
+        # Normalize children: LLM returns { label, value: { headline, summary } }; Card expects headline/title/summary at top level
         normalized_family_dict = dict(family_dict)
         raw_children = normalized_family_dict.get("children")
         if isinstance(raw_children, list):
-            normalized_family_dict["children"] = [_normalize_child_dict_for_v1_card(c) for c in raw_children]
+            normalized = [_normalize_child_dict(c) for c in raw_children]
+            normalized_family_dict["children"] = _merge_duplicate_children(normalized)
             # Inherit parent's time_range, location, company into children when child has no explicit value
             parent_dict = normalized_family_dict.get("parent") or family_dict.get("parent")
             normalized_family_dict["children"] = _inherit_parent_context_into_children(
@@ -675,7 +667,7 @@ def parse_llm_response_to_families(
             )
 
         try:
-            family = V1Family(**normalized_family_dict)
+            family = Family(**normalized_family_dict)
             validated_families.append(family)
         except ValidationError as e:
             logger.warning(f"Validation failed for family {i}: {e}")
@@ -699,9 +691,9 @@ def parse_llm_response_to_families(
 # =============================================================================
 
 def inject_metadata_into_family(
-    family: V1Family,
+    family: Family,
     person_id: str,
-) -> V1Family:
+) -> Family:
     """
     Inject required metadata into parent and children.
     
@@ -745,7 +737,7 @@ def inject_metadata_into_family(
 # FIELD EXTRACTION & NORMALIZATION
 # =============================================================================
 # Date parsing, extract_time_fields, extract_location_fields, extract_company,
-# extract_team, extract_role_info, extract_search_phrases, normalize_card_title.
+# extract_team, extract_role_info, normalize_card_title.
 # =============================================================================
 
 # ISO date pattern: YYYY-MM-DD or YYYY-MM (used to find dates in free text).
@@ -791,7 +783,7 @@ def _extract_dates_from_text(text: str) -> tuple[Optional[date], Optional[date]]
     return parsed[0], parsed[1]
 
 
-def extract_time_fields(card: V1Card) -> tuple[Optional[str], Optional[date], Optional[date], Optional[bool]]:
+def extract_time_fields(card: Card) -> tuple[Optional[str], Optional[date], Optional[date], Optional[bool]]:
     """Extract time fields from card."""
     time_obj = card.time
 
@@ -846,7 +838,7 @@ def extract_time_fields(card: V1Card) -> tuple[Optional[str], Optional[date], Op
     )
 
 
-def extract_location_fields(card: V1Card) -> tuple[Optional[str], Optional[str], Optional[str], Optional[bool]]:
+def extract_location_fields(card: Card) -> tuple[Optional[str], Optional[str], Optional[str], Optional[bool]]:
     """Extract location fields from card. Returns (text, city, country, is_remote)."""
     loc_obj = card.location
     
@@ -864,7 +856,7 @@ def extract_location_fields(card: V1Card) -> tuple[Optional[str], Optional[str],
     )
 
 
-def extract_company(card: V1Card) -> Optional[str]:
+def extract_company(card: Card) -> Optional[str]:
     """Extract company name from card."""
     company = card.company or card.company_name or card.organization
     
@@ -878,7 +870,7 @@ def extract_company(card: V1Card) -> Optional[str]:
     return company[:255].strip() if company else None
 
 
-def extract_team(card: V1Card) -> Optional[str]:
+def extract_team(card: Card) -> Optional[str]:
     """Extract team name from card."""
     team = card.team
     
@@ -892,7 +884,7 @@ def extract_team(card: V1Card) -> Optional[str]:
     return team[:255].strip() if team else None
 
 
-def extract_role_info(card: V1Card) -> tuple[Optional[str], Optional[str]]:
+def extract_role_info(card: Card) -> tuple[Optional[str], Optional[str]]:
     """Extract role title and seniority."""
     if card.roles:
         first_role = card.roles[0]
@@ -906,28 +898,7 @@ def extract_role_info(card: V1Card) -> tuple[Optional[str], Optional[str]]:
     return title, seniority
 
 
-def extract_search_phrases(card: V1Card) -> list[str]:
-    """Extract search phrases from card index."""
-    phrases: list[str] = []
-    if card.index and isinstance(card.index.search_phrases, list):
-        phrases.extend(card.index.search_phrases)
-    if isinstance(card.search_phrases, list):
-        phrases.extend(card.search_phrases)
-    seen: set[str] = set()
-    out: list[str] = []
-    for phrase in phrases:
-        p = str(phrase).strip()
-        key = p.lower()
-        if not p or key in seen:
-            continue
-        seen.add(key)
-        out.append(p)
-        if len(out) >= 50:
-            break
-    return out
-
-
-def normalize_card_title(card: V1Card, fallback_text: Optional[str] = None) -> str:
+def normalize_card_title(card: Card, fallback_text: Optional[str] = None) -> str:
     """
     Generate user-friendly title from card.
     
@@ -973,23 +944,22 @@ def normalize_card_title(card: V1Card, fallback_text: Optional[str] = None) -> s
 # =============================================================================
 # PERSISTENCE
 # =============================================================================
-# V1Card/V1Family → ORM fields; persist_families (parents + children, then embed).
+# Card/Family → ORM fields; persist_families (parents + children, then embed).
 # =============================================================================
 
 def card_to_experience_card_fields(
-    card: V1Card,
+    card: Card,
     *,
     person_id: str,
     raw_experience_id: str,
     draft_set_id: str,
 ) -> dict:
-    """Convert V1Card to ExperienceCard column values."""
+    """Convert Card to ExperienceCard column values."""
     time_text, start_date, end_date, is_ongoing = extract_time_fields(card)
     location_text, city, country, is_remote = extract_location_fields(card)
     company = extract_company(card)
     team = extract_team(card)
     role_title, role_seniority = extract_role_info(card)
-    search_phrases = extract_search_phrases(card)
 
     raw_text = (card.raw_text or "").strip() or None
     summary = (card.summary or "")[:10000]
@@ -998,17 +968,6 @@ def card_to_experience_card_fields(
     # Extract domain fields
     domain = (card.domain or "").strip()[:100] or None
     sub_domain = (card.sub_domain or "").strip()[:100] or None
-
-    tags = [t.label for t in card.topics]
-    search_doc_parts = [
-        card.headline or title or "",
-        summary or "",
-        role_title or "",
-        company or "",
-        location_text or "",
-        " ".join(tags[:10]) if tags else "",
-    ]
-    search_document = " ".join(p for p in search_doc_parts if p).strip() or None
 
     return {
         "user_id": person_id,
@@ -1040,94 +999,43 @@ def card_to_experience_card_fields(
         # Builder draft cards start as non-visible; they become visible only after
         # the chat flow completes and the card is finalized.
         "experience_card_visibility": False,
-        "search_phrases": search_phrases,
-        "search_document": (card.search_document or "").strip() or search_document,
     }
 
 
 def card_to_child_fields(
-    card: V1Card,
+    card: Card,
     *,
     person_id: str,
     raw_experience_id: str,
     draft_set_id: str,
     parent_id: str,
 ) -> dict:
-    """Convert V1Card to ExperienceCardChild column values."""
-    time_text, start_date, end_date, is_ongoing = extract_time_fields(card)
-    location_text, city, country, is_remote = extract_location_fields(card)
-    company = extract_company(card)
-    team = extract_team(card)
-    role_title, role_seniority = extract_role_info(card)
-    search_phrases = extract_search_phrases(card)
-    
+    """Convert Card to ExperienceCardChild column values. Value uses { raw_text, items: [{ title, description }] }."""
     raw_text = (card.raw_text or "").strip() or None
-    summary = (card.summary or "")[:10000]
-    
+
     # Validate child_type
     child_type = card.child_type
     if not child_type or child_type not in ALLOWED_CHILD_TYPES:
         logger.warning(f"Invalid child_type '{child_type}', defaulting to '{ALLOWED_CHILD_TYPES[0]}'")
         child_type = ALLOWED_CHILD_TYPES[0]
-    
-    # Generate label
-    label = normalize_card_title(card)[:255]
-    
-    # Build dimension container
+
+    # Build value: { raw_text, items: [{ title, description }] }
+    items = getattr(card, "items", None) or []
+    items_clean = dedupe_child_items(normalize_child_items(items)) if isinstance(items, list) and items else []
+
     dimension_container = {
-        "headline": card.headline,
-        "summary": summary,
         "raw_text": raw_text,
-        "time": {
-            "text": time_text,
-            "start": start_date.isoformat() if start_date else None,
-            "end": end_date.isoformat() if end_date else None,
-            "ongoing": is_ongoing,
-        },
-        "location": {
-            "text": location_text,
-            "city": city,
-            "country": country,
-            "is_remote": is_remote if isinstance(is_remote, bool) else None,
-        },
-        "roles": [{"label": role_title, "seniority": role_seniority}] if role_title else [],
-        "topics": [t.model_dump() for t in card.topics],
-        "entities": [e.model_dump() for e in card.entities],
-        "actions": card.actions,
-        "outcomes": card.outcomes,
-        "tooling": card.tooling,
-        "evidence": card.evidence,
-        "company": company,
-        "team": team,
-        "tags": [t.label for t in card.topics][:50],
-        "depth": card.depth or 1,
-        "relation_type": card.relation_type,
+        "items": items_clean,
     }
-    
-    # Build search document
-    tags = [t.label for t in card.topics]
-    search_doc_parts = [
-        card.headline or "",
-        summary or "",
-        role_title or "",
-        company or "",
-        team or "",
-        location_text or "",
-        " ".join(tags[:10]) if tags else "",
-    ]
-    search_document = " ".join(p for p in search_doc_parts if p).strip() or None
-    
+
     return {
         "parent_experience_id": parent_id,
         "person_id": person_id,
         "raw_experience_id": raw_experience_id,
         "draft_set_id": draft_set_id,
         "child_type": child_type,
-        "label": label,
         "value": dimension_container,
         "confidence_score": None,
-        "search_phrases": search_phrases,
-        "search_document": search_document,
         "embedding": None,  # Set during embedding phase
         "extra": {
             "intent": card.intent,
@@ -1138,7 +1046,7 @@ def card_to_child_fields(
 
 async def persist_families(
     db: AsyncSession,
-    families: list[V1Family],
+    families: list[Family],
     *,
     person_id: str,
     raw_experience_id: str,
@@ -1171,7 +1079,7 @@ async def persist_families(
             await db.refresh(parent_ec)
             all_parents.append(parent_ec)
             
-            # Create children
+            # Create children (skip empty after cleanup)
             for child_card in family.children:
                 child_fields = card_to_child_fields(
                     child_card,
@@ -1180,6 +1088,9 @@ async def persist_families(
                     draft_set_id=draft_set_id,
                     parent_id=parent_ec.id,
                 )
+                val = child_fields.get("value") or {}
+                if not val.get("items") and not val.get("raw_text"):
+                    continue  # Drop empty child
                 child_ec = ExperienceCardChild(**child_fields)
                 db.add(child_ec)
                 all_children.append(child_ec)
@@ -1207,49 +1118,49 @@ async def persist_families(
 def serialize_card_for_response(card: ExperienceCard | ExperienceCardChild) -> dict:
     """Convert persisted card to API response format."""
     if isinstance(card, ExperienceCardChild):
-        value = card.value if isinstance(card.value, dict) else {}
-        time_obj = value.get("time") or {}
-        location_obj = value.get("location") or {}
-        topics = value.get("topics") or []
-        tags = value.get("tags") or []
-        
-        relation_type = getattr(card, "child_type", None) or value.get("relation_type")
+        raw_value = card.value if isinstance(card.value, dict) else {}
+        value_norm = normalize_child_value(raw_value) or {}
+        items_raw = value_norm.get("items") or []
+        items = [
+            {"title": it.get("title", ""), "description": it.get("description")}
+            for it in items_raw
+            if isinstance(it, dict) and it.get("title")
+        ]
+        child_type = getattr(card, "child_type", None) or ""
         return {
             "id": card.id,
-            "relation_type": relation_type,
-            "title": card.label or value.get("headline") or "",
-            "context": value.get("summary") or "",
-            "tags": tags,
-            "headline": card.label or value.get("headline") or "",
-            "summary": value.get("summary") or "",
-            "topics": topics if isinstance(topics, list) else [{"label": t} for t in tags],
-            "time_range": time_obj.get("text") if isinstance(time_obj, dict) else None,
-            "role_title": None,
-            "location": location_obj.get("text") if isinstance(location_obj, dict) else None,
+            "parent_experience_id": getattr(card, "parent_experience_id", None),
+            "child_type": child_type,
+            "items": items,
         }
     else:
         start_date = card.start_date.isoformat() if card.start_date else None
         end_date = card.end_date.isoformat() if card.end_date else None
-        time_range = None
-        if start_date or end_date:
-            time_range = " - ".join([d for d in (start_date, end_date) if d])
-        elif card.is_current:
-            time_range = "Ongoing"
         return {
             "id": card.id,
+            "user_id": getattr(card, "person_id", None),
             "title": card.title,
-            "context": card.summary,
-            "tags": [],
-            "headline": card.title,
-            "summary": card.summary,
-            "topics": [],
-            "time_range": time_range,
+            "normalized_role": card.normalized_role,
+            "domain": card.domain,
+            "sub_domain": card.sub_domain,
+            "company_name": card.company_name,
+            "company_type": getattr(card, "company_type", None),
+            "team": getattr(card, "team", None),
             "start_date": start_date,
             "end_date": end_date,
             "is_current": card.is_current,
-            "role_title": card.normalized_role,
-            "company": card.company_name,
             "location": card.location,
+            "is_remote": getattr(card, "is_remote", None),
+            "employment_type": getattr(card, "employment_type", None),
+            "summary": card.summary,
+            "raw_text": getattr(card, "raw_text", None),
+            "intent_primary": getattr(card, "intent_primary", None),
+            "intent_secondary": list(card.intent_secondary or []),
+            "seniority_level": getattr(card, "seniority_level", None),
+            "confidence_score": getattr(card, "confidence_score", None),
+            "experience_card_visibility": getattr(card, "experience_card_visibility", True),
+            "created_at": card.created_at.isoformat() if card.created_at else None,
+            "updated_at": card.updated_at.isoformat() if card.updated_at else None,
         }
 
 
@@ -1265,7 +1176,7 @@ FILL_MISSING_PARENT_KEYS = (
     "location, employment_type, start_date, end_date, is_current, intent_primary, "
     "intent_secondary_str, seniority_level, confidence_score"
 )
-FILL_MISSING_CHILD_KEYS = "title, summary, tagsStr, time_range, location"
+FILL_MISSING_CHILD_KEYS = "raw_text, items"
 
 
 async def fill_missing_fields_from_text(
@@ -1288,11 +1199,13 @@ async def fill_missing_fields_from_text(
     allowed_keys = FILL_MISSING_PARENT_KEYS if card_type == "parent" else FILL_MISSING_CHILD_KEYS
 
     cleaned_text = await rewrite_raw_text(raw_text)
+    items_instruction = FILL_MISSING_ITEMS_APPEND_INSTRUCTION if (card_type == "child" and "items" in (allowed_keys or "")) else ""
     prompt = fill_prompt(
         PROMPT_FILL_MISSING_FIELDS,
         cleaned_text=cleaned_text,
         current_card_json=json.dumps(current_card, indent=2),
         allowed_keys=allowed_keys,
+        items_instruction=items_instruction,
     )
     chat = get_chat_provider()
     try:
@@ -1308,19 +1221,13 @@ async def fill_missing_fields_from_text(
         data = json.loads(json_str)
         if not isinstance(data, dict):
             return {}
-        # Normalize keys to match frontend form: intent_secondary -> intent_secondary_str, tags -> tagsStr
+        # Normalize keys to match frontend form: intent_secondary -> intent_secondary_str
         if "intent_secondary" in data and "intent_secondary_str" not in data:
             val = data.pop("intent_secondary")
             if isinstance(val, list):
                 data["intent_secondary_str"] = ", ".join(str(x) for x in val)
             else:
                 data["intent_secondary_str"] = str(val) if val is not None else ""
-        if "tags" in data and "tagsStr" not in data:
-            val = data.pop("tags")
-            if isinstance(val, list):
-                data["tagsStr"] = ", ".join(str(x) for x in val)
-            else:
-                data["tagsStr"] = str(val) if val is not None else ""
         # Normalize date strings to ISO for frontend date inputs.
         for key in ("start_date", "end_date"):
             if key in data:
@@ -1454,7 +1361,9 @@ async def _plan_next_clarify_step_llm(
 
 
 async def _generate_clarify_question_llm(plan: ClarifyPlan, canonical_family: dict) -> Optional[str]:
-    """Generate one short question for the validated plan. Returns question text or None."""
+    """Generate one short question for the validated plan. Returns question text or None.
+    The question writer prompt outputs plain text (not JSON).
+    """
     plan_json = json.dumps({
         "action": plan.action,
         "target_type": plan.target_type,
@@ -1476,13 +1385,10 @@ async def _generate_clarify_question_llm(plan: ClarifyPlan, canonical_family: di
         return None
     if not response or not response.strip():
         return None
-    try:
-        json_str = _extract_json_from_text(response)
-        data = json.loads(json_str)
-        if isinstance(data, dict) and data.get("question"):
-            return str(data["question"]).strip()
-    except (ValueError, json.JSONDecodeError):
-        pass
+    # Response is plain text — return directly (strip any surrounding whitespace/quotes)
+    question = response.strip().strip('"').strip("'").strip()
+    if question:
+        return question
     return None
 
 
@@ -1919,7 +1825,7 @@ async def next_draft_run_version(db: AsyncSession, raw_experience_id: str, perso
     return (max_version or 0) + 1
 
 
-async def run_draft_v1_single(
+async def run_draft_single(
     db: AsyncSession,
     person_id: str,
     raw_text: str,

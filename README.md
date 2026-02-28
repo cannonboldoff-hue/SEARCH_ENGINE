@@ -89,7 +89,7 @@ Key files and directories under `apps/api/src`:
 - `core/`
   - `config.py` – Environment-driven settings (`Settings` / `get_settings()`).
   - `auth.py` – JWT auth helpers.
-  - `constants.py` – Global constants, including embedding dimension and search expiry.
+  - `constants.py` – Global constants (embedding dimension; searches never expire).
   - `limiter.py` – Rate-limiting configuration (SlowAPI-based).
 - `db/`
   - `session.py` – Async SQLAlchemy session factory.
@@ -98,7 +98,7 @@ Key files and directories under `apps/api/src`:
 - `providers/`
   - `chat.py` – LLM chat provider abstraction (cleanup, extract, why-matched).
   - `embedding.py` – Embedding provider abstraction.
-  - `speech.py`, `translation.py`, `email.py`, `otp.py` – External integrations (Sarvam, SendGrid, Twilio OTP).
+  - `email.py`, `otp.py` – External integrations (SendGrid, Twilio OTP).
 - `schemas/`
   - `auth.py`, `profile.py`, `search.py`, `builder.py`, `credits.py`, `contact.py`, `discover.py`, `bio.py` – Pydantic schemas for requests/responses.
   - `__init__.py` – Re-exports common schemas.
@@ -113,7 +113,7 @@ Key files and directories under `apps/api/src`:
   - `auth.py` – Auth-related business logic.
   - `credits.py` – Credit accounting and idempotent operations.
   - `profile.py` – Profile queries and updates.
-  - `experience/` – Experience card pipeline, clarify flow, search document, embeddings.
+  - `experience/` – Pipeline (`pipeline.py`), clarify (`clarify.py`), search document (`search_document.py`), embedding (`embedding.py`), CRUD (`crud.py`), child value (`child_value.py`).
   - `search/` – Search orchestration and search-related business logic.
 - `prompts/`
   - `experience_card.py`, `experience_card_enums.py` – Builder prompts.
@@ -160,7 +160,7 @@ Key files and directories under `apps/web/src`:
   - `search-context.tsx` – Search state and caching.
   - `sidebar-width-context.tsx` – Layout state.
 - `hooks/`
-  - `use-credits.ts`, `use-bio.ts`, `use-profile-v1.ts`, `use-experience-cards*.ts`, etc.
+  - `use-credits.ts`, `use-bio.ts`, `use-profile-v1.ts`, `use-experience-cards*.ts`, `use-profile-photo.ts`, etc.
   - `use-media-query.ts`, `use-visibility.ts`, `use-card-mutations.ts`, `use-card-forms.ts`.
 - `lib/`
   - `api.ts` – REST client for the backend.
@@ -185,7 +185,6 @@ Key files and directories under `apps/web/src`:
 - **LLM / Embedding providers**:
   - OpenAI-compatible chat APIs for query parsing, experience extraction, and why-matched.
   - OpenAI-compatible embedding APIs for experience and search embeddings.
-  - Additional providers: Sarvam AI for speech (voice input) and translation.
 - **Auth**:
   - JWT-based session tokens (`core/auth.py`).
   - Email verification (SendGrid) and OTP flows (Twilio).
@@ -203,10 +202,6 @@ Configuration is defined in `Settings` and loaded from `apps/api/.env`:
 - **Embeddings**
   - `embed_api_base_url`, `embed_api_key`, `embed_model`, `embed_dimension` (must match DB `EMBEDDING_DIM`).
   - `openai_api_key` – convenient single-key field if using OpenAI for both.
-- **Speech and translation** (Sarvam)
-  - `sarvam_api_key`, `sarvam_stt_ws_url`, `sarvam_stt_model`, etc.
-  - `sarvam_tts_*` for text-to-speech.
-  - `sarvam_translate_*` for multilingual normalization.
 - **Rate limiting**
   - `search_rate_limit`, `unlock_rate_limit`.
   - `auth_login_rate_limit`, `auth_signup_rate_limit`, `auth_verify_rate_limit`.
@@ -243,9 +238,8 @@ The **data model** is defined primarily in `apps/api/src/db/models.py`. Key enti
   - Linked to `PersonProfile`, `ExperienceCard`, `ExperienceCardChild`, and `SearchResult`.
 - **PersonProfile**
   - Human-visible profile:
-    - `display_name`
-    - `headline` / bio fields
-    - `current_city`, possibly other location hints
+    - `first_name`, `last_name`, `profile_photo`, `profile_photo_url`, `profile_photo_media_type`
+    - Bio: `school`, `college`, `current_company`, `past_companies`, `current_city`
     - `open_to_work`, `open_to_contact`
     - `work_preferred_locations` (array of strings)
     - `work_preferred_salary_min` (numeric, INR/year)
@@ -273,10 +267,9 @@ The experience graph is built around **parent experience cards** and **child evi
     - `location` (city/country/free text).
     - `employment_type`, `seniority_level`, `intent_primary`, `intent_secondary`, `confidence_score`.
     - `summary`, `raw_text`.
-  - Search-related fields:
-    - `search_phrases` (string array; derived from prompts + normalization).
-    - `search_document` (text; main FTS document).
+  - Search:
     - `embedding` (pgvector, dimension = `EMBEDDING_DIM` / `embed_dimension`).
+    - Search document text is **derived at embed/query time** via `build_parent_search_document(card)` in `search_document.py`; no stored column.
   - Visibility controls:
     - `experience_card_visibility` – controls whether a card is considered in search/discover.
 - **ExperienceCardChild** (child evidence)
@@ -284,13 +277,14 @@ The experience graph is built around **parent experience cards** and **child evi
     - `parent_experience_id`, `person_id`, `raw_experience_id`, `draft_set_id`.
     - `child_type` – one of `ALLOWED_CHILD_TYPES`:
       - e.g. `skills`, `tools`, `metrics`, `achievements`, `responsibilities`, `collaborations`, `domain_knowledge`, `exposure`, `education`, `certifications`.
-    - `label`, `value` (JSONB with dimension details).
-    - `search_phrases`, `search_document`, `embedding`, `confidence_score`, `extra`.
-  - Children participate directly in search: both embeddings and lexical documents are used.
+    - `value` (JSONB dimension container: `{ raw_text, items: [{ title, description }] }`).
+    - `embedding`, `confidence_score`, `extra`.
+  - Child label is derived from `value.headline` or `value.items[0].title`; search document from `get_child_search_document()`.
+  - Children participate directly in search: embeddings and lexical FTS (derived from value at query time).
 
-The typed models feeding the pipeline are defined in `experience_card_pipeline.py`:
+The typed models feeding the pipeline are defined in `services/experience/pipeline.py`:
 
-- `V1Card`, `V1Family`, `TimeInfo`, `LocationInfo`, `RoleInfo`, `TopicInfo`, `EntityInfo`, `IndexInfo`.
+- `Card`, `Family`, and related helpers (`TimeInfo`, `LocationInfo`, `RoleInfo`, etc.).
 - These provide a stable schema between prompts, pipeline stages, and DB persistence.
 
 ### 4.3 Search Artifacts
@@ -368,7 +362,7 @@ Clarify and edit flows operate above this pipeline to iteratively improve cards.
 
 ### 5.2 Clarify Flow
 
-Clarify is handled in `services/experience/clarify_flow.py` and related modules:
+Clarify is handled in `services/experience/clarify.py` and related modules:
 
 - Given:
   - Raw text.
@@ -401,13 +395,13 @@ Editing an existing card is supported via:
 The edit flow:
 
 1. User edits fields directly in the UI **or** uses “fill from text”.
-2. Backend applies patch to existing `ExperienceCard` / `ExperienceCardChild`.
-3. `search_document` and `search_phrases` are rebuilt as needed.
-4. Embeddings are recomputed for affected cards only.
+2. Backend applies patch to existing `ExperienceCard` / `ExperienceCardChild` via `apply_card_patch` / `apply_child_patch` (crud.py).
+3. Search text is derived at embed time via `build_parent_search_document` / `get_child_search_document`.
+4. Embeddings are recomputed for affected cards only via `embed_experience_cards`.
 
 This design keeps:
 
-- **Search state** always in sync with the latest structured representation.
+- **Search state** always in sync with the latest structured representation (text derived from card fields).
 - **Explainability** aligned with visible text, since both are derived from the same cards.
 
 ---
@@ -542,9 +536,8 @@ Implemented in `routers/search.py` + `services/search/*`:
   - Search must belong to the current user.
   - If validating `person_id`, that person must appear in search results.
 - **Expiry**:
-  - Uses `Search.expires_at` if present.
-  - Fallback: `created_at + SEARCH_RESULT_EXPIRY_HOURS` (from `core/constants.py`).
-  - Expired searches produce HTTP 403 errors for dependent operations.
+  - New searches use `SEARCH_NEVER_EXPIRES` (far-future date); they do not expire until the user deletes them.
+  - `Search.expires_at` is checked; expired searches produce HTTP 403 for dependent operations.
 
 ---
 
@@ -653,7 +646,7 @@ Key components:
   - Provide conversational interfaces for describing experiences and answering clarify questions.
 - `builder/voice/messy-text-voice-input.tsx`:
   - Connects voice transcription (via `voice-transcribe.ts` and backend speech endpoints) to the builder.
-- `builder/card/*` + `builder/family/*`:
+- `builder/card/*` (e.g. `card-details.tsx`, `card-family-display.tsx`) + `builder/family/*`:
   - Render card families (parent + children).
   - Expose editing controls, patch forms, and save actions.
 
@@ -758,18 +751,7 @@ File: `providers/chat.py`, `providers/embedding.py`.
     - Normalized via `normalize_embedding`.
     - Stored in `ExperienceCard.embedding` and `ExperienceCardChild.embedding`.
 
-### 10.2 Speech and Translation
-
-`providers/speech.py` and `providers/translation.py` integrate with Sarvam:
-
-- Speech:
-  - Streaming speech-to-text for voice input in the builder.
-  - Configured via `sarvam_stt_*` settings.
-- Translation:
-  - Multilingual-to-English normalization for text inputs.
-  - Configured via `sarvam_translate_*` settings.
-
-### 10.3 Email and OTP
+### 10.2 Email and OTP
 
 - `providers/email.py`:
   - SendGrid integration for:

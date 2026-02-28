@@ -19,6 +19,7 @@ from src.schemas import (
     SavedSearchesResponse,
 )
 from src.services.search import search_service
+from src.services.profile import profile_service
 
 router = APIRouter(tags=["search"])
 _settings = get_settings()
@@ -105,6 +106,20 @@ async def search_more(
         db, current_user.id, search_id, offset=offset, limit=limit, skip_credits=history
     )
     return SearchMoreResponse(people=people)
+
+
+@router.get("/people/{person_id}/photo")
+async def get_person_photo(
+    person_id: str,
+    current_user: Person = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve profile photo for a person. Requires Bearer auth."""
+    photo = await profile_service.get_profile_photo_from_db(db, person_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail="No profile photo")
+    content, media_type = photo
+    return Response(content=content, media_type=media_type)
 
 
 @router.get("/people/{person_id}", response_model=PersonProfileResponse)

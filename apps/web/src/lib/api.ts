@@ -76,6 +76,25 @@ export function apiWithIdempotency<T>(
   return api<T>(path, { ...options, headers });
 }
 
+/** Fetch binary (e.g. profile photo) with Bearer auth. Returns Blob or null on 404. */
+export async function apiBlob(path: string): Promise<Blob | null> {
+  const token = getToken();
+  const headers: HeadersInit = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const url = `${API_BASE}${path}`;
+  if (!url.startsWith("http")) {
+    throw new Error("Set NEXT_PUBLIC_API_BASE_URL and ensure the API is running.");
+  }
+  const res = await fetch(url, { headers });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const message = normalizeErrorDetail(err.detail) || err.message || String(res.status);
+    throw new Error(message);
+  }
+  return res.blob();
+}
+
 /** Upload a file (e.g. profile photo) via multipart/form-data. Returns JSON. */
 export async function apiUpload<T>(
   path: string,

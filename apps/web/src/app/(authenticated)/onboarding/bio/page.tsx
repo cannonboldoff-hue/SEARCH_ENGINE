@@ -18,7 +18,7 @@ import { VisibilitySection, type VisibilityMode } from "@/components/onboarding/
 import { api, apiUpload, type ApiOptions } from "@/lib/api";
 import { bioSchema, bioFormDefaultValues, type BioForm } from "@/lib/bio-schema";
 import type { PatchVisibilityRequest, VisibilitySettingsResponse } from "@/types";
-import { useBio, useVisibility, BIO_QUERY_KEY, VISIBILITY_QUERY_KEY } from "@/hooks";
+import { useBio, useVisibility, useProfilePhoto, BIO_QUERY_KEY, VISIBILITY_QUERY_KEY, PROFILE_SCHEMA_QUERY_KEY } from "@/hooks";
 import { useAuth } from "@/contexts/auth-context";
 
 type PutBioBody = {
@@ -73,8 +73,8 @@ export default function OnboardingBioPage() {
   const profilePhotoUrl = watch("profile_photo_url");
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
-  const [photoLoadError, setPhotoLoadError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { blobUrl: serverPhotoBlob } = useProfilePhoto(photoPreview ? null : profilePhotoUrl);
 
   const { fields, append, remove } = useFieldArray({ control, name: "past_companies" });
 
@@ -104,10 +104,6 @@ export default function OnboardingBioPage() {
       setValue("past_companies", []);
     }
   }, [bio, setValue]);
-
-  useEffect(() => {
-    setPhotoLoadError(false);
-  }, [profilePhotoUrl, photoPreview]);
 
   const putBio = useMutation({
     mutationFn: (body: PutBioBody) =>
@@ -164,6 +160,9 @@ export default function OnboardingBioPage() {
       formData.append("file", file);
       const data = await apiUpload<{ profile_photo_url: string }>("/me/bio/photo", formData);
       setValue("profile_photo_url", data.profile_photo_url);
+      queryClient.invalidateQueries({ queryKey: BIO_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: PROFILE_SCHEMA_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["profile-photo", data.profile_photo_url] });
     } catch (err) {
       setServerError(err instanceof Error ? err.message : "Failed to upload photo");
       setPhotoPreview(null);
@@ -257,16 +256,12 @@ export default function OnboardingBioPage() {
                 className="relative w-24 h-24 rounded-full overflow-hidden bg-muted border-2 border-border hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-colors flex items-center justify-center"
                 aria-label="Select profile photo (optional)"
               >
-                {(photoPreview || (profilePhotoUrl && !photoLoadError)) ? (
+                {(photoPreview || serverPhotoBlob) ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
                   <img
-                    src={photoPreview ?? profilePhotoUrl ?? ""}
+                    src={photoPreview ?? serverPhotoBlob ?? ""}
                     alt="Profile"
                     className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
-                    onError={() => {
-                      if (!photoPreview) setPhotoLoadError(true);
-                    }}
                   />
                 ) : (
                   <User className="h-10 w-10 text-muted-foreground" />

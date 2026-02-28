@@ -1,18 +1,16 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Check } from "lucide-react";
-import { MessyTextVoiceInput } from "../voice/messy-text-voice-input";
+import { Label } from "@/components/ui/label";
+import { Check, Plus, Trash2 } from "lucide-react";
+import type { ChildValueItem } from "@/types";
 
 interface ChildCardEditFormProps {
   form: {
     title: string;
     summary: string;
-    tagsStr: string;
-    time_range: string;
-    location: string;
+    items: ChildValueItem[];
   };
   onChange: (updates: Partial<ChildCardEditFormProps["form"]>) => void;
   onSubmit: () => void;
@@ -90,73 +88,84 @@ export function ChildCardEditForm({
 
       {onUpdateFromMessyText && (
         <div className="mt-3 space-y-2 rounded-lg border border-border/50 bg-muted/30 p-3">
-          <Label className="text-xs font-medium">Add Or Fix With Messy Text</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-xs font-medium">Add Or Fix With Messy Text</Label>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={handleUpdateFromMessy}
+              disabled={!messyText.trim() || isUpdatingFromMessyText}
+            >
+              {isUpdatingFromMessyText ? "Updating..." : "Update"}
+            </Button>
+          </div>
           <p className="text-[11px] text-muted-foreground text-left">
-            Paste extra details (e.g. dates, role, location). We&apos;ll parse and fill only empty fields.
+            Paste extra details (e.g. title, summary, items). We&apos;ll parse and fill only empty fields.
           </p>
-          <MessyTextVoiceInput
+          <Textarea
             value={messyText}
-            onChange={setMessyText}
+            onChange={(e) => setMessyText(e.target.value)}
             placeholder="e.g. 2021-2022, Python, AWS..."
             rows={2}
+            className="text-sm resize-y bg-background"
           />
         </div>
       )}
 
       <div className="mt-3 space-y-3">
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <Label className="text-xs font-medium">Title</Label>
-            {onUpdateFromMessyText && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs font-medium">Items (subtitle, sub_summary)</Label>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => onChange({ items: [...form.items, { subtitle: "", sub_summary: null }] })}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              Add
+            </Button>
+          </div>
+          {form.items.map((item, i) => (
+            <div key={i} className="flex gap-2 items-start rounded-lg border border-border/50 p-2 bg-muted/20">
+              <div className="flex-1 min-w-0 space-y-1.5">
+                <Input
+                  value={item.subtitle}
+                  onChange={(e) => {
+                    const next = [...form.items];
+                    next[i] = { ...item, subtitle: e.target.value };
+                    onChange({ items: next });
+                  }}
+                  placeholder="Title"
+                  className="bg-background text-sm"
+                />
+                <Input
+                  value={item.sub_summary ?? ""}
+                  onChange={(e) => {
+                    const next = [...form.items];
+                    next[i] = { ...item, sub_summary: e.target.value.trim() || null };
+                    onChange({ items: next });
+                  }}
+                  placeholder="Description"
+                  className="bg-background text-sm"
+                />
+              </div>
               <Button
                 type="button"
                 size="sm"
-                variant="secondary"
-                onClick={handleUpdateFromMessy}
-                disabled={!messyText.trim() || isUpdatingFromMessyText}
+                variant="ghost"
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                onClick={() => {
+                  const next = form.items.filter((_, j) => j !== i);
+                  onChange({ items: next.length > 0 ? next : [{ subtitle: "", sub_summary: null }] });
+                }}
               >
-                {isUpdatingFromMessyText ? "Updating..." : "Update"}
+                <Trash2 className="h-3.5 w-3.5" />
               </Button>
-            )}
-          </div>
-          <Input
-            value={form.title}
-            onChange={(e) => onChange({ title: e.target.value })}
-            className="bg-background text-sm"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-medium">Summary</Label>
-          <Textarea
-            value={form.summary}
-            onChange={(e) => onChange({ summary: e.target.value })}
-            rows={2}
-            className="resize-y bg-background text-sm"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-medium">Tags (comma-separated)</Label>
-          <Input
-            value={form.tagsStr}
-            onChange={(e) => onChange({ tagsStr: e.target.value })}
-            className="bg-background text-sm"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-medium">Time range</Label>
-          <Input
-            value={form.time_range}
-            onChange={(e) => onChange({ time_range: e.target.value })}
-            className="bg-background text-sm"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-medium">Location</Label>
-          <Input
-            value={form.location}
-            onChange={(e) => onChange({ location: e.target.value })}
-            className="bg-background text-sm"
-          />
+            </div>
+          ))}
         </div>
       </div>
     </div>

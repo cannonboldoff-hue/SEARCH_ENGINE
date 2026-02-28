@@ -51,20 +51,16 @@ export function PersonResultCard({ person, searchId, index = 0 }: PersonResultCa
               {person.headline && (
                 <p className="text-sm text-muted-foreground truncate mt-0.5">{person.headline}</p>
               )}
-              <div className="flex gap-2 mt-0.5 flex-wrap">
-                {person.open_to_contact && (
-                  <span className="text-xs text-info">Open to contact</span>
-                )}
-              </div>
             </div>
           </div>
           <div className="mt-3 border-t border-border/60 pt-3 space-y-1">
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground/90">Match Percent :</span>{" "}
-              {similarityPercent != null ? `${similarityPercent}%` : "N/A"}
-            </p>
             <div className="text-xs text-muted-foreground">
-              <p className="font-medium text-foreground/90">Why {person.name || "this person"} :</p>
+              <p className="font-medium text-foreground/90 flex justify-between items-center gap-2">
+                <span>Why {person.name || "this person"} :</span>
+                {similarityPercent != null && (
+                  <span className="flex-shrink-0">{similarityPercent}%</span>
+                )}
+              </p>
               <ul className="mt-1 list-disc pl-4 space-y-0.5">
                 {whyShown.map((reason, idx) => (
                   <li key={`${person.id}-why-${idx}`} className="leading-snug">

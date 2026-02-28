@@ -1,6 +1,6 @@
 /** API / domain types shared across the app */
 
-import type { ExperienceCardV1 } from "@/lib/schemas";
+import type { ExperienceCardSchema } from "@/lib/schemas";
 
 // Re-export domain schemas and enums from @/lib/schemas for use across the app
 export {
@@ -25,7 +25,7 @@ export type {
   Reaction,
   EntityType,
   Person,
-  ExperienceCardV1,
+  ExperienceCardSchema,
   LocationBasic,
   PersonVerification,
   PersonPrivacyDefaults,
@@ -207,17 +207,17 @@ export type PersonProfile = {
   contact: ContactDetails | null;
 };
 
-/** One parent Experience Card v1 + its children. Matches backend CardFamilyV1Response. */
-export type CardFamilyV1Response = {
-  parent: ExperienceCardV1;
-  children: ExperienceCardV1[];
+/** One parent + children from draft pipeline. Matches backend DraftCardFamily. Uses backend shapes (parent may be partial from serialize_card_for_response). */
+export type DraftCardFamily = {
+  parent: ExperienceCard | Record<string, unknown>;
+  children: ExperienceCardChild[];
 };
 
-/** Result of POST /experience-cards/draft-v1-single. Matches backend DraftSetV1Response. */
-export type DraftSetV1Response = {
+/** Result of POST /experience-cards/draft-single. Matches backend DraftSetResponse. */
+export type DraftSetResponse = {
   draft_set_id: string;
   raw_experience_id: string;
-  card_families: CardFamilyV1Response[];
+  card_families: DraftCardFamily[];
 };
 
 /** One detected experience from POST /experience-cards/detect-experiences. */
@@ -238,34 +238,30 @@ export type RewriteTextResponse = {
   rewritten_text: string;
 };
 
-/** Result of POST /experiences/translate. Matches backend TranslateTextResponse. */
-export type TranslateTextResponse = {
-  translated_text: string;
-  source_language_code?: string | null;
-};
-
 /** Patch body for PATCH `/experience-card-children/:child_id`. Matches backend `ExperienceCardChildPatch`. */
 export type ExperienceCardChildPatch = {
-  title?: string | null;
-  summary?: string | null;
-  tags?: string[] | null;
-  time_range?: string | null;
-  location?: string | null;
+  items?: ChildValueItem[] | null;
 };
 
-/** Response DTO for child cards (draft-v1 compatible). Matches backend `ExperienceCardChildResponse`. */
+/** One item in a child card value.items[]. Matches backend `ChildValueItem`. */
+export type ChildValueItem = {
+  subtitle: string;
+  sub_summary?: string | null;
+};
+
+/** Child card value (dimension container). Matches backend `ChildValue`. */
+export type ChildValue = {
+  summary?: string | null;
+  raw_text?: string | null;
+  items?: ChildValueItem[];
+};
+
+/** Response DTO for child cards. Matches backend `ExperienceCardChildResponse`. */
 export type ExperienceCardChild = {
   id: string;
-  relation_type?: string | null;
-  title: string;
-  context: string;
-  tags: string[];
-  headline: string;
-  summary: string;
-  topics: { label: string }[];
-  time_range: string | null;
-  role_title: string | null;
-  location: string | null;
+  parent_experience_id?: string | null;
+  child_type: string;
+  items: ChildValueItem[];
 };
 
 /** One parent + children from GET /me/experience-card-families. Matches backend CardFamilyResponse. */

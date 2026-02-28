@@ -1,30 +1,17 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { motion } from "framer-motion";
 import { BackLink } from "@/components/back-link";
-import { BuilderChat } from "@/components/builder";
-import { api } from "@/lib/api";
-import type { TranslateTextResponse } from "@/types";
+import { BuilderChat, ElevenLabsVoiceWidget } from "@/components/builder";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export default function BuilderPage() {
+  const [mode, setMode] = useState<"type" | "voice">("voice");
+
   const translateToEnglishForBackend = useCallback(async (text: string): Promise<string> => {
-    const trimmed = text.trim();
-    if (!trimmed) return "";
-    try {
-      const result = await api<TranslateTextResponse>("/experiences/translate", {
-        method: "POST",
-        body: { raw_text: trimmed },
-      });
-      const sourceLangRaw =
-        typeof result?.source_language_code === "string" ? result.source_language_code.toLowerCase() : "";
-      const isEnglish = sourceLangRaw.startsWith("en");
-      if (!isEnglish && sourceLangRaw) return trimmed;
-      const translated = typeof result?.translated_text === "string" ? result.translated_text.trim() : "";
-      return translated || trimmed;
-    } catch {
-      return trimmed;
-    }
+    return text.trim() || "";
   }, []);
 
   return (
@@ -39,10 +26,33 @@ export default function BuilderPage() {
         <h1 className="text-base sm:text-lg font-semibold tracking-tight text-foreground truncate text-center flex-1 min-w-0">
           Add experience
         </h1>
-        <div className="w-[4.5rem] sm:w-24 flex-shrink-0" aria-hidden />
+        <div className="w-[4.5rem] sm:w-24 flex-shrink-0 flex justify-end">
+          <div className="flex rounded-lg border border-border p-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn("h-7 px-2 text-xs", mode === "voice" && "bg-muted")}
+              onClick={() => setMode("voice")}
+            >
+              Voice
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn("h-7 px-2 text-xs", mode === "type" && "bg-muted")}
+              onClick={() => setMode("type")}
+            >
+              Type
+            </Button>
+          </div>
+        </div>
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
-        <BuilderChat translateRawText={translateToEnglishForBackend} />
+        {mode === "voice" ? (
+          <ElevenLabsVoiceWidget />
+        ) : (
+          <BuilderChat translateRawText={translateToEnglishForBackend} />
+        )}
       </div>
     </motion.div>
   );

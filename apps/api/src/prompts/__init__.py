@@ -1,5 +1,5 @@
 """
-LLM prompt templates for experience extraction and Experience Card v1 pipeline.
+LLM prompt templates for experience extraction and Experience Card pipeline.
 
 Converts RAW, unstructured text (informal, noisy, incomplete) into structured
 ExperienceCards. Normalizes terms, infers meaning carefully, and preserves

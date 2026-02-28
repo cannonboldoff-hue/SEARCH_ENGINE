@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { isPlaceholderChildCard } from "@/components/builder/card/v1-card-details";
+import { isPlaceholderChildCard, getChildDisplayTitle, getChildDisplaySummary } from "@/components/builder/card/card-details";
 import type { SavedCardFamily } from "@/types";
 
 interface ExpandableExperienceCardProps {
@@ -125,29 +125,48 @@ export function ExpandableExperienceCard({ family, index }: ExpandableExperience
                     {/* Child block */}
                     <div className="ml-5 rounded-lg border border-border/60 bg-accent/30 px-3 py-2.5 transition-colors hover:bg-accent/60">
                       <p className="text-sm font-medium text-foreground">
-                        {child.title || child.headline || child.summary || "Detail"}
+                        {getChildDisplayTitle(child) || "Detail"}
                       </p>
-                      {child.summary && child.title && (
+                      {getChildDisplaySummary(child) && (
                         <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                          {child.summary}
+                          {getChildDisplaySummary(child)}
                         </p>
                       )}
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-xs text-muted-foreground">
-                        {child.time_range && <span>{child.time_range}</span>}
-                        {child.location && <span>{child.location}</span>}
-                      </div>
-                      {child.tags && child.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {child.tags.map((tag, tagIdx) => (
-                            <span
-                              key={tagIdx}
-                              className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      {(() => {
+                        const items = child.items;
+                        if (Array.isArray(items) && items.length > 0) {
+                          return (
+                            <div className="space-y-1 mt-2">
+                              {items.map((it, i) => (
+                                <div key={i} className="text-xs text-muted-foreground">
+                                  <span className="font-medium text-foreground">
+                                    {(it as Record<string, unknown>).subtitle ?? (it as Record<string, unknown>).title ?? ""}
+                                  </span>
+                                  {((it as Record<string, unknown>).sub_summary ?? (it as Record<string, unknown>).description) ? (
+                                    <span className="ml-1.5">— {String((it as Record<string, unknown>).sub_summary ?? (it as Record<string, unknown>).description ?? "")}</span>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+                        const tagsFromItems = (child.items ?? []).map((it) => String((it as Record<string, unknown>).subtitle ?? (it as Record<string, unknown>).title ?? "")).filter(Boolean);
+                        if (tagsFromItems.length > 0) {
+                          return (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {tagsFromItems.map((tag, tagIdx) => (
+                                <span
+                                  key={tagIdx}
+                                  className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
                   </motion.li>
                 ))}

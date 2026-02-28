@@ -1,7 +1,7 @@
 from datetime import datetime, date
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class RawExperienceCreate(BaseModel):
@@ -20,38 +20,19 @@ class RewriteTextResponse(BaseModel):
     rewritten_text: str
 
 
-class TranslateTextResponse(BaseModel):
-    """Result of POST /experiences/translate: translated English text."""
+class DraftCardFamily(BaseModel):
+    """One parent experience card + its child cards (from draft pipeline)."""
 
-    translated_text: str
-    source_language_code: Optional[str] = None
-
-
-class TextToSpeechRequest(BaseModel):
-    """Body for POST /experiences/tts: text to speak (Sarvam TTS)."""
-
-    text: str
+    parent: dict
+    children: list[dict] = []
 
 
-class TextToSpeechResponse(BaseModel):
-    """Result of POST /experiences/tts: base64-encoded WAV audio."""
-
-    audio_base64: str
-
-
-class CardFamilyV1Response(BaseModel):
-    """One parent Experience Card v1 + its child cards (validated)."""
-
-    parent: dict  # Experience Card v1 parent (depth=0)
-    children: list[dict] = []  # Experience Card v1 children (depth=1)
-
-
-class DraftSetV1Response(BaseModel):
+class DraftSetResponse(BaseModel):
     """Result of single-experience pipeline: rewrite → extract one → validate → persist."""
 
     draft_set_id: str
     raw_experience_id: str
-    card_families: list[CardFamilyV1Response]
+    card_families: list[DraftCardFamily]
 
 
 class DetectedExperienceItem(BaseModel):
@@ -193,6 +174,21 @@ class FinalizeExperienceCardRequest(BaseModel):
     card_id: str
 
 
+def _location_to_str(v: Any) -> Optional[str]:
+    """Convert location (str or dict) to stored string for DB."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return v.strip() or None
+    if isinstance(v, dict):
+        text = v.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+        parts = [x for x in (v.get("city"), v.get("region"), v.get("country")) if isinstance(x, str) and x.strip()]
+        return ", ".join(parts) if parts else None
+    return None
+
+
 class _ExperienceCardFields(BaseModel):
     """Shared optional fields for create/patch."""
 
@@ -205,7 +201,8 @@ class _ExperienceCardFields(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     is_current: Optional[bool] = None
-    location: Optional[str] = None
+    location: Optional[str] = None  # accepts str or dict; normalized to str for DB storage
+    is_remote: Optional[bool] = None
     employment_type: Optional[str] = None
     summary: Optional[str] = None
     raw_text: Optional[str] = None
@@ -217,11 +214,17 @@ class _ExperienceCardFields(BaseModel):
 
 
 class ExperienceCardCreate(_ExperienceCardFields):
-    pass
+    @field_validator("location", mode="before")
+    @classmethod
+    def _normalize_location(cls, v: Any) -> Optional[str]:
+        return _location_to_str(v)
 
 
 class ExperienceCardPatch(_ExperienceCardFields):
-    pass
+    @field_validator("location", mode="before")
+    @classmethod
+    def _normalize_location(cls, v: Any) -> Optional[str]:
+        return _location_to_str(v)
 
 
 class ExperienceCardResponse(BaseModel):
@@ -233,10 +236,12 @@ class ExperienceCardResponse(BaseModel):
     sub_domain: Optional[str] = None
     company_name: Optional[str] = None
     company_type: Optional[str] = None
+    team: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     is_current: Optional[bool] = None
     location: Optional[str] = None
+    is_remote: Optional[bool] = None
     employment_type: Optional[str] = None
     summary: Optional[str] = None
     raw_text: Optional[str] = None
@@ -259,30 +264,27 @@ class ExperienceCardResponse(BaseModel):
 class ExperienceCardChildPatch(BaseModel):
     """
     Patch payload for ExperienceCardChild.
-    Updates are applied into ExperienceCardChild.label and ExperienceCardChild.value (dimension container).
+    Updates are applied into child.value (dimension container).
+    Value.items uses ChildValueItem shape: { title, description }.
     """
 
-    title: Optional[str] = None
-    summary: Optional[str] = None
-    tags: Optional[list[str]] = None
-    time_range: Optional[str] = None
-    location: Optional[str] = None
+    items: Optional[list[dict]] = None  # [{ title: str, description: str | None }]
+
+
+class ChildValueItem(BaseModel):
+    """One item in a child card value.items[]."""
+
+    title: str
+    description: Optional[str] = None
 
 
 class ExperienceCardChildResponse(BaseModel):
-    """Response DTO for ExperienceCardChild."""
+    """Response DTO for ExperienceCardChild. Just child_type and items."""
 
     id: str
-    relation_type: Optional[str] = None
-    title: str = ""
-    context: str = ""
-    tags: list[str] = []
-    headline: str = ""
-    summary: str = ""
-    topics: list[dict] = []
-    time_range: Optional[str] = None
-    role_title: Optional[str] = None
-    location: Optional[str] = None
+    parent_experience_id: Optional[str] = None
+    child_type: str = ""  # e.g. "metrics", "tools"
+    items: list[ChildValueItem] = []
 
     model_config = ConfigDict(from_attributes=True)
 

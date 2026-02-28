@@ -254,12 +254,13 @@ def _bio_response_for_public(person: Person, profile: PersonProfile | None) -> B
                     )
                 )
 
+    has_photo = profile is not None and profile.profile_photo is not None
     return BioResponse(
         first_name=profile.first_name if profile else None,
         last_name=profile.last_name if profile else None,
         date_of_birth=profile.date_of_birth if profile else None,
         current_city=profile.current_city if profile else None,
-        profile_photo_url=profile.profile_photo_url if profile else None,
+        profile_photo_url=f"/people/{person.id}/photo" if has_photo else None,
         school=profile.school if profile else None,
         college=profile.college if profile else None,
         current_company=profile.current_company if profile else None,

@@ -5,7 +5,7 @@ Designed to take messy, informal, noisy, or incomplete human text and produce:
   rewrite -> detect experiences -> extract single (parent + children) -> validate -> clarify.
 
 The system converts free-form text into structured Experience Cards
-(parent + dimension-based children), strictly aligned to Schema V1.
+(parent + dimension-based children), with structured parent and child cards.
 
 Domains supported: tech + non-tech + mixed.
 
@@ -22,6 +22,7 @@ from src.prompts.experience_card_enums import (
     SENIORITY_LEVEL_ENUM,
     EMPLOYMENT_TYPE_ENUM,
     COMPANY_TYPE_ENUM,
+    EXPERIENCE_RELATION_TYPE_ENUM,
 )
 
 # -----------------------------------------------------------------------------
@@ -48,7 +49,7 @@ INPUT:
 
 
 # -----------------------------------------------------------------------------
-# 1b. Detect distinct experiences (count + labels for "which one to process")
+# 2. Detect distinct experiences (count + labels for "which one to process")
 # -----------------------------------------------------------------------------
 
 PROMPT_DETECT_EXPERIENCES = """You are an experience detection engine.
@@ -98,7 +99,7 @@ Return valid JSON only:
 """
 
 # -----------------------------------------------------------------------------
-# 2. Extract SINGLE experience by index (one at a time)
+# 3. Extract SINGLE experience by index (one at a time)
 # -----------------------------------------------------------------------------
 
 PROMPT_EXTRACT_SINGLE_CARDS = """You are a structured data extraction system.
@@ -146,7 +147,6 @@ Extract all fields you can from the text. Use null for anything not mentioned. D
 - intent_secondary   : list of additional intents from the same enum, or []
 - seniority_level    : MUST be one of: {{SENIORITY_LEVEL_ENUM}}. null if unclear.
 - raw_text           : verbatim excerpt from the cleaned text for THIS experience only
-- search_phrases     : 3–6 short keyword phrases a recruiter or searcher might use to find this
 - confidence_score   : float 0.0–1.0 reflecting how complete and clear the extracted data is
 - relations          : always [] — populated in a later step after all cards are extracted
 
@@ -164,14 +164,37 @@ CHILDREN:
 Extract child dimension cards for every distinct dimension the experience mentions.
 Allowed child_type values: {{ALLOWED_CHILD_TYPES}}
 
+Child format — each child has: child_type, value: { raw_text, items[] }
+
 Rules:
-1. Create ONE child per child_type. Merge multiple items of the same type into one child.
-2. Do NOT create children that merely restate the parent summary.
-3. Each child must have: child_type, value (see value fields below).
-4. MANDATORY INHERITANCE — every child value MUST include:
-   - value.time      : copy from parent start_date/end_date unless explicitly different
-   - value.location  : copy from parent location unless explicitly different
-5. Other value fields (use what applies): headline, summary, raw_text, company, topics, tooling, outcomes, metrics, tags
+1. Create ONE child per child_type. Group all same-type evidence into ONE child with many items.
+2. Do NOT create multiple children of the same child_type for the same parent.
+3. value.items is an array. Each item: { "title": "short label", "description": "one line" or null }
+4. Add as many items as needed per child. Example: metrics child can have "₹15 lakh sales" / "Generated in 2 months" AND "20 active partners" / "Built through collaborations."
+5. value.raw_text: verbatim excerpt for this child only.
+6. Prefer short, human-readable titles. Prefer one-line descriptions.
+7. Do NOT output rigid nested schemas (actions, outcomes, tooling) inside value — use items[] only.
+8. Do NOT invent facts. Use only grounded evidence.
+9. Do NOT create children that merely restate the parent summary.
+10. Do NOT include a top-level "label" field on children — it is not stored.
+
+Examples:
+{
+  "child_type": "tools",
+  "value": {
+    "raw_text": "verbatim excerpt for this child only",
+    "items": [
+      { "title": "Python", "description": "Used for backend services." },
+      { "title": "Bloomberg API", "description": null }
+    ]
+  }
+}
+
+- metrics: items: [
+    { "title": "₹15 lakh sales", "description": "Generated in 2 months." },
+    { "title": "20 active partners", "description": "Built through Mumbai studio collaborations." }
+  ]
+- collaborations: items: [{ "title": "Studio partnerships", "description": "Mediated across Mumbai." }]
 
 ---
 
@@ -209,6 +232,7 @@ INPUTS:
 
 TASK:
 Read the cleaned text and extract values ONLY for fields that are missing in the current card.
+{{ITEMS_INSTRUCTION}}
 
 ---
 
@@ -218,7 +242,7 @@ RULES:
 3. Only return keys you can confidently fill from the text. Omit keys you cannot infer.
 4. Do NOT invent or guess. If the text doesn't say it, leave the key out.
 5. Dates MUST be YYYY-MM or YYYY-MM-DD only. Never use month names or natural language.
-6. For array fields (e.g. intent_secondary, tags, search_phrases), return a JSON array of strings.
+6. For array fields (e.g. intent_secondary), return a JSON array of strings.
 7. Return a single flat JSON object. No markdown, no commentary, no array wrapper, no nesting.
 
 ---
@@ -239,8 +263,17 @@ CLEANED TEXT (extract from this only):
 Return valid JSON only:
 """
 
+# Instruction injected into PROMPT_FILL_MISSING_FIELDS when card_type=child (for items append).
+FILL_MISSING_ITEMS_APPEND_INSTRUCTION = (
+    "For items: extract achievements, metrics, or details from the cleaned text. "
+    "If the current card already has items, also extract any ADDITIONAL achievements from the text "
+    "and return them as new items to append. Return items as: "
+    '[{"subtitle": "short title", "sub_summary": "description"}] or [{"title": "...", "description": "..."}]. '
+    "Return ONLY the new items to add (not existing ones), so the frontend can append them."
+)
+
 # -----------------------------------------------------------------------------
-# 6. Clarify flow: Planner (JSON only)
+# 5. Clarify flow: Planner (JSON only)
 # -----------------------------------------------------------------------------
 PROMPT_CLARIFY_PLANNER = """You are a clarification planner. A card has already been extracted. Your only job is to decide the single best next action: ask, autofill, or stop.
 
@@ -293,7 +326,7 @@ RULES:
 2. Never ask about a field in asked_history.
 3. Never ask about a field already filled in the card.
 4. Never ask about an inapplicable field — set it to null instead.
-5. Never ask about relations — this is handled after all cards are extracted.
+5. Never ask about relations — handled after all cards exist.
 6. Never ask generic or open-ended questions ("tell me more", "what did you build").
 7. AUTOFILL only when text explicitly and unambiguously states the value:
    - Company name verbatim → autofill
@@ -301,7 +334,7 @@ RULES:
    - "fully remote" or "work from home" explicitly stated → autofill is_remote: true
    - Duration only ("2 months", "a couple of years") → ask instead
    - Do not infer, guess, or hallucinate
-8. autofill_patch must contain ONLY the target field. Nothing else.
+8. autofill_patch must contain ONLY the target field.
 9. Never propose choose_focus or discovery actions — handled upstream.
 
 ---
@@ -334,15 +367,15 @@ OUTPUT FORMAT (return this JSON object only):
 }
 
 When action=autofill:
-  - autofill_patch: flat object with only the target field
+  autofill_patch is a flat object with only the target field.
   Examples:
     {"company_name": "ABC Inc"}
     {"company_type": "family_business"}
     {"location": {"is_remote": true, "city": null}}
-    {"company_name": null}  ← inapplicable
+    {"company_name": null}  <- inapplicable field
 
 When action=ask or stop:
-  - autofill_patch: null
+  autofill_patch must be null.
 
 ---
 
@@ -363,7 +396,7 @@ Return valid JSON only:
 """
 
 # -----------------------------------------------------------------------------
-# 7. Clarify flow: Question writer (phrasing only)
+# 6. Clarify flow: Question writer (phrasing only)
 # -----------------------------------------------------------------------------
 
 PROMPT_CLARIFY_QUESTION_WRITER = """You are a clarification question writer. A planner has decided what to ask next. Your only job is to write exactly one natural, conversational question.
@@ -382,15 +415,7 @@ RULES:
    - Bad:  "What tools did you use, and what were your responsibilities?"
 7. Reference card context naturally to make the question feel informed, not robotic.
 8. Do NOT explain why you are asking. Just ask.
-9. Output valid JSON only with this exact shape:
-   {"question": "<your question text>"}
-
----
-
-OUTPUT FORMAT:
-{
-  "question": "<your question text>"
-}
+9. Output the question as plain text only. No JSON, no preamble, no formatting.
 
 ---
 
@@ -400,11 +425,11 @@ PLAN:
 CANONICAL CARD FAMILY (for context):
 {{CANONICAL_CARD_JSON}}
 
-Write the question JSON now:
+Write the question now:
 """
 
 # -----------------------------------------------------------------------------
-# 8. Clarify flow: Apply answer (patch only)
+# 7. Clarify flow: Apply answer (patch only)
 # -----------------------------------------------------------------------------
 
 PROMPT_CLARIFY_APPLY_ANSWER = """You are a clarification answer processor. Convert the user's answer into a minimal patch for the experience card. You ONLY update the target field — nothing else.
@@ -422,15 +447,15 @@ RULES:
 1. Patch ONLY the target field specified in the plan. Never touch other fields.
 2. For nested fields, patch only the relevant sub-fields:
    - time     → time.start, time.end, time.ongoing, time.text
-   - location → location.city, location.country, location.text
-3. Preserve the user's original wording where appropriate. Do not paraphrase or clean up.
-4. Do NOT hallucinate. If the user's answer doesn't contain the value, do not invent it.
-5. If the user indicates the field is not applicable ("I work alone", "fully remote") → set field to null.
+   - location → location.city, location.country, location.is_remote, location.text
+3. Preserve the user's original wording where appropriate. Do not paraphrase.
+4. Do NOT hallucinate. If the user's answer does not contain the value, do not invent it.
+5. If the user indicates the field is not applicable → set field to null.
 6. If the answer is unclear, off-topic, or unusable → set needs_retry: true, write one short retry_question.
-7. Dates MUST be YYYY-MM or YYYY-MM-DD only. Convert natural language:
+7. Dates MUST be YYYY-MM or YYYY-MM-DD only:
    - "Jan 2020" → "2020-01"
    - "March 2022" → "2022-03"
-   - "2 years ago" → ask, do not guess
+   - "2 years ago" → do not guess → set needs_retry: true
 8. Return valid JSON only. No markdown, no commentary, no preamble.
 
 ---
@@ -453,28 +478,43 @@ When needs_retry=true:
 
 Examples:
 
-Target field = time, user says "I worked there from Jan 2020 to March 2022":
+Target = time, user says "Jan 2020 to March 2022":
+{ "patch": { "time": { "start": "2020-01", "end": "2022-03", "ongoing": false, "text": "Jan 2020 to March 2022" } }, "confidence": "high", "needs_retry": false, "retry_question": null }
+
+Target = company_name, user says "I was freelancing, no company":
+{ "patch": { "company_name": null }, "confidence": "high", "needs_retry": false, "retry_question": null }
+
+Target = time, user says "about 2 years":
+{ "patch": {}, "confidence": "low", "needs_retry": true, "retry_question": "Do you remember roughly when you started and ended?" }
+
+For target_child_type (child dimension), patch adds items to that child. Append to value.items[]:
+Target = tools, user says "I used Python and SQL for analytics":
 {
-  "patch": { "time": { "start": "2020-01", "end": "2022-03", "ongoing": false, "text": "Jan 2020 to March 2022" } },
+  "patch": {
+    "value": {
+      "items": [
+        { "title": "Python", "description": "Used for analytics" },
+        { "title": "SQL", "description": "Used for analytics" }
+      ]
+    }
+  },
   "confidence": "high",
   "needs_retry": false,
   "retry_question": null
 }
 
-Target field = company_name, user says "I was freelancing, no company":
+Target = metrics, user says "15 lakh in 2 months":
 {
-  "patch": { "company_name": null },
+  "patch": {
+    "value": {
+      "items": [
+        { "title": "₹15 lakh", "description": "Generated in 2 months." }
+      ]
+    }
+  },
   "confidence": "high",
   "needs_retry": false,
   "retry_question": null
-}
-
-Target field = time, user says "about 2 years":
-{
-  "patch": {},
-  "confidence": "low",
-  "needs_retry": true,
-  "retry_question": "Do you remember roughly when you started and ended?"
 }
 
 ---
@@ -492,7 +532,7 @@ Return valid JSON only:
 """
 
 # -----------------------------------------------------------------------------
-# Helper: placeholder → value (always injected from enums)
+# 8. Helper: fill_prompt
 # -----------------------------------------------------------------------------
 
 _DEFAULT_REPLACEMENTS: dict[str, str] = {
@@ -503,6 +543,7 @@ _DEFAULT_REPLACEMENTS: dict[str, str] = {
     "{{COMPANY_TYPE_ENUM}}": COMPANY_TYPE_ENUM,
     "{{EMPLOYMENT_TYPE_ENUM}}": EMPLOYMENT_TYPE_ENUM,
     "{{SENIORITY_LEVEL_ENUM}}": SENIORITY_LEVEL_ENUM,
+    "{{EXPERIENCE_RELATION_TYPE_ENUM}}": EXPERIENCE_RELATION_TYPE_ENUM,
 }
 
 def fill_prompt(
@@ -528,6 +569,7 @@ def fill_prompt(
     validated_plan_json: str | None = None,
     card_context_json: str | None = None,
     user_answer: str | None = None,
+    items_instruction: str | None = None,
 ) -> str:
     kwargs_map = {
         "{{USER_TEXT}}": user_text,
@@ -551,6 +593,7 @@ def fill_prompt(
         "{{CLARIFY_PLAN_JSON}}": validated_plan_json,
         "{{CARD_CONTEXT_JSON}}": card_context_json,
         "{{USER_ANSWER}}": user_answer,
+        "{{ITEMS_INSTRUCTION}}": items_instruction or "",
     }
     out = template
     for placeholder, value in _DEFAULT_REPLACEMENTS.items():
